@@ -1,0 +1,30 @@
+node_modules
+dist
+build
+.next
+.turbo
+.vercel
+coverage
+
+# tsbuildinfo
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editors
+.idea
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
