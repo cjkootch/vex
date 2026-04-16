@@ -4,7 +4,7 @@ import {
   WorkspaceRepository,
   createDb,
 } from "@vex/db";
-import { AnthropicAdapter } from "@vex/integrations";
+import { AnthropicAdapter, GoogleAdsAdapter } from "@vex/integrations";
 import { InMemoryCostLedger, initOtel, shutdownOtel } from "@vex/telemetry";
 import { AgentScanner } from "./scanner.js";
 import { startBullWorker } from "./queues/runner.js";
@@ -39,12 +39,27 @@ async function main(): Promise<void> {
     costLedger,
   });
 
+  // Google Ads — best effort. Adapter only constructs when service-account
+  // JSON + developer token are both present; otherwise the LeadWon
+  // workflow runs in audit-only mode.
+  let ads: GoogleAdsAdapter | null = null;
+  if (env.GOOGLE_SERVICE_ACCOUNT_JSON && env.GOOGLE_ADS_DEVELOPER_TOKEN) {
+    ads = new GoogleAdsAdapter({
+      serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+      developerToken: env.GOOGLE_ADS_DEVELOPER_TOKEN,
+      ...(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID
+        ? { loginCustomerId: env.GOOGLE_ADS_LOGIN_CUSTOMER_ID }
+        : {}),
+    });
+  }
+
   const bull = await startBullWorker({
     redisUrl: env.REDIS_URL,
     applicationDatabaseUrl: env.APPLICATION_DATABASE_URL,
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     openaiApiKey: env.OPENAI_API_KEY,
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
+    googleServiceAccountJson: env.GOOGLE_SERVICE_ACCOUNT_JSON ?? null,
   });
   const temporal = await startTemporalWorker({
     address: env.TEMPORAL_ADDRESS,
@@ -53,6 +68,7 @@ async function main(): Promise<void> {
     db,
     anthropic,
     costLedger,
+    ads,
   });
 
   const scanner = new AgentScanner({

@@ -32,3 +32,26 @@ export {
   WorkflowId,
   type TemporalConfig,
 } from "./temporal.js";
+export {
+  GA4Adapter,
+  type GA4AdapterDeps,
+  type GA4DateRange,
+  type GA4Dimension,
+  type GA4Metric,
+  type GA4Report,
+  type GA4ReportRequest,
+  type GA4RealtimeReport,
+  type GA4Row,
+} from "./ga4.js";
+export {
+  GoogleAdsAdapter,
+  type GoogleAdsAdapterDeps,
+  type OfflineConversionParams,
+  type OfflineConversionResult,
+} from "./google-ads.js";
+export {
+  parseServiceAccountJson,
+  getServiceAccountAccessToken,
+  __resetGoogleAuthCache,
+  type GoogleServiceAccount,
+} from "./google-auth.js";

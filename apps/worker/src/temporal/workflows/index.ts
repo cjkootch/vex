@@ -5,3 +5,4 @@
  */
 export { followUpWorkflow } from "./follow-up-workflow.js";
 export { researchWorkflow } from "./research-workflow.js";
+export { leadWonWorkflow } from "./lead-won-workflow.js";

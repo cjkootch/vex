@@ -23,3 +23,7 @@ export {
   type ApprovalDecision,
 } from "./approval-repository.js";
 export { ThreadRepository } from "./thread-repository.js";
+export {
+  CampaignRepository,
+  type CampaignUpsertData,
+} from "./campaign-repository.js";

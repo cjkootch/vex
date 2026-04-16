@@ -12,10 +12,11 @@ import {
   TouchpointRepository,
   type Db,
 } from "@vex/db";
-import type { AnthropicAdapter } from "@vex/integrations";
+import type { AnthropicAdapter, GoogleAdsAdapter } from "@vex/integrations";
 import type { CostLedger } from "@vex/telemetry";
 import { buildFollowUpActivities } from "./activities/follow-up-activities.js";
 import { buildResearchActivities } from "./activities/research-activities.js";
+import { buildLeadWonActivities } from "./activities/lead-won-activities.js";
 
 export interface TemporalRunnerOptions {
   address: string;
@@ -24,6 +25,10 @@ export interface TemporalRunnerOptions {
   db: Db;
   anthropic: AnthropicAdapter;
   costLedger: CostLedger;
+  /** Optional — when null, the LeadWon workflow logs and skips. */
+  ads?: GoogleAdsAdapter | null;
+  defaultConversionActionName?: string | null;
+  defaultAdsCustomerId?: string | null;
 }
 
 /**
@@ -69,6 +74,15 @@ export async function startTemporalWorker(
     costLedger: options.costLedger,
   });
 
+  const leadWonActivities = buildLeadWonActivities({
+    db: options.db,
+    leads: repos.leads,
+    events: repos.events,
+    ads: options.ads ?? null,
+    defaultConversionActionName: options.defaultConversionActionName ?? null,
+    defaultCustomerId: options.defaultAdsCustomerId ?? null,
+  });
+
   const here = dirname(fileURLToPath(import.meta.url));
   const worker = await TemporalWorker.create({
     connection,
@@ -78,6 +92,7 @@ export async function startTemporalWorker(
     activities: {
       ...followUpActivities,
       ...researchActivities,
+      ...leadWonActivities,
     },
   });
 

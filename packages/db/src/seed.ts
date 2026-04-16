@@ -48,7 +48,14 @@ async function main(): Promise<void> {
       plan: "pro",
       settings: {
         source_priority: ["internal", "apollo", "ga4", "resend"],
-        enabled_agents: ["qualifier", "composer"],
+        enabled_agents: [
+          "qualifier",
+          "composer",
+          "daily_brief",
+          "research",
+          "follow_up",
+          "marketing_analyst",
+        ],
         daily_cost_limit: 50,
         kill_all_agents: false,
       },
