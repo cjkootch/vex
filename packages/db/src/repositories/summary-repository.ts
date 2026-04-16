@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import { createId } from "@vex/domain";
-import type { Db } from "../client.js";
+import type { Tx } from "../client.js";
 import { summaries, type NewSummary, type Summary } from "../schema/summaries.js";
 
 export interface SummaryUpsertData {
@@ -12,21 +12,19 @@ export interface SummaryUpsertData {
   validityWindowEnd?: Date | null;
 }
 
+/** Stateless. Caller must wrap in `withTenant`. */
 export class SummaryRepository {
-  constructor(private readonly db: Db) {}
-
   async getLatest(
-    tenantId: string,
+    tx: Tx,
     subjectType: string,
     subjectId: string,
     summaryType: string,
   ): Promise<Summary | null> {
-    const [row] = await this.db
+    const [row] = await tx
       .select()
       .from(summaries)
       .where(
         and(
-          eq(summaries.tenantId, tenantId),
           eq(summaries.subjectType, subjectType),
           eq(summaries.subjectId, subjectId),
           eq(summaries.summaryType, summaryType),
@@ -41,9 +39,9 @@ export class SummaryRepository {
    * Upsert a summary by bumping its version. Never mutates historical rows —
    * every upsert appends a new version so we can reconstruct past views.
    */
-  async upsert(tenantId: string, data: SummaryUpsertData): Promise<Summary> {
+  async upsert(tx: Tx, tenantId: string, data: SummaryUpsertData): Promise<Summary> {
     const latest = await this.getLatest(
-      tenantId,
+      tx,
       data.subjectType,
       data.subjectId,
       data.summaryType,
@@ -62,25 +60,21 @@ export class SummaryRepository {
       validityWindowEnd: data.validityWindowEnd ?? null,
     };
 
-    const [inserted] = await this.db.insert(summaries).values(insert).returning();
+    const [inserted] = await tx.insert(summaries).values(insert).returning();
     if (!inserted) throw new Error("summary insert returned no row");
     return inserted;
   }
 
   async listBySubject(
-    tenantId: string,
+    tx: Tx,
     subjectType: string,
     subjectId: string,
   ): Promise<Summary[]> {
-    return this.db
+    return tx
       .select()
       .from(summaries)
       .where(
-        and(
-          eq(summaries.tenantId, tenantId),
-          eq(summaries.subjectType, subjectType),
-          eq(summaries.subjectId, subjectId),
-        ),
+        and(eq(summaries.subjectType, subjectType), eq(summaries.subjectId, subjectId)),
       )
       .orderBy(desc(summaries.createdAt));
   }

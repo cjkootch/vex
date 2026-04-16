@@ -31,22 +31,23 @@ export interface QueueRunner {
 }
 
 /**
- * Bootstrap the BullMQ workers for normalization + DLQ. The factory wires
- * Redis, queues, repositories, and processors. Returns handles so the
- * caller can shut everything down on SIGINT.
+ * Bootstrap the BullMQ workers for normalization + DLQ. Repositories are
+ * constructed once and shared; each job opens its own `withTenant`
+ * transaction inside the processor.
  */
 export async function startBullWorker(options: QueueRunnerOptions): Promise<QueueRunner> {
   const connection = createRedisConnection(options.redisUrl);
   const queues = createQueues(connection);
 
   const db = createDb(options.applicationDatabaseUrl);
-  const rawEvents = new RawEventRepository(db);
-  const contacts = new ContactRepository(db);
-  const touchpoints = new TouchpointRepository(db);
-  const activities = new ActivityRepository(db);
-  const events = new EventRepository(db);
+  const rawEvents = new RawEventRepository();
+  const contacts = new ContactRepository();
+  const touchpoints = new TouchpointRepository();
+  const activities = new ActivityRepository();
+  const events = new EventRepository();
 
   const normalizationProcessor = buildNormalizationProcessor({
+    db,
     rawEvents,
     contacts,
     touchpoints,
@@ -54,7 +55,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     events,
   });
 
-  const dlqProcessor = buildDlqProcessor({ rawEvents, dlqQueue: queues.dlq });
+  const dlqProcessor = buildDlqProcessor({ db, rawEvents, dlqQueue: queues.dlq });
 
   const normalizationWorker = createNormalizationWorker(normalizationProcessor, {
     connection,

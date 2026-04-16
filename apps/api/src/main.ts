@@ -28,15 +28,20 @@ async function bootstrap(): Promise<void> {
   if (!env.TWILIO_AUTH_TOKEN) {
     throw new Error("TWILIO_AUTH_TOKEN is required to start the API");
   }
+  if (!env.NEXTAUTH_SECRET) {
+    throw new Error("NEXTAUTH_SECRET is required to start the API");
+  }
 
   const db = createDb(env.APPLICATION_DATABASE_URL);
-  const rawEventRepository = new RawEventRepository(db);
+  const rawEventRepository = new RawEventRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
+      nextAuthSecret: env.NEXTAUTH_SECRET,
       webhooks: WebhooksModule.register({
+        db,
         rawEventRepository,
         normalizationQueue: queues.normalization,
         resendSecret: env.RESEND_WEBHOOK_SECRET,

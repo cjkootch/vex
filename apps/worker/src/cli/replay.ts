@@ -9,6 +9,7 @@ import {
   RawEventRepository,
   TouchpointRepository,
   createDb,
+  withTenant,
 } from "@vex/db";
 import {
   ResendNormalizer,
@@ -57,28 +58,31 @@ async function runFixture(
   const fixture = loadWebhookFixture(fixturePath);
   const env = loadEnv();
   const db = createDb(env.APPLICATION_DATABASE_URL);
-  const deps = {
-    contacts: new ContactRepository(db),
-    touchpoints: new TouchpointRepository(db),
-    activities: new ActivityRepository(db),
-    events: new EventRepository(db),
-  };
+  const contacts = new ContactRepository();
+  const touchpoints = new TouchpointRepository();
+  const activities = new ActivityRepository();
+  const events = new EventRepository();
 
-  const input: RawEventInput = {
-    id: createId(),
-    tenantId,
-    provider,
-    providerEventId: provider === "resend"
-      ? (fixture.headers["svix-id"] ?? createId())
-      : ((fixture.payload["CallSid"] ?? fixture.payload["MessageSid"] ?? createId()) as string),
-    receivedAt: new Date(),
-    headers: fixture.headers,
-    payload: fixture.payload,
-  };
-
-  const normalizer =
-    provider === "resend" ? new ResendNormalizer(deps) : new TwilioNormalizer(deps);
-  return normalizer.normalize(input);
+  return withTenant(db, tenantId, async (tx) => {
+    const normalizerDeps = { tx, contacts, touchpoints, activities, events };
+    const input: RawEventInput = {
+      id: createId(),
+      tenantId,
+      provider,
+      providerEventId:
+        provider === "resend"
+          ? (fixture.headers["svix-id"] ?? createId())
+          : ((fixture.payload["CallSid"] ?? fixture.payload["MessageSid"] ?? createId()) as string),
+      receivedAt: new Date(),
+      headers: fixture.headers,
+      payload: fixture.payload,
+    };
+    const normalizer =
+      provider === "resend"
+        ? new ResendNormalizer(normalizerDeps)
+        : new TwilioNormalizer(normalizerDeps);
+    return normalizer.normalize(input);
+  });
 }
 
 async function reEnqueueOne(rawEventId: string, tenantId: string): Promise<void> {
@@ -99,8 +103,8 @@ async function reEnqueueOne(rawEventId: string, tenantId: string): Promise<void>
 async function reEnqueueDlq(tenantId: string): Promise<number> {
   const env = loadEnv();
   const db = createDb(env.APPLICATION_DATABASE_URL);
-  const repo = new RawEventRepository(db);
-  const failed = await repo.listFailed(tenantId);
+  const repo = new RawEventRepository();
+  const failed = await withTenant(db, tenantId, async (tx) => repo.listFailed(tx));
 
   const conn = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(conn);

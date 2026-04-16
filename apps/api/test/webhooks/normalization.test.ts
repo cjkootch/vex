@@ -7,17 +7,24 @@ import {
 } from "@vex/integrations";
 import { buildNormalizationProcessor } from "@vex/agents";
 import { createId } from "@vex/domain";
+import type { Db, Tx } from "@vex/db";
 
 interface RecordedInsert {
   table: string;
   args: unknown;
 }
 
+function makeFakeTx(): Tx {
+  return {
+    execute: vi.fn(async () => undefined),
+  } as unknown as Tx;
+}
+
 function makeFakeDeps() {
   const inserts: RecordedInsert[] = [];
 
-  const events: Parameters<typeof buildNormalizationProcessor>[0]["events"] = {
-    insertIfNotExists: vi.fn(async (_tenantId: string, data: unknown) => {
+  const events = {
+    insertIfNotExists: vi.fn(async (_tx: Tx, _tenantId: string, data: unknown) => {
       inserts.push({ table: "events", args: data });
       return {
         event: {
@@ -37,16 +44,16 @@ function makeFakeDeps() {
         isNew: true,
       };
     }),
-  } as never;
+  };
 
   const touchpoints = {
-    insert: vi.fn(async (_t: string, data: unknown) => {
+    insert: vi.fn(async (_tx: Tx, _t: string, data: unknown) => {
       inserts.push({ table: "touchpoints", args: data });
       return { id: createId(), tenantId: "t", channel: "x" } as never;
     }),
   };
   const activities = {
-    insert: vi.fn(async (_t: string, data: unknown) => {
+    insert: vi.fn(async (_tx: Tx, _t: string, data: unknown) => {
       inserts.push({ table: "activities", args: data });
       return { id: createId(), tenantId: "t", type: "x" } as never;
     }),
@@ -55,7 +62,7 @@ function makeFakeDeps() {
     findByEmail: vi.fn(async () => null),
     findById: vi.fn(),
     findByOrgId: vi.fn(),
-  } as never;
+  };
 
   return { inserts, events, touchpoints, activities, contacts } as const;
 }
@@ -63,7 +70,8 @@ function makeFakeDeps() {
 describe("ResendNormalizer.normalize", () => {
   it("creates a touchpoint and a canonical event for email.clicked", async () => {
     const deps = makeFakeDeps();
-    const normalizer = new ResendNormalizer(deps as never);
+    const tx = makeFakeTx();
+    const normalizer = new ResendNormalizer({ tx, ...deps } as never);
     const fixture = loadWebhookFixture("resend_email_clicked");
 
     const input: RawEventInput = {
@@ -97,7 +105,8 @@ describe("ResendNormalizer.normalize", () => {
 describe("TwilioNormalizer.normalize", () => {
   it("creates an activity and a canonical event for completed calls", async () => {
     const deps = makeFakeDeps();
-    const normalizer = new TwilioNormalizer(deps as never);
+    const tx = makeFakeTx();
+    const normalizer = new TwilioNormalizer({ tx, ...deps } as never);
     const fixture = loadWebhookFixture("twilio_call_completed");
 
     const input: RawEventInput = {
@@ -127,8 +136,16 @@ describe("TwilioNormalizer.normalize", () => {
 describe("buildNormalizationProcessor — DLQ path", () => {
   it("throws on a malformed payload so BullMQ retries and eventually DLQs", async () => {
     const deps = makeFakeDeps();
+    const tx = makeFakeTx();
+    const fakeDb = {
+      transaction: async <T>(cb: (t: Tx) => Promise<T>) => cb(tx),
+    } as unknown as Db;
     const processor = buildNormalizationProcessor({
-      ...deps,
+      db: fakeDb,
+      contacts: deps.contacts as never,
+      touchpoints: deps.touchpoints as never,
+      activities: deps.activities as never,
+      events: deps.events as never,
       rawEvents: {
         findById: vi.fn(async () => ({
           id: "raw1",
@@ -149,5 +166,22 @@ describe("buildNormalizationProcessor — DLQ path", () => {
 
     const job = { data: { raw_event_id: "raw1", tenant_id: "t" } } as never;
     await expect(processor(job)).rejects.toThrow(/Resend webhook missing svix-id/);
+  });
+
+  it("rejects a job with no tenant_id immediately", async () => {
+    const tx = makeFakeTx();
+    const fakeDb = {
+      transaction: async <T>(cb: (t: Tx) => Promise<T>) => cb(tx),
+    } as unknown as Db;
+    const processor = buildNormalizationProcessor({
+      db: fakeDb,
+      contacts: {} as never,
+      touchpoints: {} as never,
+      activities: {} as never,
+      events: {} as never,
+      rawEvents: {} as never,
+    });
+    const job = { id: "job-1", data: { raw_event_id: "raw1", tenant_id: "" } } as never;
+    await expect(processor(job)).rejects.toThrow(/missing tenant_id/);
   });
 });

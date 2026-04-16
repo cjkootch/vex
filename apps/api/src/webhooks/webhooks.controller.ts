@@ -13,10 +13,11 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { createHash } from "node:crypto";
 import type { Queue } from "bullmq";
 import { addNormalizationJob, type NormalizationJobData } from "@vex/agents";
-import type { RawEventRepository } from "@vex/db";
+import { withTenant, type Db, type RawEventRepository } from "@vex/db";
 import type { ResendVerifier } from "./resend-verifier.js";
 import type { TwilioVerifier } from "./twilio-verifier.js";
 import {
+  DB_CLIENT,
   NORMALIZATION_QUEUE,
   RAW_EVENT_REPO,
   RESEND_VERIFIER,
@@ -30,6 +31,7 @@ export class WebhooksController {
   private readonly log = new Logger(WebhooksController.name);
 
   constructor(
+    @Inject(DB_CLIENT) private readonly db: Db,
     @Inject(RAW_EVENT_REPO) private readonly rawEvents: RawEventRepository,
     @Inject(NORMALIZATION_QUEUE)
     private readonly queue: Queue<NormalizationJobData>,
@@ -42,17 +44,13 @@ export class WebhooksController {
   /**
    * POST /webhooks/resend
    *
-   * Pipeline:
-   *   1. Read raw body (already populated by Nest's `rawBody: true`).
-   *   2. Verify Svix HMAC against rawBody — never re-stringify.
-   *   3. Compute SHA-256 checksum of rawBody.
-   *   4. Insert raw_event row idempotently (svix-id is the dedupe key).
-   *   5. If new, enqueue normalization job (jobId = raw_event_id).
-   *   6. Return 204 No Content.
-   *
-   * Never logs the payload on failure. Returns reasons in a tight enum so
-   * that a curious caller can't distinguish "wrong secret" from "missing
-   * header" — both render as a generic 400.
+   * Pipeline (target: <200ms):
+   *   1. Read raw body (Nest's `rawBody: true` populates it).
+   *   2. Verify Svix HMAC against the raw bytes — never re-stringify.
+   *   3. SHA-256 checksum of the raw body.
+   *   4. Inside `withTenant(tenantId)`: insertIfNotExists keyed on svix-id.
+   *   5. If new, enqueue normalization (jobId = raw_event_id).
+   *   6. Return 204.
    */
   @Post("resend")
   @HttpCode(204)
@@ -94,13 +92,16 @@ export class WebhooksController {
       "content-type",
     ]);
 
-    const result = await this.rawEvents.insertIfNotExists(
-      tenantId,
-      "resend",
-      svixId,
-      headersForStorage,
-      payload,
-      checksum,
+    const result = await withTenant(this.db, tenantId, async (tx) =>
+      this.rawEvents.insertIfNotExists(
+        tx,
+        tenantId,
+        "resend",
+        svixId,
+        headersForStorage,
+        payload,
+        checksum,
+      ),
     );
 
     if (result.isNew) {
@@ -114,10 +115,7 @@ export class WebhooksController {
   }
 
   /**
-   * POST /webhooks/twilio
-   *
-   * Twilio sends application/x-www-form-urlencoded. Fastify parses the body
-   * into an object; raw body is still available for the checksum.
+   * POST /webhooks/twilio — application/x-www-form-urlencoded.
    */
   @Post("twilio")
   @HttpCode(204)
@@ -153,13 +151,16 @@ export class WebhooksController {
       ? `${callSid}:${params["CallStatus"] ?? "_"}`
       : providerEventId;
 
-    const result = await this.rawEvents.insertIfNotExists(
-      tenantId,
-      "twilio",
-      compositeId,
-      headersForStorage,
-      params,
-      checksum,
+    const result = await withTenant(this.db, tenantId, async (tx) =>
+      this.rawEvents.insertIfNotExists(
+        tx,
+        tenantId,
+        "twilio",
+        compositeId,
+        headersForStorage,
+        params,
+        checksum,
+      ),
     );
 
     if (result.isNew) {

@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { createId } from "@vex/domain";
-import type { Db } from "../client.js";
+import type { Tx } from "../client.js";
 import { organizations, type Organization } from "../schema/organizations.js";
 import type { FieldConfidenceEntry } from "../merge.js";
 
@@ -15,39 +15,40 @@ export interface OrganizationUpsertData {
   sourceOfTruth?: string | null;
 }
 
+/**
+ * Stateless. Every method takes a `tx` from {@link withTenant} so RLS
+ * filters by `app.tenant_id`. Inserts also take an explicit `tenantId`
+ * because RLS WITH CHECK requires the column to match the session value.
+ */
 export class OrganizationRepository {
-  constructor(private readonly db: Db) {}
-
-  async findById(tenantId: string, id: string): Promise<Organization | null> {
-    const [row] = await this.db
+  async findById(tx: Tx, id: string): Promise<Organization | null> {
+    const [row] = await tx
       .select()
       .from(organizations)
-      .where(and(eq(organizations.tenantId, tenantId), eq(organizations.id, id)))
+      .where(eq(organizations.id, id))
       .limit(1);
     return row ?? null;
   }
 
   async findByExternalKey(
-    tenantId: string,
+    tx: Tx,
     system: string,
     key: string,
   ): Promise<Organization | null> {
-    const rows = await this.db
-      .select()
-      .from(organizations)
-      .where(eq(organizations.tenantId, tenantId));
+    const rows = await tx.select().from(organizations);
     return rows.find((row) => row.externalKeys[system] === key) ?? null;
   }
 
   async upsertByExternalKey(
+    tx: Tx,
     tenantId: string,
     system: string,
     key: string,
     data: OrganizationUpsertData,
   ): Promise<Organization> {
-    const existing = await this.findByExternalKey(tenantId, system, key);
+    const existing = await this.findByExternalKey(tx, system, key);
     if (existing) {
-      const [updated] = await this.db
+      const [updated] = await tx
         .update(organizations)
         .set({
           legalName: data.legalName,
@@ -56,15 +57,13 @@ export class OrganizationRepository {
           sourceOfTruth: data.sourceOfTruth ?? existing.sourceOfTruth,
           updatedAt: new Date(),
         })
-        .where(
-          and(eq(organizations.tenantId, tenantId), eq(organizations.id, existing.id)),
-        )
+        .where(eq(organizations.id, existing.id))
         .returning();
       if (!updated) throw new Error(`organization ${existing.id} vanished during update`);
       return updated;
     }
 
-    const [inserted] = await this.db
+    const [inserted] = await tx
       .insert(organizations)
       .values({
         id: createId(),
@@ -82,14 +81,14 @@ export class OrganizationRepository {
   }
 
   async updateFieldConfidence(
-    tenantId: string,
+    tx: Tx,
     id: string,
     fieldName: string,
     value: unknown,
     source: string,
     confidence: number,
   ): Promise<void> {
-    const existing = await this.findById(tenantId, id);
+    const existing = await this.findById(tx, id);
     if (!existing) throw new Error(`organization ${id} not found`);
     const entry: FieldConfidenceEntry = {
       value,
@@ -97,12 +96,12 @@ export class OrganizationRepository {
       confidence,
       updated_at: new Date().toISOString(),
     };
-    await this.db
+    await tx
       .update(organizations)
       .set({
         fieldConfidence: { ...existing.fieldConfidence, [fieldName]: entry },
         updatedAt: new Date(),
       })
-      .where(and(eq(organizations.tenantId, tenantId), eq(organizations.id, id)));
+      .where(and(eq(organizations.id, id)));
   }
 }

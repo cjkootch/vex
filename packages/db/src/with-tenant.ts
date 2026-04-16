@@ -1,26 +1,31 @@
 import { sql } from "drizzle-orm";
-import type { TenantId } from "@vex/domain";
-import type { Db } from "./client.js";
-
-export type TenantScopedDb = Db;
+import type { Db, Tx } from "./client.js";
 
 /**
- * Run a callback with the session variable `app.tenant_id` set to the given
- * tenant. Row-level security policies (enabled in Sprint 3) will use this
- * session variable to constrain reads and writes.
+ * Run a callback inside a Postgres transaction with `app.tenant_id` set to
+ * the given value. Every query the callback makes through `tx` is then
+ * row-level-security filtered against this tenant.
  *
- * Per invariant "All DB writes use withTenant(db, tenantId, fn)" — do not call
- * raw queries from app code; always go through this helper so the tenant guard
- * is always in scope.
- *
- * Until Sprint 3 lands the RLS policies the helper still sets the session var
- * so callers are written against the final API surface.
+ * Implementation notes:
+ *   - We use `set_config(..., true)` — equivalent to `SET LOCAL` but
+ *     parameter-safe. The value disappears at COMMIT/ROLLBACK; session
+ *     state never leaks across pooler connection reuses.
+ *   - The Drizzle neon-http driver batches transaction statements into a
+ *     single HTTP request that runs as one Postgres transaction, so the
+ *     setting persists for the rest of the callback.
+ *   - The callback receives a `Tx`, not `Db`, so callers can't accidentally
+ *     escape the transaction by reaching for the parent client.
  */
 export async function withTenant<T>(
   db: Db,
-  tenantId: TenantId,
-  fn: (scoped: TenantScopedDb) => Promise<T>,
+  tenantId: string,
+  fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
-  await db.execute(sql`SET LOCAL app.tenant_id = ${tenantId}`);
-  return fn(db);
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT set_config('app.tenant_id', ${tenantId}, true)`);
+    return fn(tx);
+  });
 }
+
+/** Alias kept for callers written against the Sprint 0 placeholder API. */
+export type TenantScopedDb = Tx;

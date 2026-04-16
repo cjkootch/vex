@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createId } from "@vex/domain";
-import type { Db } from "../client.js";
+import type { Tx } from "../client.js";
 import { events, type Event } from "../schema/events.js";
 
 export interface EventInsert {
@@ -17,28 +17,25 @@ export interface EventInsert {
 }
 
 export class EventRepository {
-  constructor(private readonly db: Db) {}
-
   /**
-   * Insert if no event with the same `(tenantId, idempotencyKey)` exists.
-   * Returns `{ isNew }` so the caller knows whether the row was a no-op.
-   * Mirrors the dedupe behaviour of {@link RawEventRepository.insertIfNotExists}.
+   * Insert if no event with the same `idempotencyKey` exists in the current
+   * tenant scope. Mirrors the dedupe behaviour of
+   * {@link RawEventRepository.insertIfNotExists}.
    */
   async insertIfNotExists(
+    tx: Tx,
     tenantId: string,
     data: EventInsert,
   ): Promise<{ event: Event; isNew: boolean }> {
-    const [existing] = await this.db
+    const [existing] = await tx
       .select()
       .from(events)
-      .where(
-        and(eq(events.tenantId, tenantId), eq(events.idempotencyKey, data.idempotencyKey)),
-      )
+      .where(eq(events.idempotencyKey, data.idempotencyKey))
       .limit(1);
 
     if (existing) return { event: existing, isNew: false };
 
-    const [row] = await this.db
+    const [row] = await tx
       .insert(events)
       .values({
         id: createId(),

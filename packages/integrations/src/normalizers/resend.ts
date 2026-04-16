@@ -82,7 +82,7 @@ export class ResendNormalizer {
 
     const recipient = payload.data.to?.[0];
     const contact = recipient
-      ? await this.deps.contacts.findByEmail(raw.tenantId, recipient)
+      ? await this.deps.contacts.findByEmail(this.deps.tx, recipient)
       : null;
 
     const campaignId = findCampaignFromTags(payload.data.tags);
@@ -95,7 +95,7 @@ export class ResendNormalizer {
     if (payload.data.bounce?.type) metadata["bounce_type"] = payload.data.bounce.type;
     if (payload.data.subject) metadata["subject"] = payload.data.subject;
 
-    await this.deps.touchpoints.insert(raw.tenantId, {
+    await this.deps.touchpoints.insert(this.deps.tx, raw.tenantId, {
       channel: "email",
       actor: "resend",
       occurredAt,
@@ -105,18 +105,22 @@ export class ResendNormalizer {
       metadata: { ...metadata, verb, recipient },
     });
 
-    const { event, isNew } = await this.deps.events.insertIfNotExists(raw.tenantId, {
-      verb,
-      subjectType: "contact",
-      subjectId: contact?.id ?? recipient ?? raw.providerEventId,
-      actorType: "campaign",
-      actorId: campaignId,
-      objectType: "email",
-      objectId: id,
-      occurredAt,
-      idempotencyKey: `resend:${id}`,
-      metadata,
-    });
+    const { event, isNew } = await this.deps.events.insertIfNotExists(
+      this.deps.tx,
+      raw.tenantId,
+      {
+        verb,
+        subjectType: "contact",
+        subjectId: contact?.id ?? recipient ?? raw.providerEventId,
+        actorType: "campaign",
+        actorId: campaignId,
+        objectType: "email",
+        objectId: id,
+        occurredAt,
+        idempotencyKey: `resend:${id}`,
+        metadata,
+      },
+    );
 
     return { status: "ok", eventId: event.id, isNewEvent: isNew };
   }

@@ -7,7 +7,7 @@ import {
 import type { Queue } from "bullmq";
 import { vi } from "vitest";
 import type { NormalizationJobData } from "@vex/agents";
-import type { RawEventRepository } from "@vex/db";
+import type { Db, RawEventRepository, Tx } from "@vex/db";
 import { AppModule } from "../../src/app.module.js";
 import { WebhooksModule } from "../../src/webhooks/webhooks.module.js";
 
@@ -57,11 +57,27 @@ export function makeFakeRawEventRepo(): FakeRawEventRepo {
   return repo;
 }
 
+/**
+ * Fake `Db` whose `transaction` runs the callback with a stub `Tx`. The
+ * stub is enough to satisfy `withTenant` — it just needs to expose
+ * `execute()` for the SET LOCAL call. The real query work happens through
+ * the injected fake repository which receives `tx` but ignores it.
+ */
+export function makeFakeDb(): Db {
+  const tx = {
+    execute: vi.fn(async () => undefined),
+  } as unknown as Tx;
+  return {
+    transaction: async <T>(cb: (t: Tx) => Promise<T>) => cb(tx),
+  } as unknown as Db;
+}
+
 export interface BuildTestAppOptions {
   resendSecret: string;
   twilioAuthToken: string;
   rawEventRepo?: FakeRawEventRepo;
   queue?: FakeQueue;
+  db?: Db;
   resolveTenant?: () => string;
 }
 
@@ -81,10 +97,13 @@ export async function buildTestApp(
 ): Promise<TestAppHandles> {
   const rawEventRepo = options.rawEventRepo ?? makeFakeRawEventRepo();
   const queue = options.queue ?? makeFakeQueue();
+  const db = options.db ?? makeFakeDb();
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
+      nextAuthSecret: TEST_NEXTAUTH_SECRET,
       webhooks: WebhooksModule.register({
+        db,
         rawEventRepository: rawEventRepo as unknown as RawEventRepository,
         normalizationQueue: queue as unknown as Queue<NormalizationJobData>,
         resendSecret: options.resendSecret,
@@ -93,7 +112,7 @@ export async function buildTestApp(
       }),
     }),
     new FastifyAdapter(),
-    { rawBody: true, logger: false },
+    { rawBody: true, logger: ["error"], abortOnError: false },
   );
   await app.init();
   await app.getHttpAdapter().getInstance().ready();
@@ -112,6 +131,9 @@ export const TEST_RESEND_SECRET =
   "whsec_" + Buffer.from("test-secret-bytes-1234567890abcdef").toString("base64");
 
 export const TEST_TWILIO_AUTH_TOKEN = "twilio-test-auth-token-do-not-use";
+
+export const TEST_NEXTAUTH_SECRET =
+  "test-nextauth-secret-must-be-at-least-32-chars-long";
 
 /** Stop ESLint complaining when vi is imported only for type side-effects. */
 export const _vi = vi;

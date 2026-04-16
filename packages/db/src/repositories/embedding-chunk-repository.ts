@@ -1,6 +1,6 @@
-import { and, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
-import type { Db } from "../client.js";
+import type { Tx } from "../client.js";
 import { embeddingChunks, type EmbeddingChunk } from "../schema/embedding-chunks.js";
 
 export interface EmbeddingChunkInsert {
@@ -15,14 +15,14 @@ export interface EmbeddingChunkInsert {
 /** Reciprocal Rank Fusion constant — standard value from the literature. */
 const RRF_K = 60;
 
+/** Stateless. Caller must wrap in `withTenant`. */
 export class EmbeddingChunkRepository {
-  constructor(private readonly db: Db) {}
-
   async insertChunk(
+    tx: Tx,
     tenantId: string,
     data: EmbeddingChunkInsert,
   ): Promise<EmbeddingChunk> {
-    const [inserted] = await this.db
+    const [inserted] = await tx
       .insert(embeddingChunks)
       .values({
         id: createId(),
@@ -41,38 +41,31 @@ export class EmbeddingChunkRepository {
 
   /**
    * Hybrid retrieval: Postgres full-text search + pgvector cosine similarity,
-   * merged via Reciprocal Rank Fusion (RRF, k=60).
-   *
-   * Both queries run against the tenant-scoped subset. The top `limit`
-   * candidates from each are merged by RRF score and the top `limit` overall
-   * is returned.
+   * merged via Reciprocal Rank Fusion (RRF, k=60). Both queries run inside
+   * the tenant-scoped transaction so RLS does the isolation work.
    */
   async hybridSearch(
-    tenantId: string,
+    tx: Tx,
     queryText: string,
     embedding: number[],
     limit: number,
   ): Promise<EmbeddingChunk[]> {
     const vectorLiteral = `[${embedding.join(",")}]`;
 
-    const ftRows = await this.db
+    const ftRows = await tx
       .select({ id: embeddingChunks.id })
       .from(embeddingChunks)
       .where(
-        and(
-          eq(embeddingChunks.tenantId, tenantId),
-          sql`${embeddingChunks.searchVector} @@ plainto_tsquery('english', ${queryText})`,
-        ),
+        sql`${embeddingChunks.searchVector} @@ plainto_tsquery('english', ${queryText})`,
       )
       .orderBy(
         sql`ts_rank(${embeddingChunks.searchVector}, plainto_tsquery('english', ${queryText})) DESC`,
       )
       .limit(limit);
 
-    const vecRows = await this.db
+    const vecRows = await tx
       .select({ id: embeddingChunks.id })
       .from(embeddingChunks)
-      .where(eq(embeddingChunks.tenantId, tenantId))
       .orderBy(sql`${embeddingChunks.embedding} <=> ${vectorLiteral}::vector`)
       .limit(limit);
 
@@ -90,17 +83,11 @@ export class EmbeddingChunkRepository {
       .map(([id]) => id);
     if (orderedIds.length === 0) return [];
 
-    const rows = await this.db
+    const rows = await tx
       .select()
       .from(embeddingChunks)
-      .where(
-        and(
-          eq(embeddingChunks.tenantId, tenantId),
-          sql`${embeddingChunks.id} = ANY(${orderedIds})`,
-        ),
-      );
+      .where(sql`${embeddingChunks.id} = ANY(${orderedIds})`);
 
-    // Preserve RRF order
     const byId = new Map(rows.map((r) => [r.id, r]));
     return orderedIds.flatMap((id) => {
       const row = byId.get(id);

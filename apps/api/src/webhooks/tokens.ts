@@ -2,6 +2,7 @@
  * NestJS DI tokens. Symbols ensure no string drift between module providers
  * and constructor injections.
  */
+export const DB_CLIENT = Symbol("DB_CLIENT");
 export const RAW_EVENT_REPO = Symbol("RAW_EVENT_REPO");
 export const NORMALIZATION_QUEUE = Symbol("NORMALIZATION_QUEUE");
 export const RESEND_VERIFIER = Symbol("RESEND_VERIFIER");
