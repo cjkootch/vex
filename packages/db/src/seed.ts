@@ -1,4 +1,6 @@
-import { Pool } from "pg";
+// `pg` is CommonJS; Node's strict ESM resolver can't pull named exports off it.
+import pg from "pg";
+const { Pool } = pg;
 import { drizzle } from "drizzle-orm/node-postgres";
 import { loadEnv } from "@vex/config";
 import { createId } from "@vex/domain";
