@@ -102,12 +102,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@vex/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@vex/domain':
-        specifier: workspace:*
-        version: link:../../packages/domain
       '@vex/ui':
         specifier: workspace:*
         version: link:../../packages/ui
