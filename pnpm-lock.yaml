@@ -65,6 +65,9 @@ importers:
       '@vex/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
+      '@vex/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       bullmq:
         specifier: 5.12.0
         version: 5.12.0
@@ -83,6 +86,9 @@ importers:
       twilio:
         specifier: 5.2.2
         version: 5.2.2
+      zod:
+        specifier: 3.23.8
+        version: 3.23.8
     devDependencies:
       tsx:
         specifier: 4.16.2
@@ -96,12 +102,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@vex/db':
-        specifier: workspace:*
-        version: link:../../packages/db
-      '@vex/domain':
-        specifier: workspace:*
-        version: link:../../packages/domain
       '@vex/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -188,6 +188,9 @@ importers:
       '@opentelemetry/api':
         specifier: 1.9.0
         version: 1.9.0
+      '@vex/config':
+        specifier: workspace:*
+        version: link:../config
       '@vex/db':
         specifier: workspace:*
         version: link:../db
@@ -200,6 +203,9 @@ importers:
       '@vex/telemetry':
         specifier: workspace:*
         version: link:../telemetry
+      '@vex/ui':
+        specifier: workspace:*
+        version: link:../ui
       bullmq:
         specifier: 5.12.0
         version: 5.12.0
@@ -210,6 +216,9 @@ importers:
         specifier: 3.23.8
         version: 3.23.8
     devDependencies:
+      tsx:
+        specifier: 4.16.2
+        version: 4.16.2
       typescript:
         specifier: 5.5.3
         version: 5.5.3

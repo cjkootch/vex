@@ -1,56 +1,166 @@
-import type { ViewManifestT, ViewNodeT } from "@vex/ui";
+import type { ManifestPanel, ViewManifest } from "@vex/ui";
 
 /**
- * Render a typed ViewManifest. The component never accepts raw HTML — every
- * node is discriminated on `kind` and rendered into real React elements.
+ * Render a typed ViewManifest. Each panel type maps to a small dedicated
+ * component. The component never accepts raw HTML — every value is rendered
+ * as text inside React elements.
  */
-export function ManifestRenderer({ manifest }: { manifest: ViewManifestT }) {
-  return <Node node={manifest.root} />;
+export function ManifestRenderer({ manifest }: { manifest: ViewManifest }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {manifest.panels.map((panel, i) => (
+        <Panel key={i} panel={panel} />
+      ))}
+    </div>
+  );
 }
 
-function Node({ node }: { node: ViewNodeT }) {
-  switch (node.kind) {
-    case "text":
-      return <span>{node.value}</span>;
-    case "heading": {
-      const Tag = `h${node.level}` as const;
-      return <Tag>{node.value}</Tag>;
-    }
-    case "stack":
+function Panel({ panel }: { panel: ManifestPanel }) {
+  switch (panel.type) {
+    case "profile":
       return (
-        <div
-          style={{
-            display: "flex",
-            flexDirection: node.direction === "row" ? "row" : "column",
-            gap: 12,
-          }}
+        <section data-panel="profile">
+          <h2>{panel.objectType}</h2>
+          <dl>
+            {Object.entries(panel.fields).map(([k, v]) => (
+              <div key={k}>
+                <dt style={{ fontWeight: 600 }}>{k}</dt>
+                <dd>{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      );
+    case "table":
+      return (
+        <section data-panel="table">
+          <h2>{panel.title}</h2>
+          <table>
+            <thead>
+              <tr>
+                {panel.columns.map((c) => (
+                  <th key={c}>{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {panel.rows.map((row, ri) => (
+                <tr key={ri}>
+                  {panel.columns.map((c) => (
+                    <td key={c}>{row[c] ?? ""}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      );
+    case "timeline":
+      return (
+        <section data-panel="timeline">
+          <h2>{panel.title}</h2>
+          <ol>
+            {panel.events.map((e, i) => (
+              <li key={i}>
+                <strong>{e.occurred_at}</strong> — <em>{e.verb}</em> — {e.summary}
+                <span style={{ color: "#888" }}> ({e.source})</span>
+              </li>
+            ))}
+          </ol>
+        </section>
+      );
+    case "kpi_rail":
+      return (
+        <section
+          data-panel="kpi_rail"
+          style={{ display: "flex", gap: 16, flexWrap: "wrap" }}
         >
-          {node.children.map((child, i) => (
-            <Node key={i} node={child} />
+          {panel.metrics.map((m, i) => (
+            <div key={i} style={{ minWidth: 120 }}>
+              <div style={{ color: "#888", fontSize: 12 }}>{m.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 600 }}>
+                {m.value}
+                {m.unit ? ` ${m.unit}` : ""}
+              </div>
+              {m.delta && (
+                <div style={{ fontSize: 12 }}>
+                  {m.trend === "up" ? "▲" : m.trend === "down" ? "▼" : "—"} {m.delta}
+                </div>
+              )}
+            </div>
           ))}
-        </div>
+        </section>
       );
-    case "list":
+    case "evidence":
       return (
-        <ul>
-          {node.items.map((item, i) => (
-            <li key={i}>
-              <Node node={item} />
-            </li>
-          ))}
-        </ul>
+        <section data-panel="evidence">
+          <h2>Evidence</h2>
+          <ul>
+            {panel.items.map((item) => (
+              <li key={item.chunk_id}>
+                <code>{item.chunk_id}</code> — {item.source_ref} (
+                {item.occurred_at ?? "unknown"}, {item.freshness_hours.toFixed(1)}h old,
+                conf {item.confidence_score.toFixed(2)})
+              </li>
+            ))}
+          </ul>
+        </section>
       );
-    case "action":
+    case "graph":
       return (
-        <button data-action-id={node.actionId} data-tier={node.tier}>
-          {node.label}
-        </button>
+        <section data-panel="graph">
+          <h2>Graph</h2>
+          <div style={{ color: "#888", fontSize: 12 }}>
+            {panel.nodes.length} nodes, {panel.edges.length} edges
+          </div>
+          <ul>
+            {panel.nodes.map((n) => (
+              <li key={n.id}>
+                <strong>{n.label}</strong> ({n.objectType})
+              </li>
+            ))}
+          </ul>
+        </section>
       );
-    case "kv":
+    case "campaign":
       return (
-        <div>
-          <strong>{node.label}:</strong> <span>{node.value}</span>
-        </div>
+        <section data-panel="campaign">
+          <h2>Campaign {panel.campaignId}</h2>
+          <table>
+            <tbody>
+              <tr>
+                <th>Sent</th>
+                <td>{panel.sent}</td>
+              </tr>
+              <tr>
+                <th>Delivered</th>
+                <td>{panel.delivered}</td>
+              </tr>
+              <tr>
+                <th>Opened (weak)</th>
+                <td>{panel.opened}</td>
+              </tr>
+              <tr>
+                <th>Clicked</th>
+                <td>{panel.clicked}</td>
+              </tr>
+              <tr>
+                <th>Bounced</th>
+                <td>{panel.bounced}</td>
+              </tr>
+              <tr>
+                <th>Click rate</th>
+                <td>{(panel.click_rate * 100).toFixed(1)}%</td>
+              </tr>
+              <tr>
+                <th>Open rate</th>
+                <td>
+                  {(panel.open_rate * 100).toFixed(1)}% (open_confidence: {panel.open_confidence})
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
       );
   }
 }

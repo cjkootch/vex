@@ -1,7 +1,8 @@
 export {
   ViewManifest,
-  ViewNode,
+  ManifestPanel,
   validateManifest,
-  type ViewManifestT,
-  type ViewNodeT,
+  manifestFallback,
+  type ManifestPanelType,
+  type ManifestValidationResult,
 } from "./view-manifest.js";

@@ -1,68 +1,145 @@
 import { z } from "zod";
 
 /**
- * The ViewManifest is Vex's canonical model-output format.
+ * The ViewManifest is Vex's canonical model output.
  *
- * Invariants enforced by this schema:
- *   - The model never returns HTML — it returns a typed tree of `ViewNode`s.
- *   - `ManifestValidator` (see `validateManifest`) runs before any component
- *     renders a manifest. If validation fails, the renderer falls back to a
- *     safe empty state and raises a telemetry event.
+ * Invariants:
+ *   - The model never returns HTML — only this typed JSON.
+ *   - {@link validateManifest} runs before any component renders. On failure
+ *     the renderer falls back to {@link manifestFallback} and a telemetry
+ *     event is raised.
+ *   - Each panel is shaped for one specific Vex affordance; the model picks
+ *     the simplest panel set that answers the question.
  */
 
-// Forward reference — defined below and plugged in via z.lazy.
-export type ViewNodeT =
-  | { kind: "text"; value: string }
-  | { kind: "heading"; level: 1 | 2 | 3; value: string }
-  | { kind: "stack"; direction: "row" | "column"; children: ViewNodeT[] }
-  | { kind: "list"; items: ViewNodeT[] }
-  | {
-      kind: "action";
-      tier: "T0" | "T1" | "T2" | "T3";
-      label: string;
-      actionId: string;
-    }
-  | { kind: "kv"; label: string; value: string };
+const ProfilePanel = z.object({
+  type: z.literal("profile"),
+  objectType: z.string().min(1),
+  objectId: z.string().min(1),
+  fields: z.record(z.string()),
+});
 
-export const ViewNode: z.ZodType<ViewNodeT> = z.lazy(() =>
-  z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("text"), value: z.string() }),
+const TablePanel = z.object({
+  type: z.literal("table"),
+  title: z.string().min(1),
+  columns: z.array(z.string()).min(1),
+  rows: z.array(z.record(z.string())),
+});
+
+const TimelinePanel = z.object({
+  type: z.literal("timeline"),
+  title: z.string().min(1),
+  events: z.array(
     z.object({
-      kind: z.literal("heading"),
-      level: z.union([z.literal(1), z.literal(2), z.literal(3)]),
-      value: z.string(),
+      occurred_at: z.string(),
+      verb: z.string(),
+      summary: z.string(),
+      source: z.string(),
     }),
+  ),
+});
+
+const KpiRailPanel = z.object({
+  type: z.literal("kpi_rail"),
+  metrics: z
+    .array(
+      z.object({
+        label: z.string(),
+        value: z.string(),
+        unit: z.string().optional(),
+        delta: z.string().optional(),
+        trend: z.enum(["up", "down", "flat"]).optional(),
+      }),
+    )
+    .min(1),
+});
+
+const EvidencePanel = z.object({
+  type: z.literal("evidence"),
+  items: z.array(
     z.object({
-      kind: z.literal("stack"),
-      direction: z.enum(["row", "column"]),
-      children: z.array(ViewNode),
+      chunk_id: z.string(),
+      source_ref: z.string(),
+      occurred_at: z.string().nullable(),
+      freshness_hours: z.number(),
+      confidence_score: z.number().min(0).max(1),
     }),
-    z.object({ kind: z.literal("list"), items: z.array(ViewNode) }),
-    z.object({
-      kind: z.literal("action"),
-      tier: z.enum(["T0", "T1", "T2", "T3"]),
-      label: z.string().min(1),
-      actionId: z.string().min(1),
-    }),
-    z.object({ kind: z.literal("kv"), label: z.string(), value: z.string() }),
-  ]),
-);
+  ),
+});
+
+const GraphPanel = z.object({
+  type: z.literal("graph"),
+  nodes: z.array(
+    z.object({ id: z.string(), label: z.string(), objectType: z.string() }),
+  ),
+  edges: z.array(
+    z.object({ source: z.string(), target: z.string(), label: z.string().optional() }),
+  ),
+});
+
+const CampaignPanel = z.object({
+  type: z.literal("campaign"),
+  campaignId: z.string(),
+  sent: z.number().int().nonnegative(),
+  delivered: z.number().int().nonnegative(),
+  clicked: z.number().int().nonnegative(),
+  opened: z.number().int().nonnegative(),
+  bounced: z.number().int().nonnegative(),
+  click_rate: z.number().min(0).max(1),
+  open_rate: z.number().min(0).max(1),
+  /** Resend's open_rate is image-pixel based — always weak, never strong. */
+  open_confidence: z.literal("weak"),
+});
+
+export const ManifestPanel = z.discriminatedUnion("type", [
+  ProfilePanel,
+  TablePanel,
+  TimelinePanel,
+  KpiRailPanel,
+  EvidencePanel,
+  GraphPanel,
+  CampaignPanel,
+]);
+export type ManifestPanel = z.infer<typeof ManifestPanel>;
+
+export type ManifestPanelType = ManifestPanel["type"];
 
 export const ViewManifest = z.object({
-  version: z.literal(1),
-  title: z.string().min(1),
-  root: ViewNode,
+  panels: z.array(ManifestPanel),
 });
-export type ViewManifestT = z.infer<typeof ViewManifest>;
+export type ViewManifest = z.infer<typeof ViewManifest>;
+
+/** Validation result. Always carries a usable manifest (`fallback` on error). */
+export type ManifestValidationResult =
+  | { success: true; manifest: ViewManifest }
+  | { success: false; error: string; fallback: ViewManifest };
 
 /**
- * Run the ManifestValidator. Throws a descriptive error if the manifest is
- * malformed. Call this before handing a manifest to any renderer.
+ * Run the ManifestValidator. If `raw` is malformed, returns `success: false`
+ * with a single-table fallback so the renderer always has something to draw.
+ * Never throws.
  */
-export function validateManifest(raw: unknown): ViewManifestT {
+export function validateManifest(raw: unknown): ManifestValidationResult {
   const result = ViewManifest.safeParse(raw);
-  if (!result.success) {
-    throw new Error(`ManifestValidator rejected manifest: ${result.error.message}`);
-  }
-  return result.data;
+  if (result.success) return { success: true, manifest: result.data };
+  return {
+    success: false,
+    error: result.error.message,
+    fallback: manifestFallback(
+      "Sorry — the model returned a response Vex couldn't render. The raw answer is preserved below.",
+    ),
+  };
+}
+
+/**
+ * Build a guaranteed-renderable manifest from a single text payload. Used as
+ * the fallback when validation fails and as a last-resort renderer when the
+ * model produces nothing useful.
+ */
+export function manifestFallback(text: string): ViewManifest {
+  return {
+    panels: [
+      { type: "table", title: "Answer", columns: ["text"], rows: [{ text }] },
+    ],
+  };
 }

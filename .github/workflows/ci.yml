@@ -37,3 +37,41 @@ jobs:
 
       - name: Unit test
         run: pnpm -r run test
+
+  eval:
+    name: Run eval suite
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Sprint 4 — blocking eval gate. Skips when secrets aren't configured
+    # (forks, dependabot) so we don't fail PRs that can't access them.
+    if: ${{ secrets.NEON_DEV_URL != '' }}
+    env:
+      APPLICATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
+      MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      REDIS_URL: redis://localhost:6379
+      S3_BUCKET: vex-eval
+      S3_ACCESS_KEY_ID: test
+      S3_SECRET_ACCESS_KEY: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Run eval suite
+        run: pnpm eval:run
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: evals/results/latest.json
+          if-no-files-found: ignore

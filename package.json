@@ -16,6 +16,7 @@
     "test": "pnpm -r run test",
     "db:migrate": "pnpm --filter=@vex/db run migrate",
     "db:seed": "pnpm --filter=@vex/db run seed",
+    "eval:run": "pnpm --filter=@vex/agents run eval:run",
     "clean": "pnpm -r run clean && rm -rf node_modules"
   },
   "devDependencies": {
