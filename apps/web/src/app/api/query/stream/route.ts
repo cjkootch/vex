@@ -69,7 +69,7 @@ async function proxy(upstreamBase: string, req: NextRequest): Promise<Response> 
     });
     return new Response(response.body, {
       status: response.status,
-      headers: response.headers,
+      headers: sanitizeResponseHeaders(response.headers),
     });
   } catch (err) {
     return NextResponse.json(
@@ -77,6 +77,21 @@ async function proxy(upstreamBase: string, req: NextRequest): Promise<Response> 
       { status: 502 },
     );
   }
+}
+
+/**
+ * Node fetch auto-decompresses upstream responses, but the upstream
+ * headers still say `content-encoding: gzip` + the original compressed
+ * `content-length`. Forwarding those to the browser triggers
+ * ERR_CONTENT_DECODING_FAILED. Strip both so the browser reads the body
+ * as raw bytes.
+ */
+function sanitizeResponseHeaders(src: Headers): Headers {
+  const out = new Headers(src);
+  out.delete("content-encoding");
+  out.delete("content-length");
+  out.delete("transfer-encoding");
+  return out;
 }
 
 function stubAnswer(message: string): string {
