@@ -11,6 +11,11 @@ export {
   type EvalFixtureT,
 } from "./evals/fixture.js";
 export {
+  QueryName,
+  QUERY_PROMPT_VERSION,
+  QUERY_SYSTEM_PROMPT,
+} from "./prompts/index.js";
+export {
   QueueName,
   QueueConcurrency,
   createRedisConnection,

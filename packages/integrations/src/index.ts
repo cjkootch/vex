@@ -1,5 +1,20 @@
-export { createAnthropicClient, type AnthropicDeps } from "./anthropic.js";
-export { createOpenAIClient, type OpenAIDeps } from "./openai.js";
+export {
+  AnthropicAdapter,
+  createAnthropicClient,
+  parseModelOutput,
+  renderEvidencePack,
+  type AnthropicDeps,
+  type CompletionRequest,
+  type ProposedAction,
+  type QueryParams,
+  type QueryResult,
+} from "./anthropic.js";
+export {
+  OpenAIAdapter,
+  createOpenAIClient,
+  type OpenAIDeps,
+  type EmbedRequest,
+} from "./openai.js";
 export { createTwilioClient } from "./twilio.js";
 export { createResendClient } from "./resend.js";
 export { pricing } from "./pricing.js";

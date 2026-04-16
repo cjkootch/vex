@@ -7,9 +7,11 @@
   },
   "include": ["src/**/*"],
   "references": [
+    { "path": "../config" },
     { "path": "../db" },
     { "path": "../domain" },
     { "path": "../integrations" },
-    { "path": "../telemetry" }
+    { "path": "../telemetry" },
+    { "path": "../ui" }
   ]
 }

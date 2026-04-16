@@ -16,6 +16,7 @@
     { "path": "../../packages/db" },
     { "path": "../../packages/domain" },
     { "path": "../../packages/integrations" },
-    { "path": "../../packages/telemetry" }
+    { "path": "../../packages/telemetry" },
+    { "path": "../../packages/ui" }
   ]
 }
