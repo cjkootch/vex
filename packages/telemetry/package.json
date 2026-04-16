@@ -1,0 +1,38 @@
+{
+  "name": "@vex/telemetry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./cost-ledger": {
+      "types": "./dist/cost-ledger.d.ts",
+      "default": "./dist/cost-ledger.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.9.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.52.1",
+    "@opentelemetry/resources": "1.25.1",
+    "@opentelemetry/sdk-node": "0.52.1",
+    "@opentelemetry/sdk-trace-node": "1.25.1",
+    "@opentelemetry/semantic-conventions": "1.25.1"
+  },
+  "devDependencies": {
+    "@vex/domain": "workspace:*",
+    "typescript": "5.5.3",
+    "vitest": "1.6.0"
+  }
+}

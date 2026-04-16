@@ -1,0 +1,49 @@
+{
+  "name": "@vex/integrations",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./anthropic": {
+      "types": "./dist/anthropic.d.ts",
+      "default": "./dist/anthropic.js"
+    },
+    "./openai": {
+      "types": "./dist/openai.d.ts",
+      "default": "./dist/openai.js"
+    },
+    "./twilio": {
+      "types": "./dist/twilio.d.ts",
+      "default": "./dist/twilio.js"
+    },
+    "./resend": {
+      "types": "./dist/resend.d.ts",
+      "default": "./dist/resend.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.27.3",
+    "openai": "4.56.0",
+    "resend": "3.5.0",
+    "twilio": "5.2.2"
+  },
+  "devDependencies": {
+    "@vex/domain": "workspace:*",
+    "@vex/telemetry": "workspace:*",
+    "typescript": "5.5.3",
+    "vitest": "1.6.0"
+  }
+}
