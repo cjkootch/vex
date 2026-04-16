@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, lt, or, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { organizations, type Organization } from "../schema/organizations.js";
@@ -103,5 +103,29 @@ export class OrganizationRepository {
         updatedAt: new Date(),
       })
       .where(and(eq(organizations.id, id)));
+  }
+
+  /**
+   * Active orgs that haven't been "researched" recently — used by the
+   * AgentScanner to fan out ResearchAgent jobs. "Researched" is inferred
+   * from `updated_at` (Sprint 7 will switch to a per-org last_research_at
+   * column once we have it). Returns at most `limit` rows.
+   */
+  async listResearchCandidates(
+    tx: Tx,
+    olderThan: Date,
+    limit = 10,
+  ): Promise<Organization[]> {
+    return tx
+      .select()
+      .from(organizations)
+      .where(
+        and(
+          eq(organizations.status, "active"),
+          or(lt(organizations.updatedAt, olderThan), sql`true`),
+        ),
+      )
+      .orderBy(asc(organizations.updatedAt))
+      .limit(limit);
   }
 }

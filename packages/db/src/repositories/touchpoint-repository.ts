@@ -1,3 +1,4 @@
+import { and, desc, eq, gte } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { touchpoints, type Touchpoint } from "../schema/touchpoints.js";
@@ -32,5 +33,30 @@ export class TouchpointRepository {
       .returning();
     if (!row) throw new Error("touchpoint insert returned no row");
     return row;
+  }
+
+  /** Touchpoints with `occurred_at >= since`. Used by DailyBriefAgent. */
+  async listSince(tx: Tx, since: Date, limit = 200): Promise<Touchpoint[]> {
+    return tx
+      .select()
+      .from(touchpoints)
+      .where(gte(touchpoints.occurredAt, since))
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(limit);
+  }
+
+  /** Touchpoints for a specific org since `since`. Used by ResearchAgent. */
+  async listForOrgSince(
+    tx: Tx,
+    orgId: string,
+    since: Date,
+    limit = 50,
+  ): Promise<Touchpoint[]> {
+    return tx
+      .select()
+      .from(touchpoints)
+      .where(and(eq(touchpoints.orgId, orgId), gte(touchpoints.occurredAt, since)))
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(limit);
   }
 }

@@ -10,3 +10,16 @@ export type { EmbeddingChunkInsert } from "./embedding-chunk-repository.js";
 export { TouchpointRepository, type TouchpointInsert } from "./touchpoint-repository.js";
 export { ActivityRepository, type ActivityInsert } from "./activity-repository.js";
 export { EventRepository, type EventInsert } from "./event-repository.js";
+export { WorkspaceRepository } from "./workspace-repository.js";
+export {
+  AgentRunRepository,
+  type AgentRunCreate,
+  type AgentRunComplete,
+  type AgentRunStatus,
+} from "./agent-run-repository.js";
+export {
+  ApprovalRepository,
+  type ApprovalCreate,
+  type ApprovalDecision,
+} from "./approval-repository.js";
+export { ThreadRepository } from "./thread-repository.js";

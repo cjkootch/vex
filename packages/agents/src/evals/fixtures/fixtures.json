@@ -92,5 +92,45 @@
     ],
     "expected_answer_contains": ["paid_search_q2", "spend"],
     "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_011",
+    "question": "Run the daily brief for the demo workspace and check that it includes a KPI rail.",
+    "expected_subject_types": ["summary", "workspace"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["kpi_rail"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_012",
+    "question": "After research runs for Acme Corporation, a research_brief summary exists for the org.",
+    "expected_subject_types": ["summary", "organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000001"],
+    "expected_answer_contains": ["research_brief", "Acme"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_013",
+    "question": "After follow-up runs against the seeded stale lead for Umbrella, an approval row appears in the inbox.",
+    "expected_subject_types": ["approval", "lead"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000004"],
+    "expected_answer_contains": ["approval", "follow_up"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_014",
+    "question": "When an approval is rejected, the proposed action is not executed and the audit log records the decision.",
+    "expected_subject_types": ["approval", "event"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["rejected", "approval"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_015",
+    "question": "When workspace.kill_all_agents = true, the follow-up agent run is skipped and no approval rows are created.",
+    "expected_subject_types": ["workspace", "agent_run"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["kill", "skipped"],
+    "retrieval_mode": "hybrid"
   }
 ]

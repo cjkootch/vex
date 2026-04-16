@@ -7,17 +7,23 @@ import IORedis, { type Redis } from "ioredis";
 export const QueueName = {
   Normalization: "normalization",
   Dlq: "dlq",
+  Agents: "agents",
+  ApprovalExecutor: "approval-executor",
 } as const;
 export type QueueName = (typeof QueueName)[keyof typeof QueueName];
 
 /**
- * Concurrency caps. Tuned for Sprint 2:
+ * Concurrency caps. Tuned per queue:
  *   - normalization: many short jobs, IO-heavy → 10
  *   - dlq: low-volume audit work, manual review pace → 2
+ *   - agents: each job hits Claude → 4 to keep token bursts smooth
+ *   - approval-executor: low volume, runs after a human approves → 2
  */
 export const QueueConcurrency: Record<QueueName, number> = {
   [QueueName.Normalization]: 10,
   [QueueName.Dlq]: 2,
+  [QueueName.Agents]: 4,
+  [QueueName.ApprovalExecutor]: 2,
 };
 
 /** Job payload shapes — both queues take `{raw_event_id, tenant_id}`. */
@@ -32,6 +38,21 @@ export interface DlqJobData extends NormalizationJobData {
   failed_at: string;
 }
 
+/** Agent job payload — kind drives which agent the worker constructs. */
+export type AgentJobKind = "daily_brief" | "research" | "follow_up";
+export interface AgentJobData {
+  kind: AgentJobKind;
+  workspace_id: string;
+  /** Agent-specific input — `research` carries `{ organization_id }`. */
+  input?: Record<string, unknown>;
+}
+
+/** Approval-executor job — runs the side effect of an approved row. */
+export interface ApprovalExecutorJobData {
+  approval_id: string;
+  workspace_id: string;
+}
+
 /**
  * Build a BullMQ Redis connection. We disable `maxRetriesPerRequest` because
  * BullMQ requires it to be `null` for blocking operations.
@@ -41,13 +62,15 @@ export function createRedisConnection(redisUrl: string): Redis {
 }
 
 /**
- * Producer-side queue handle. Use `addNormalizationJob()` rather than
- * `queue.add()` directly so the jobId convention (raw_event_id) stays
- * uniform — that's the queue-level dedupe story.
+ * Producer-side queue handles. Use the typed helpers (`addNormalizationJob`,
+ * `addAgentJob`, `addApprovalExecutorJob`) rather than `queue.add()` so
+ * jobId conventions stay uniform — those are the dedupe story.
  */
 export interface QueueHandles {
   normalization: Queue<NormalizationJobData>;
   dlq: Queue<DlqJobData>;
+  agents: Queue<AgentJobData>;
+  approvalExecutor: Queue<ApprovalExecutorJobData>;
   close: () => Promise<void>;
 }
 
@@ -69,12 +92,32 @@ export function createQueues(connection: Redis): QueueHandles {
       removeOnFail: false,
     },
   });
+  const agents = new Queue<AgentJobData>(QueueName.Agents, {
+    connection,
+    defaultJobOptions: {
+      attempts: 2,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: { count: 500, age: 7 * 24 * 3600 },
+      removeOnFail: { count: 1_000, age: 30 * 24 * 3600 },
+    },
+  });
+  const approvalExecutor = new Queue<ApprovalExecutorJobData>(QueueName.ApprovalExecutor, {
+    connection,
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 2_000 },
+    },
+  });
   return {
     normalization,
     dlq,
+    agents,
+    approvalExecutor,
     async close() {
       await normalization.close();
       await dlq.close();
+      await agents.close();
+      await approvalExecutor.close();
     },
   };
 }
@@ -89,6 +132,55 @@ export async function addNormalizationJob(
   data: NormalizationJobData,
 ): Promise<void> {
   await queue.add("normalize", data, { jobId: data.raw_event_id });
+}
+
+/**
+ * Enqueue an agent job. `dedupeKey` is appended to the jobId so a scanner
+ * sweeping the same workspace twice in a window doesn't enqueue duplicates.
+ */
+export async function addAgentJob(
+  queue: Queue<AgentJobData>,
+  data: AgentJobData,
+  dedupeKey?: string,
+): Promise<void> {
+  const jobId = dedupeKey
+    ? `${data.kind}:${data.workspace_id}:${dedupeKey}`
+    : `${data.kind}:${data.workspace_id}:${Date.now()}`;
+  await queue.add(data.kind, data, { jobId });
+}
+
+/**
+ * Schedule the recurring agents (DailyBrief and FollowUp) on this worker.
+ * Uses BullMQ's repeatable jobs — re-registering with the same `name` and
+ * pattern is a no-op so it's safe to call on every worker boot.
+ */
+export async function scheduleRecurringAgents(
+  queue: Queue<AgentJobData>,
+  workspaceId: string,
+): Promise<void> {
+  await queue.add(
+    "daily_brief",
+    { kind: "daily_brief", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 6 * * 1-5" },
+      jobId: `recurring:daily_brief:${workspaceId}`,
+    },
+  );
+  await queue.add(
+    "follow_up",
+    { kind: "follow_up", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 */2 8-18 * * 1-5" },
+      jobId: `recurring:follow_up:${workspaceId}`,
+    },
+  );
+}
+
+export async function addApprovalExecutorJob(
+  queue: Queue<ApprovalExecutorJobData>,
+  data: ApprovalExecutorJobData,
+): Promise<void> {
+  await queue.add("execute", data, { jobId: data.approval_id });
 }
 
 /**
@@ -141,4 +233,28 @@ export function createDlqWorker(
     connection,
     concurrency: QueueConcurrency[QueueName.Dlq],
   });
+}
+
+export function createAgentWorker(
+  processor: Processor<AgentJobData, unknown>,
+  connection: Redis,
+): Worker<AgentJobData> {
+  return new Worker<AgentJobData>(QueueName.Agents, processor, {
+    connection,
+    concurrency: QueueConcurrency[QueueName.Agents],
+  });
+}
+
+export function createApprovalExecutorWorker(
+  processor: Processor<ApprovalExecutorJobData, unknown>,
+  connection: Redis,
+): Worker<ApprovalExecutorJobData> {
+  return new Worker<ApprovalExecutorJobData>(
+    QueueName.ApprovalExecutor,
+    processor,
+    {
+      connection,
+      concurrency: QueueConcurrency[QueueName.ApprovalExecutor],
+    },
+  );
 }

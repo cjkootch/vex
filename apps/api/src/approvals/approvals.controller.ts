@@ -1,0 +1,67 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
+import { z } from "zod";
+import { JwtAuthGuard, TenantContext } from "../auth/index.js";
+import { ApprovalsService } from "./approvals.service.js";
+
+const RejectBody = z.object({ reason: z.string().min(1).optional() });
+
+@Controller("approvals")
+@UseGuards(JwtAuthGuard)
+export class ApprovalsController {
+  constructor(
+    @Inject(TenantContext) private readonly tenant: TenantContext,
+    @Inject(ApprovalsService) private readonly service: ApprovalsService,
+  ) {}
+
+  @Get()
+  async list(@Query("status") status: string | undefined, @Query("limit") limit: string | undefined) {
+    if (status && status !== "pending") {
+      // Sprint 6 only ships /pending; richer filters land in Sprint 7.
+      return { approvals: [] };
+    }
+    const approvals = await this.service.listPending({
+      tenantId: this.tenant.tenantId,
+      limit: limit ? Number(limit) : 20,
+    });
+    return { approvals };
+  }
+
+  @Get(":id")
+  async detail(@Param("id") id: string) {
+    const approval = await this.service.findById(this.tenant.tenantId, id);
+    return { approval };
+  }
+
+  @Post(":id/approve")
+  async approve(@Param("id") id: string) {
+    const approval = await this.service.approve({
+      tenantId: this.tenant.tenantId,
+      workspaceId: this.tenant.workspaceId,
+      approvalId: id,
+      reviewerId: this.tenant.userId,
+    });
+    return { approval };
+  }
+
+  @Post(":id/reject")
+  async reject(@Param("id") id: string, @Body() raw: unknown) {
+    const body = RejectBody.parse(raw ?? {});
+    const approval = await this.service.reject({
+      tenantId: this.tenant.tenantId,
+      workspaceId: this.tenant.workspaceId,
+      approvalId: id,
+      reviewerId: this.tenant.userId,
+      ...(body.reason ? { reason: body.reason } : {}),
+    });
+    return { approval };
+  }
+}

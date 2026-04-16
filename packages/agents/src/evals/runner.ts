@@ -37,7 +37,7 @@ interface RunSummary {
 }
 
 async function main(): Promise<void> {
-  const fixtureName = process.argv[2] ?? "sprint1";
+  const fixtureName = process.argv[2] ?? "fixtures";
   const env = loadEnv();
 
   if (!env.OPENAI_API_KEY || !env.ANTHROPIC_API_KEY) {

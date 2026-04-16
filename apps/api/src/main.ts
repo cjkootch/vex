@@ -5,13 +5,20 @@ import {
   type NestFastifyApplication,
 } from "@nestjs/platform-fastify";
 import { loadEnv } from "@vex/config";
-import { createDb, RawEventRepository, RetrievalService } from "@vex/db";
+import {
+  ApprovalRepository,
+  EventRepository,
+  RawEventRepository,
+  RetrievalService,
+  createDb,
+} from "@vex/db";
 import { createQueues, createRedisConnection } from "@vex/agents";
 import { AnthropicAdapter, OpenAIAdapter } from "@vex/integrations";
 import { initOtel, InMemoryCostLedger, shutdownOtel } from "@vex/telemetry";
 import { AppModule } from "./app.module.js";
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
+import { ApprovalsModule } from "./approvals/approvals.module.js";
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
@@ -36,11 +43,11 @@ async function bootstrap(): Promise<void> {
 
   const db = createDb(env.APPLICATION_DATABASE_URL);
   const rawEventRepository = new RawEventRepository();
+  const approvalRepository = new ApprovalRepository();
+  const eventRepository = new EventRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
 
-  // Sprint 4 wires an in-memory cost ledger; Sprint 5 will swap for the
-  // Postgres-backed PerTenantCostLedger that writes to agent_runs.cost_usd.
   const costLedger = new InMemoryCostLedger();
   const openai = new OpenAIAdapter({ apiKey: env.OPENAI_API_KEY, costLedger });
   const anthropic = new AnthropicAdapter({ apiKey: env.ANTHROPIC_API_KEY, costLedger });
@@ -58,6 +65,12 @@ async function bootstrap(): Promise<void> {
         resolveTenant: () => "01HSEEDWRK0000000000000001",
       }),
       query: QueryModule.register({ db, retrieval, openai, anthropic }),
+      approvals: ApprovalsModule.register({
+        db,
+        approvals: approvalRepository,
+        events: eventRepository,
+        executorQueue: queues.approvalExecutor,
+      }),
     }),
     new FastifyAdapter({ logger: { level: env.LOG_LEVEL } }),
     { rawBody: true },
