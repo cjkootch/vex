@@ -7,7 +7,7 @@ import {
   buildTestApp,
   type TestAppHandles,
 } from "../webhooks/helpers.js";
-import { NEXTAUTH_SALT } from "../../src/auth/jwt-auth.guard.js";
+const NEXTAUTH_SALT = "authjs.session-token";
 
 const TENANT_A = "01HSEEDWRK000000000000000A";
 const USER_A = "01HSEEDPRS000000000000000A";

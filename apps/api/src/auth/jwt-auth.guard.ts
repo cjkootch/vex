@@ -5,17 +5,23 @@ import { decode } from "@auth/core/jwt";
 import type { VexJwt } from "./types.js";
 
 export const NEXTAUTH_SECRET_TOKEN = Symbol("NEXTAUTH_SECRET");
-/** Salt NextAuth uses for the encryption key derivation. Must match the
- * cookie name used by apps/web — for non-secure cookies that's plain
- * `authjs.session-token`. We use the same default here. */
-export const NEXTAUTH_SALT = "authjs.session-token";
+
+/**
+ * NextAuth derives the encryption key from (secret + salt). The salt is the
+ * cookie name, which varies by transport:
+ *   - `authjs.session-token`         (http / dev)
+ *   - `__Secure-authjs.session-token` (https / prod)
+ * We try both so the guard works in both environments without needing
+ * per-env config.
+ */
+const NEXTAUTH_SALTS = [
+  "authjs.session-token",
+  "__Secure-authjs.session-token",
+] as const;
 
 /**
  * Validate a NextAuth-issued JWE Bearer token and attach the decoded claims
  * to `req.user`. Returns 401 on any failure with no detail leak.
- *
- * NextAuth v5 (Auth.js) encrypts session tokens with A256CBC-HS512; the
- * helper below uses the same `decode` Auth.js calls internally.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -27,15 +33,22 @@ export class JwtAuthGuard implements CanActivate {
     const token = extractBearer(header);
     if (!token) throw new UnauthorizedException("missing_token");
 
+    let payload: Record<string, unknown> | null = null;
+    for (const salt of NEXTAUTH_SALTS) {
+      try {
+        const result = await decode({ token, secret: this.secret, salt });
+        if (result) {
+          payload = result;
+          break;
+        }
+      } catch {
+        // try next salt
+      }
+    }
+    if (!payload) throw new UnauthorizedException("invalid_token");
+
     try {
-      const payload = await decode({
-        token,
-        secret: this.secret,
-        salt: NEXTAUTH_SALT,
-      });
-      if (!payload) throw new Error("empty_payload");
-      const claims = toVexJwt(payload);
-      req.user = claims;
+      req.user = toVexJwt(payload);
       return true;
     } catch {
       throw new UnauthorizedException("invalid_token");
