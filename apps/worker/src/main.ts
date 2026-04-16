@@ -14,7 +14,9 @@ async function main(): Promise<void> {
   initOtel({
     serviceName: "vex-worker",
     serviceNamespace: env.OTEL_SERVICE_NAMESPACE,
-    otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    ...(env.OTEL_EXPORTER_OTLP_ENDPOINT
+      ? { otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT }
+      : {}),
   });
 
   const bull = await startBullWorker({ redisUrl: env.REDIS_URL });

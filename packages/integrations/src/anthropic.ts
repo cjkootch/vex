@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { CostLedger } from "@vex/telemetry";
+import type { CostLedger, CostEntry } from "@vex/telemetry";
 import type { TenantId, AgentRunId } from "@vex/domain";
 import { pricing, tokensToUsdMicros } from "./pricing.js";
 
@@ -35,38 +35,40 @@ export function createAnthropicClient(deps: AnthropicDeps) {
       const response = await client.messages.create({
         model,
         max_tokens: req.maxTokens,
-        system: req.system,
         messages: req.messages,
+        ...(req.system !== undefined ? { system: req.system } : {}),
       });
 
       const inputTokens = response.usage.input_tokens;
       const outputTokens = response.usage.output_tokens;
       const occurredAt = new Date();
 
-      await deps.costLedger.record({
-        idempotencyKey: `${req.idempotencyKey}:input`,
+      const baseEntry = {
         tenantId: req.tenantId,
-        agentRunId: req.agentRunId,
-        operation: "llm.completion",
+        operation: "llm.completion" as const,
         provider: "anthropic",
         model,
+        occurredAt,
+        ...(req.agentRunId !== undefined ? { agentRunId: req.agentRunId } : {}),
+      };
+
+      const inputEntry: CostEntry = {
+        ...baseEntry,
+        idempotencyKey: `${req.idempotencyKey}:input`,
         units: inputTokens,
         unitKind: "input_tokens",
         costUsdMicros: tokensToUsdMicros(inputTokens, prices.inputUsdPerMillion),
-        occurredAt,
-      });
-      await deps.costLedger.record({
+      };
+      const outputEntry: CostEntry = {
+        ...baseEntry,
         idempotencyKey: `${req.idempotencyKey}:output`,
-        tenantId: req.tenantId,
-        agentRunId: req.agentRunId,
-        operation: "llm.completion",
-        provider: "anthropic",
-        model,
         units: outputTokens,
         unitKind: "output_tokens",
         costUsdMicros: tokensToUsdMicros(outputTokens, prices.outputUsdPerMillion),
-        occurredAt,
-      });
+      };
+
+      await deps.costLedger.record(inputEntry);
+      await deps.costLedger.record(outputEntry);
 
       return response;
     },

@@ -1,10 +1,10 @@
-import { NodeSDK } from "@opentelemetry/sdk-node";
+import { NodeSDK, type NodeSDKConfiguration } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
-import { resourceFromAttributes } from "@opentelemetry/resources";
+import { Resource } from "@opentelemetry/resources";
 import {
-  ATTR_SERVICE_NAME,
-  ATTR_SERVICE_NAMESPACE,
-  ATTR_SERVICE_VERSION,
+  SEMRESATTRS_SERVICE_NAME,
+  SEMRESATTRS_SERVICE_NAMESPACE,
+  SEMRESATTRS_SERVICE_VERSION,
 } from "@opentelemetry/semantic-conventions";
 
 export interface OtelInitOptions {
@@ -23,17 +23,21 @@ let sdk: NodeSDK | undefined;
 export function initOtel(options: OtelInitOptions): void {
   if (sdk) return;
 
-  sdk = new NodeSDK({
-    resource: resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: options.serviceName,
-      [ATTR_SERVICE_NAMESPACE]: options.serviceNamespace ?? "vex",
-      [ATTR_SERVICE_VERSION]: options.serviceVersion ?? "0.0.0",
+  const config: Partial<NodeSDKConfiguration> = {
+    resource: new Resource({
+      [SEMRESATTRS_SERVICE_NAME]: options.serviceName,
+      [SEMRESATTRS_SERVICE_NAMESPACE]: options.serviceNamespace ?? "vex",
+      [SEMRESATTRS_SERVICE_VERSION]: options.serviceVersion ?? "0.0.0",
     }),
-    traceExporter: options.otlpEndpoint
-      ? new OTLPTraceExporter({ url: `${options.otlpEndpoint}/v1/traces` })
-      : undefined,
-  });
+  };
 
+  if (options.otlpEndpoint) {
+    config.traceExporter = new OTLPTraceExporter({
+      url: `${options.otlpEndpoint}/v1/traces`,
+    });
+  }
+
+  sdk = new NodeSDK(config);
   sdk.start();
 }
 

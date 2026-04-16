@@ -4,7 +4,6 @@ import {
   FastifyAdapter,
   type NestFastifyApplication,
 } from "@nestjs/platform-fastify";
-import helmet from "@fastify/helmet";
 import { loadEnv } from "@vex/config";
 import { initOtel, shutdownOtel } from "@vex/telemetry";
 import { AppModule } from "./app.module.js";
@@ -15,15 +14,15 @@ async function bootstrap(): Promise<void> {
   initOtel({
     serviceName: "vex-api",
     serviceNamespace: env.OTEL_SERVICE_NAMESPACE,
-    otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,
+    ...(env.OTEL_EXPORTER_OTLP_ENDPOINT
+      ? { otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT }
+      : {}),
   });
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({ logger: { level: env.LOG_LEVEL } }),
   );
-
-  await app.register(helmet);
 
   const shutdown = async (): Promise<void> => {
     await app.close();
@@ -32,7 +31,7 @@ async function bootstrap(): Promise<void> {
   process.on("SIGINT", () => void shutdown());
   process.on("SIGTERM", () => void shutdown());
 
-  await app.listen({ port: env.PORT, host: "0.0.0.0" });
+  await app.listen(env.PORT, "0.0.0.0");
 }
 
 void bootstrap();

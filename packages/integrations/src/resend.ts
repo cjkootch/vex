@@ -23,7 +23,7 @@ export function createResendClient(deps: ResendDeps) {
         to: [...req.to],
         subject: req.subject,
         text: req.text,
-        replyTo: req.replyTo,
+        ...(req.replyTo !== undefined ? { reply_to: req.replyTo } : {}),
       });
     },
   };
