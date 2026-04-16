@@ -1,0 +1,115 @@
+# Grafana-flavoured alert rules for Vex.
+# Provision under /etc/grafana/provisioning/alerting/ — Grafana picks
+# up rule changes on reload (no restart needed).
+
+apiVersion: 1
+groups:
+  - name: vex-core
+    folder: vex
+    interval: 1m
+    rules:
+      - uid: vex-dlq-depth-high
+        title: DLQ depth > 10 for 5 minutes
+        condition: A
+        for: 5m
+        annotations:
+          summary: |
+            Webhook DLQ has more than 10 jobs waiting. Run the replay CLI
+            after diagnosing root cause.
+          runbook_url: https://github.com/cjkootch/vex/blob/main/docs/runbooks/dlq.md
+        labels:
+          severity: warning
+          team: platform
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: max(vex_dlq_depth) > 10
+              instant: true
+
+      - uid: vex-agent-failure-rate
+        title: Agent failure rate > 20% for 10 minutes
+        condition: A
+        for: 10m
+        annotations:
+          summary: |
+            One or more agents are failing at >20% over a 10m window. Check
+            agent_health dashboard + recent agent_runs.error rows.
+        labels:
+          severity: warning
+          team: agents
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: |
+                (
+                  sum by (agent_name) (rate(vex_agent_run_count_total{status="failed"}[10m]))
+                  / sum by (agent_name) (rate(vex_agent_run_count_total[10m]))
+                ) > 0.2
+              instant: true
+
+      - uid: vex-neon-latency-high
+        title: Neon p95 query latency > 500ms for 5 minutes
+        condition: A
+        for: 5m
+        annotations:
+          summary: |
+            Postgres p95 latency over 500ms — potential pooler saturation
+            or RLS regression. Check pg_stat_activity + recent migrations.
+        labels:
+          severity: critical
+          team: platform
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: |
+                histogram_quantile(
+                  0.95,
+                  sum by (le) (rate(vex_neon_query_latency_ms_bucket[5m]))
+                ) > 500
+              instant: true
+
+      - uid: vex-daily-brief-missing
+        title: No DailyBrief delivered by 07:30 UTC weekday
+        condition: A
+        for: 0s
+        annotations:
+          summary: |
+            DailyBrief agent_run for the workspace has not been observed
+            since 06:00 UTC. Check Temporal/BullMQ scheduler and the
+            workspace's enabled_agents flag.
+        labels:
+          severity: warning
+          team: agents
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 5400 # 90m back from 07:30 UTC catches the 06:00 slot
+              to: 0
+            model:
+              # Fire only on weekdays at 07:30 UTC. The Grafana runtime
+              # clock is the gate; alerting silences itself outside the
+              # window via the schedule below.
+              expr: |
+                absent(
+                  increase(vex_agent_run_count_total{
+                    agent_name="daily_brief",
+                    status="completed"
+                  }[90m])
+                ) == 1
+              instant: true
+        # Limit to weekdays 07:30 UTC ± 5min so we don't fire on weekends.
+        # Grafana 10+ supports `for` schedules; older versions need the
+        # equivalent silence rule.

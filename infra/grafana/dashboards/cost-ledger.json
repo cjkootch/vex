@@ -1,0 +1,52 @@
+{
+  "title": "Vex — Cost ledger",
+  "uid": "vex-cost-ledger",
+  "schemaVersion": 38,
+  "version": 1,
+  "tags": ["vex", "cost"],
+  "timezone": "browser",
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant_id",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(vex_agent_cost_usd_total, tenant_id)",
+        "current": { "text": "All", "value": "$__all" },
+        "includeAll": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Cost per tenant per day (USD)",
+      "type": "barchart",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (tenant_id) (increase(vex_agent_cost_usd_total{tenant_id=~\"$tenant_id\"}[24h]))",
+          "legendFormat": "{{tenant_id}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 2,
+      "title": "Cost by agent",
+      "type": "barchart",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (agent_name) (increase(vex_agent_cost_usd_total{tenant_id=~\"$tenant_id\"}[24h]))",
+          "legendFormat": "{{agent_name}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    }
+  ]
+}

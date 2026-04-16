@@ -1,0 +1,80 @@
+{
+  "title": "Vex — Agent health",
+  "uid": "vex-agent-health",
+  "schemaVersion": 38,
+  "version": 1,
+  "tags": ["vex", "agents"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "tenant_id",
+        "label": "Tenant",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(vex_agent_run_count_total, tenant_id)",
+        "current": { "text": "All", "value": "$__all" },
+        "includeAll": true,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Runs per minute (by agent)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (agent_name) (rate(vex_agent_run_count_total{tenant_id=~\"$tenant_id\"}[5m]))",
+          "legendFormat": "{{agent_name}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Failure rate (5m)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (agent_name) (rate(vex_agent_run_count_total{status=\"failed\",tenant_id=~\"$tenant_id\"}[5m])) / sum by (agent_name) (rate(vex_agent_run_count_total{tenant_id=~\"$tenant_id\"}[5m]))",
+          "legendFormat": "{{agent_name}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } }
+    },
+    {
+      "id": 3,
+      "title": "Cost per agent per day (USD)",
+      "type": "barchart",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (agent_name) (increase(vex_agent_cost_usd_total{tenant_id=~\"$tenant_id\"}[24h]))",
+          "legendFormat": "{{agent_name}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } }
+    },
+    {
+      "id": 4,
+      "title": "Skipped runs (kill switch + disabled)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(vex_agent_run_count_total{status=~\"skipped_.*\",tenant_id=~\"$tenant_id\"}[5m]))",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    }
+  ]
+}

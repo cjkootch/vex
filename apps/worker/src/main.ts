@@ -4,7 +4,8 @@ import {
   WorkspaceRepository,
   createDb,
 } from "@vex/db";
-import { initOtel, shutdownOtel } from "@vex/telemetry";
+import { AnthropicAdapter } from "@vex/integrations";
+import { InMemoryCostLedger, initOtel, shutdownOtel } from "@vex/telemetry";
 import { AgentScanner } from "./scanner.js";
 import { startBullWorker } from "./queues/runner.js";
 import { startTemporalWorker } from "./temporal/runner.js";
@@ -14,13 +15,11 @@ const SCANNER_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
  * The worker process hosts two runtimes:
- *   - BullMQ workers for short-lived Redis-backed jobs (webhooks, fan-out,
- *     agents, approval executor).
- *   - Temporal workers for durable orchestrations (Sprint 7+).
- *
- * Sprint 6 adds the agent scanner — a simple setInterval loop that enqueues
- * ResearchAgent jobs for stale orgs. Production will swap this for a
- * Temporal cron when Sprint 7 lands.
+ *   - BullMQ workers for short-lived Redis-backed jobs (webhooks, agents,
+ *     approval-executor stub).
+ *   - Temporal workers for durable orchestrations: FollowUpWorkflow (with
+ *     human-approval signal) and ResearchWorkflow (multi-step with retry
+ *     for the website scrape).
  */
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -31,6 +30,13 @@ async function main(): Promise<void> {
     ...(env.OTEL_EXPORTER_OTLP_ENDPOINT
       ? { otlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT }
       : {}),
+  });
+
+  const db = createDb(env.APPLICATION_DATABASE_URL);
+  const costLedger = new InMemoryCostLedger();
+  const anthropic = new AnthropicAdapter({
+    apiKey: env.ANTHROPIC_API_KEY,
+    costLedger,
   });
 
   const bull = await startBullWorker({
@@ -44,9 +50,11 @@ async function main(): Promise<void> {
     address: env.TEMPORAL_ADDRESS,
     namespace: env.TEMPORAL_NAMESPACE,
     taskQueue: env.TEMPORAL_TASK_QUEUE,
+    db,
+    anthropic,
+    costLedger,
   });
 
-  const db = createDb(env.APPLICATION_DATABASE_URL);
   const scanner = new AgentScanner({
     db,
     agentsQueue: bull.queues.agents,
@@ -54,7 +62,6 @@ async function main(): Promise<void> {
     organizations: new OrganizationRepository(),
   });
 
-  // Kick off an immediate scan, then every hour.
   const scannerTimer = setInterval(() => {
     void scanner.scan(DEFAULT_WORKSPACE_ID).catch((err) => {
       // eslint-disable-next-line no-console

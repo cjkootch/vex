@@ -1,0 +1,40 @@
+{
+  "title": "Vex — Retrieval quality",
+  "uid": "vex-retrieval-quality",
+  "schemaVersion": 38,
+  "version": 1,
+  "tags": ["vex", "retrieval"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Evidence count distribution",
+      "type": "histogram",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        { "expr": "sum by (le) (rate(vex_retrieval_evidence_count_bucket[5m]))" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Query latency p50/p95",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(vex_retrieval_query_latency_ms_bucket[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(vex_retrieval_query_latency_ms_bucket[5m])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } }
+    }
+  ]
+}

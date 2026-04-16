@@ -1,8 +1,8 @@
 # Local dev dependencies for Vex.
 #
-# Per Sprint 0 scope: Redis + Localstack (S3 only). No Postgres — we rely on
-# Neon serverless Postgres even for local dev (pooled + direct URLs set via
-# .env).
+# Sprint 0: Redis + Localstack (S3 only).
+# Sprint 7: Temporal (auto-setup all-in-one — single-node, in-memory PG).
+# No Neon Postgres in compose — every env uses Neon serverless directly.
 services:
   redis:
     image: redis:7-alpine
@@ -29,6 +29,27 @@ services:
       - AWS_SECRET_ACCESS_KEY=test
     volumes:
       - localstack-data:/var/lib/localstack
+
+  # Temporal "all-in-one" image bundles the server + a SQLite-backed
+  # persistence layer + the web UI. Production swaps for Temporal Cloud
+  # by setting TEMPORAL_ADDRESS/NAMESPACE.
+  temporal:
+    image: temporalio/auto-setup:1.24.2
+    container_name: vex-temporal
+    ports:
+      - "7233:7233" # gRPC
+      - "8233:8233" # Web UI
+    environment:
+      - DB=sqlite
+      - DBNAME=/tmp/temporal.db
+      - PROMETHEUS_ENDPOINT=0.0.0.0:8000
+      - LOG_LEVEL=warn
+    healthcheck:
+      test:
+        ["CMD-SHELL", "tctl --address temporal:7233 cluster health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
 volumes:
   localstack-data:
