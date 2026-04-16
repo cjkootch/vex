@@ -1,4 +1,4 @@
-import { Inject, Injectable, UnauthorizedException } from "@nestjs/common";
+import { Inject, Injectable, Logger, UnauthorizedException } from "@nestjs/common";
 import type { CanActivate, ExecutionContext } from "@nestjs/common";
 import type { FastifyRequest } from "fastify";
 import { decode } from "@auth/core/jwt";
@@ -25,15 +25,23 @@ const NEXTAUTH_SALTS = [
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
+  private readonly log = new Logger(JwtAuthGuard.name);
+
   constructor(@Inject(NEXTAUTH_SECRET_TOKEN) private readonly secret: string) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<FastifyRequest>();
     const header = req.headers["authorization"];
     const token = extractBearer(header);
-    if (!token) throw new UnauthorizedException("missing_token");
+    if (!token) {
+      this.log.warn(
+        `auth: missing bearer (have_auth_header=${Boolean(header)} secret_len=${this.secret.length})`,
+      );
+      throw new UnauthorizedException("missing_token");
+    }
 
     let payload: Record<string, unknown> | null = null;
+    let lastErr = "";
     for (const salt of NEXTAUTH_SALTS) {
       try {
         const result = await decode({ token, secret: this.secret, salt });
@@ -41,16 +49,23 @@ export class JwtAuthGuard implements CanActivate {
           payload = result;
           break;
         }
-      } catch {
-        // try next salt
+        lastErr = "empty_payload";
+      } catch (e) {
+        lastErr = (e as Error).message;
       }
     }
-    if (!payload) throw new UnauthorizedException("invalid_token");
+    if (!payload) {
+      this.log.warn(
+        `auth: decode failed (token_len=${token.length} secret_len=${this.secret.length} err=${lastErr})`,
+      );
+      throw new UnauthorizedException("invalid_token");
+    }
 
     try {
       req.user = toVexJwt(payload);
       return true;
-    } catch {
+    } catch (e) {
+      this.log.warn(`auth: claims invalid: ${(e as Error).message}`);
       throw new UnauthorizedException("invalid_token");
     }
   }
