@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+**/coverage
+.git
+.github
+.vercel
+**/.env
+**/.env.local
+apps/web
+apps/worker

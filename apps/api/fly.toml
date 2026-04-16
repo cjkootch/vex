@@ -1,0 +1,42 @@
+# apps/api on Fly.io. Generated for Sprint 8 deploy.
+# Deploy from repo root: `fly deploy --config apps/api/fly.toml --dockerfile apps/api/Dockerfile`
+
+app = "vex-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "apps/api/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
+  OTEL_SERVICE_NAME = "vex-api"
+  OTEL_SERVICE_NAMESPACE = "vex"
+  LOG_LEVEL = "info"
+  # Sprint 7 defaults — override via fly secrets once Temporal Cloud is wired.
+  TEMPORAL_ADDRESS = "localhost:7233"
+  TEMPORAL_NAMESPACE = "default"
+  TEMPORAL_TASK_QUEUE = "vex-main"
+  # S3 placeholders so Zod env validation passes; real storage wiring is Sprint 9.
+  S3_BUCKET = "vex-placeholder"
+  S3_ACCESS_KEY_ID = "placeholder"
+  S3_SECRET_ACCESS_KEY = "placeholder"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "30s"
+    method = "GET"
+    path = "/health"
+    timeout = "5s"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
