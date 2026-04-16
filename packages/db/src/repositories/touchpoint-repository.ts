@@ -59,4 +59,28 @@ export class TouchpointRepository {
       .orderBy(desc(touchpoints.occurredAt))
       .limit(limit);
   }
+
+  /**
+   * Touchpoints linked to a campaign since `since`. Used by the marketing
+   * API to compute the email funnel (sent/opened/clicked) per campaign.
+   */
+  async listForCampaignSince(
+    tx: Tx,
+    campaignId: string,
+    since: Date,
+    channel: string | null = null,
+    limit = 500,
+  ): Promise<Touchpoint[]> {
+    const conditions = [
+      eq(touchpoints.campaignId, campaignId),
+      gte(touchpoints.occurredAt, since),
+    ];
+    if (channel) conditions.push(eq(touchpoints.channel, channel));
+    return tx
+      .select()
+      .from(touchpoints)
+      .where(and(...conditions))
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(limit);
+  }
 }

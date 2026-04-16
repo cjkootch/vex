@@ -59,9 +59,19 @@ export { ApprovalGate } from "./approval-gate.js";
 export {
   DailyBriefAgent,
   FollowUpAgent,
+  MarketingAnalystAgent,
   ResearchAgent,
+  computeAnomalies,
   type AgentContext,
   type AgentOutput,
   type IAgent,
+  type MarketingAnalystInput,
+  type MarketingAnomaly,
+  type MarketingMetricSnapshot,
   type ResearchAgentInput,
 } from "./agents/index.js";
+export { detectAnomaly, type AnomalyInput, type AnomalyResult } from "./anomaly.js";
+export {
+  MARKETING_ANALYST_SYSTEM_PROMPT,
+  MARKETING_ANALYST_PROMPT_VERSION,
+} from "./prompts/marketing-analyst.js";

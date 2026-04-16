@@ -64,6 +64,14 @@ export const EnvSchema = z.object({
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
   PORT: z.coerce.number().int().positive().default(3000),
 
+  // Marketing integrations (Sprint 8)
+  /** Google service account JSON (stringified) used to auth GA4 + Google Ads. */
+  GOOGLE_SERVICE_ACCOUNT_JSON: z.string().optional(),
+  /** Optional manager account for Google Ads when uploading from a child account. */
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID: z.string().optional(),
+  /** Google Ads API developer token (required for Data Manager API calls). */
+  GOOGLE_ADS_DEVELOPER_TOKEN: z.string().optional(),
+
   // Auth (NextAuth.js v5)
   /**
    * Shared secret for NextAuth JWE encryption. Both apps/web (issuer) and

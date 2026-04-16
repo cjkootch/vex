@@ -44,4 +44,5 @@ export const WorkflowId = {
   approval: (approvalId: string): string => `approval-${approvalId}`,
   research: (orgId: string): string => `research-${orgId}`,
   followUp: (agentRunId: string): string => `follow-up-${agentRunId}`,
+  leadWon: (leadId: string): string => `lead-won-${leadId}`,
 } as const;

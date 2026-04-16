@@ -11,6 +11,17 @@ export interface WorkspaceSettings {
   enabled_agents: string[];
   daily_cost_limit: number;
   kill_all_agents: boolean;
+  /**
+   * Marketing integrations (optional). GA4 property id drives the hourly
+   * polling job; google_ads_customer_id + login_customer_id drive offline
+   * conversion upload. All three are missing on workspaces that don't use
+   * the marketing rail, and the polling/conversion activities skip cleanly.
+   */
+  marketing?: {
+    ga4_property_id?: string;
+    google_ads_customer_id?: string;
+    google_ads_login_customer_id?: string;
+  };
 }
 
 export const workspaces = pgTable("workspaces", {

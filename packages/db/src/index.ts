@@ -36,6 +36,7 @@ export type {
 } from "./schema/organizations.js";
 export type { Contact, NewContact } from "./schema/contacts.js";
 export type { Touchpoint, NewTouchpoint } from "./schema/touchpoints.js";
+export type { Campaign, NewCampaign } from "./schema/campaigns.js";
 export type { Activity, NewActivity } from "./schema/activities.js";
 export type { Event, NewEvent } from "./schema/events.js";
 export type { RawEvent, NewRawEvent } from "./schema/raw-events.js";

@@ -39,11 +39,19 @@ export interface DlqJobData extends NormalizationJobData {
 }
 
 /** Agent job payload — kind drives which agent the worker constructs. */
-export type AgentJobKind = "daily_brief" | "research" | "follow_up";
+export type AgentJobKind =
+  | "daily_brief"
+  | "research"
+  | "follow_up"
+  | "marketing_analyst";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;
-  /** Agent-specific input — `research` carries `{ organization_id }`. */
+  /** Agent-specific input:
+   *   - `research`         — `{ organization_id }`
+   *   - `marketing_analyst` — `{ current, history, campaigns }` populated by
+   *     the GA4 polling job before fan-out.
+   */
   input?: Record<string, unknown>;
 }
 
@@ -172,6 +180,25 @@ export async function scheduleRecurringAgents(
     {
       repeat: { pattern: "0 */2 8-18 * * 1-5" },
       jobId: `recurring:follow_up:${workspaceId}`,
+    },
+  );
+  // Marketing analyst runs top-of-hour and a daily close at 18:00 Mon-Fri.
+  // The daily close is enqueued as a separate repeatable to avoid hourly
+  // duplicates; jobIds disambiguate.
+  await queue.add(
+    "marketing_analyst",
+    { kind: "marketing_analyst", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 * * * *" },
+      jobId: `recurring:marketing_analyst:hourly:${workspaceId}`,
+    },
+  );
+  await queue.add(
+    "marketing_analyst",
+    { kind: "marketing_analyst", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 18 * * 1-5" },
+      jobId: `recurring:marketing_analyst:close:${workspaceId}`,
     },
   );
 }

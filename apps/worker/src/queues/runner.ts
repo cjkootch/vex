@@ -3,6 +3,7 @@ import {
   AgentRunner,
   DailyBriefAgent,
   FollowUpAgent,
+  MarketingAnalystAgent,
   ResearchAgent,
   buildDlqProcessor,
   buildNormalizationProcessor,
@@ -15,12 +16,14 @@ import {
   scheduleRecurringAgents,
   type AgentJobData,
   type ApprovalExecutorJobData,
+  type MarketingAnalystInput,
   type QueueHandles,
 } from "@vex/agents";
 import {
   ActivityRepository,
   AgentRunRepository,
   ApprovalRepository,
+  CampaignRepository,
   ContactRepository,
   EventRepository,
   LeadRepository,
@@ -35,8 +38,10 @@ import {
   createDb,
   type Db,
 } from "@vex/db";
-import { AnthropicAdapter, OpenAIAdapter } from "@vex/integrations";
+import { AnthropicAdapter, GA4Adapter, OpenAIAdapter } from "@vex/integrations";
 import { InMemoryCostLedger } from "@vex/telemetry";
+import { runGa4Poll } from "../jobs/ga4-poll.js";
+import { buildMarketingAnalystInput } from "../jobs/marketing-input.js";
 
 export interface QueueRunnerOptions {
   redisUrl: string;
@@ -46,6 +51,9 @@ export interface QueueRunnerOptions {
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
   defaultWorkspaceId?: string;
+  /** Service-account JSON for GA4 polling. When unset, the GA4 poll job
+   *  runs but skips with `service_account_unset`. */
+  googleServiceAccountJson?: string | null;
 }
 
 export interface QueueRunner {
@@ -118,7 +126,29 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     retrieval,
   });
 
-  const agentWorker = createAgentWorker(buildAgentProcessor(runner), connection);
+  const ga4Factory = (sa: string): GA4Adapter => new GA4Adapter({ serviceAccount: sa });
+  const ga4PollDeps = {
+    db,
+    workspaces: repos.workspaces,
+    campaigns: repos.campaigns,
+    touchpoints: repos.touchpoints,
+    events: repos.events,
+    ga4Factory,
+  };
+  const marketingInputDeps = {
+    db,
+    campaigns: repos.campaigns,
+    events: repos.events,
+  };
+
+  const agentWorker = createAgentWorker(
+    buildAgentProcessor(runner, {
+      ga4PollDeps,
+      marketingInputDeps,
+      googleServiceAccountJson: options.googleServiceAccountJson ?? null,
+    }),
+    connection,
+  );
   await agentWorker.waitUntilReady();
 
   const approvalExecutorWorker = createApprovalExecutorWorker(
@@ -148,7 +178,13 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   };
 }
 
-function buildAgentProcessor(runner: AgentRunner) {
+interface MarketingProcessorDeps {
+  ga4PollDeps: Parameters<typeof runGa4Poll>[0];
+  marketingInputDeps: Parameters<typeof buildMarketingAnalystInput>[0];
+  googleServiceAccountJson: string | null;
+}
+
+function buildAgentProcessor(runner: AgentRunner, mkt: MarketingProcessorDeps) {
   return async (job: Job<AgentJobData>) => {
     const data = job.data;
     if (!data.workspace_id) throw new Error("agent job missing workspace_id");
@@ -164,6 +200,22 @@ function buildAgentProcessor(runner: AgentRunner) {
           throw new Error("research job missing input.organization_id");
         }
         return runner.run(new ResearchAgent({ organizationId: orgId }), {
+          workspaceId: data.workspace_id,
+        });
+      }
+      case "marketing_analyst": {
+        // Hourly cron: poll GA4 first to refresh canonical events, then
+        // build agent input from those rows. The poll is idempotent so
+        // hourly re-runs cost nothing extra at the DB layer.
+        await runGa4Poll(mkt.ga4PollDeps, {
+          workspaceId: data.workspace_id,
+          serviceAccountJson: mkt.googleServiceAccountJson,
+        });
+        const input: MarketingAnalystInput = await buildMarketingAnalystInput(
+          mkt.marketingInputDeps,
+          data.workspace_id,
+        );
+        return runner.run(new MarketingAnalystAgent(input), {
           workspaceId: data.workspace_id,
         });
       }
@@ -224,5 +276,6 @@ function buildRepos() {
     leads: new LeadRepository(),
     summaries: new SummaryRepository(),
     threads: new ThreadRepository(),
+    campaigns: new CampaignRepository(),
   };
 }

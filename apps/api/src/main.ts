@@ -7,9 +7,12 @@ import {
 import { loadEnv } from "@vex/config";
 import {
   ApprovalRepository,
+  CampaignRepository,
   EventRepository,
   RawEventRepository,
   RetrievalService,
+  SummaryRepository,
+  TouchpointRepository,
   createDb,
 } from "@vex/db";
 import { createQueues, createRedisConnection } from "@vex/agents";
@@ -23,6 +26,7 @@ import { AppModule } from "./app.module.js";
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
+import { MarketingModule } from "./marketing/marketing.module.js";
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
@@ -49,6 +53,9 @@ async function bootstrap(): Promise<void> {
   const rawEventRepository = new RawEventRepository();
   const approvalRepository = new ApprovalRepository();
   const eventRepository = new EventRepository();
+  const summaryRepository = new SummaryRepository();
+  const campaignRepository = new CampaignRepository();
+  const touchpointRepository = new TouchpointRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
 
@@ -91,6 +98,13 @@ async function bootstrap(): Promise<void> {
         events: eventRepository,
         executorQueue: queues.approvalExecutor,
         temporal: temporal?.client ?? null,
+      }),
+      marketing: MarketingModule.register({
+        db,
+        summaries: summaryRepository,
+        campaigns: campaignRepository,
+        events: eventRepository,
+        touchpoints: touchpointRepository,
       }),
     }),
     new FastifyAdapter({ logger: { level: env.LOG_LEVEL } }),
