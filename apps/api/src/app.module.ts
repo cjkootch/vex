@@ -4,10 +4,12 @@ import { HealthController } from "./health.controller.js";
 import { OrganizationsController } from "./organizations/organizations.controller.js";
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
+import { ApprovalsModule } from "./approvals/approvals.module.js";
 
 export interface AppModuleConfig {
   webhooks: DynamicModule;
   query?: DynamicModule;
+  approvals?: DynamicModule;
   nextAuthSecret: string;
 }
 
@@ -19,6 +21,7 @@ export class AppModule {
       config.webhooks,
     ];
     if (config.query) imports.push(config.query);
+    if (config.approvals) imports.push(config.approvals);
     return {
       module: AppModule,
       imports,
@@ -27,4 +30,4 @@ export class AppModule {
   }
 }
 
-export { WebhooksModule, QueryModule };
+export { WebhooksModule, QueryModule, ApprovalsModule };

@@ -1,0 +1,36 @@
+import { Module, type DynamicModule } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import type { ApprovalRepository, Db, EventRepository } from "@vex/db";
+import type { ApprovalExecutorJobData } from "@vex/agents";
+import { ApprovalsController } from "./approvals.controller.js";
+import { ApprovalsService } from "./approvals.service.js";
+import {
+  APPROVAL_EXECUTOR_QUEUE,
+  APPROVALS_DB_CLIENT,
+  APPROVALS_EVENTS_REPO,
+  APPROVALS_REPO,
+} from "./tokens.js";
+
+export interface ApprovalsModuleConfig {
+  db: Db;
+  approvals: ApprovalRepository;
+  events: EventRepository;
+  executorQueue: Queue<ApprovalExecutorJobData>;
+}
+
+@Module({})
+export class ApprovalsModule {
+  static register(config: ApprovalsModuleConfig): DynamicModule {
+    return {
+      module: ApprovalsModule,
+      controllers: [ApprovalsController],
+      providers: [
+        { provide: APPROVALS_DB_CLIENT, useValue: config.db },
+        { provide: APPROVALS_REPO, useValue: config.approvals },
+        { provide: APPROVALS_EVENTS_REPO, useValue: config.events },
+        { provide: APPROVAL_EXECUTOR_QUEUE, useValue: config.executorQueue },
+        ApprovalsService,
+      ],
+    };
+  }
+}
