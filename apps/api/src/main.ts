@@ -13,7 +13,11 @@ import {
   createDb,
 } from "@vex/db";
 import { createQueues, createRedisConnection } from "@vex/agents";
-import { AnthropicAdapter, OpenAIAdapter } from "@vex/integrations";
+import {
+  AnthropicAdapter,
+  OpenAIAdapter,
+  createTemporalClient,
+} from "@vex/integrations";
 import { initOtel, InMemoryCostLedger, shutdownOtel } from "@vex/telemetry";
 import { AppModule } from "./app.module.js";
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
@@ -53,6 +57,22 @@ async function bootstrap(): Promise<void> {
   const anthropic = new AnthropicAdapter({ apiKey: env.ANTHROPIC_API_KEY, costLedger });
   const retrieval = new RetrievalService();
 
+  // Temporal client — best-effort. If the Temporal cluster isn't reachable
+  // at boot the API still starts; ApprovalsService will log signal failures
+  // but won't fail the request.
+  let temporal: Awaited<ReturnType<typeof createTemporalClient>> | null = null;
+  try {
+    temporal = await createTemporalClient({
+      address: env.TEMPORAL_ADDRESS,
+      namespace: env.TEMPORAL_NAMESPACE,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `Temporal client unavailable at boot: ${(err as Error).message}; signals will be skipped`,
+    );
+  }
+
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
       nextAuthSecret: env.NEXTAUTH_SECRET,
@@ -70,6 +90,7 @@ async function bootstrap(): Promise<void> {
         approvals: approvalRepository,
         events: eventRepository,
         executorQueue: queues.approvalExecutor,
+        temporal: temporal?.client ?? null,
       }),
     }),
     new FastifyAdapter({ logger: { level: env.LOG_LEVEL } }),
@@ -80,6 +101,7 @@ async function bootstrap(): Promise<void> {
     await app.close();
     await queues.close();
     redis.disconnect();
+    if (temporal) await temporal.close();
     await shutdownOtel();
   };
   process.on("SIGINT", () => void shutdown());

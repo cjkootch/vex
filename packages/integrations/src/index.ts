@@ -26,3 +26,9 @@ export {
   type RawEventInput,
 } from "./normalizers/index.js";
 export { loadWebhookFixture, type WebhookFixture } from "./fixtures/index.js";
+export {
+  createTemporalClient,
+  TEMPORAL_TASK_QUEUE,
+  WorkflowId,
+  type TemporalConfig,
+} from "./temporal.js";
