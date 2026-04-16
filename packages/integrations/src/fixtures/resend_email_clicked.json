@@ -1,0 +1,27 @@
+{
+  "headers": {
+    "svix-id": "msg_2nVmW3iE3Y8gZQ8DkqYVXMz1XaA",
+    "svix-timestamp": "1714000000",
+    "content-type": "application/json"
+  },
+  "payload": {
+    "type": "email.clicked",
+    "created_at": "2026-04-15T13:42:11.000Z",
+    "data": {
+      "email_id": "4ef9a3c6-1c5e-4a7e-b3c1-e9c4d4a4e0a1",
+      "from": "outbound@vexhq.ai",
+      "to": ["contact1@example1.test"],
+      "subject": "Vex pipeline brief — week of Apr 14",
+      "tags": [
+        { "name": "campaign_id", "value": "01HSEEDCMP0000000000000001" },
+        { "name": "tenant_id", "value": "01HSEEDWRK0000000000000001" }
+      ],
+      "click": {
+        "link": "https://vexhq.ai/demo?utm_source=resend&utm_campaign=email_nurture",
+        "ipAddress": "203.0.113.42",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36",
+        "timestamp": "2026-04-15T13:42:11.000Z"
+      }
+    }
+  }
+}

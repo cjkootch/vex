@@ -1,0 +1,18 @@
+{
+  "headers": {
+    "content-type": "application/x-www-form-urlencoded",
+    "x-twilio-signature": "testsignaturedoNotUseInProduction=="
+  },
+  "payload": {
+    "AccountSid": "ACtestaccountsid0000000000000000000",
+    "CallSid": "CA0000failed00000000000000000000000",
+    "CallStatus": "failed",
+    "From": "+15551234567",
+    "To": "+15557654321",
+    "Direction": "outbound-api",
+    "ApiVersion": "2010-04-01",
+    "ErrorCode": "13212",
+    "ErrorMessage": "Invalid 'From' phone number",
+    "Timestamp": "Wed, 15 Apr 2026 14:01:09 +0000"
+  }
+}

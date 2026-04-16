@@ -19,7 +19,10 @@ async function main(): Promise<void> {
       : {}),
   });
 
-  const bull = await startBullWorker({ redisUrl: env.REDIS_URL });
+  const bull = await startBullWorker({
+    redisUrl: env.REDIS_URL,
+    applicationDatabaseUrl: env.APPLICATION_DATABASE_URL,
+  });
   const temporal = await startTemporalWorker({
     address: env.TEMPORAL_ADDRESS,
     namespace: env.TEMPORAL_NAMESPACE,

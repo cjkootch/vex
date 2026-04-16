@@ -1,26 +1,79 @@
-import { Worker as BullWorker, type Processor } from "bullmq";
-import IORedis from "ioredis";
+import type { Worker } from "bullmq";
+import {
+  buildDlqProcessor,
+  buildNormalizationProcessor,
+  createDlqWorker,
+  createNormalizationWorker,
+  createQueues,
+  createRedisConnection,
+  type QueueHandles,
+} from "@vex/agents";
+import {
+  ActivityRepository,
+  ContactRepository,
+  EventRepository,
+  RawEventRepository,
+  TouchpointRepository,
+  createDb,
+} from "@vex/db";
 
-export interface BullRunnerOptions {
+export interface QueueRunnerOptions {
   redisUrl: string;
+  applicationDatabaseUrl: string;
   concurrency?: number;
 }
 
+export interface QueueRunner {
+  queues: QueueHandles;
+  normalizationWorker: Worker;
+  dlqWorker: Worker;
+  close: () => Promise<void>;
+}
+
 /**
- * The default job queue. Per-feature processors (integration fan-out, webhook
- * delivery, etc.) will be registered as they land in later sprints; for
- * Sprint 0 we only start the worker so the process boots cleanly.
+ * Bootstrap the BullMQ workers for normalization + DLQ. The factory wires
+ * Redis, queues, repositories, and processors. Returns handles so the
+ * caller can shut everything down on SIGINT.
  */
-const DEFAULT_QUEUE = "vex.default";
+export async function startBullWorker(options: QueueRunnerOptions): Promise<QueueRunner> {
+  const connection = createRedisConnection(options.redisUrl);
+  const queues = createQueues(connection);
 
-const noopProcessor: Processor = async () => undefined;
+  const db = createDb(options.applicationDatabaseUrl);
+  const rawEvents = new RawEventRepository(db);
+  const contacts = new ContactRepository(db);
+  const touchpoints = new TouchpointRepository(db);
+  const activities = new ActivityRepository(db);
+  const events = new EventRepository(db);
 
-export async function startBullWorker(options: BullRunnerOptions): Promise<BullWorker> {
-  const connection = new IORedis(options.redisUrl, { maxRetriesPerRequest: null });
-  const worker = new BullWorker(DEFAULT_QUEUE, noopProcessor, {
-    connection,
-    concurrency: options.concurrency ?? 4,
+  const normalizationProcessor = buildNormalizationProcessor({
+    rawEvents,
+    contacts,
+    touchpoints,
+    activities,
+    events,
   });
-  await worker.waitUntilReady();
-  return worker;
+
+  const dlqProcessor = buildDlqProcessor({ rawEvents, dlqQueue: queues.dlq });
+
+  const normalizationWorker = createNormalizationWorker(normalizationProcessor, {
+    connection,
+    dlqQueue: queues.dlq,
+  });
+  await normalizationWorker.waitUntilReady();
+
+  const dlqWorker = createDlqWorker(dlqProcessor, connection);
+  await dlqWorker.waitUntilReady();
+
+  return {
+    queues,
+    normalizationWorker,
+    dlqWorker,
+    async close() {
+      await normalizationWorker.close();
+      await dlqWorker.close();
+      await queues.close();
+      connection.disconnect();
+    },
+  };
 }

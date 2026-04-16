@@ -47,21 +47,42 @@ importers:
       '@nestjs/platform-fastify':
         specifier: 10.3.10
         version: 10.3.10(@nestjs/common@10.3.10(reflect-metadata@0.2.2)(rxjs@7.8.1))(@nestjs/core@10.3.10(@nestjs/common@10.3.10(reflect-metadata@0.2.2)(rxjs@7.8.1))(reflect-metadata@0.2.2)(rxjs@7.8.1))
+      '@vex/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@vex/config':
         specifier: workspace:*
         version: link:../../packages/config
       '@vex/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@vex/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
+      '@vex/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@vex/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
+      bullmq:
+        specifier: 5.12.0
+        version: 5.12.0
+      fastify:
+        specifier: 4.28.1
+        version: 4.28.1
+      ioredis:
+        specifier: 5.4.1
+        version: 5.4.1
       reflect-metadata:
         specifier: 0.2.2
         version: 0.2.2
       rxjs:
         specifier: 7.8.1
         version: 7.8.1
+      twilio:
+        specifier: 5.2.2
+        version: 5.2.2
     devDependencies:
       tsx:
         specifier: 4.16.2
@@ -118,12 +139,21 @@ importers:
       '@temporalio/workflow':
         specifier: 1.11.1
         version: 1.11.1
+      '@vex/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
       '@vex/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@vex/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@vex/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@vex/integrations':
+        specifier: workspace:*
+        version: link:../../packages/integrations
       '@vex/telemetry':
         specifier: workspace:*
         version: link:../../packages/telemetry
@@ -146,9 +176,27 @@ importers:
 
   packages/agents:
     dependencies:
+      '@opentelemetry/api':
+        specifier: 1.9.0
+        version: 1.9.0
+      '@vex/db':
+        specifier: workspace:*
+        version: link:../db
       '@vex/domain':
         specifier: workspace:*
         version: link:../domain
+      '@vex/integrations':
+        specifier: workspace:*
+        version: link:../integrations
+      '@vex/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
+      bullmq:
+        specifier: 5.12.0
+        version: 5.12.0
+      ioredis:
+        specifier: 5.4.1
+        version: 5.4.1
       zod:
         specifier: 3.23.8
         version: 3.23.8
@@ -234,7 +282,13 @@ importers:
       twilio:
         specifier: 5.2.2
         version: 5.2.2
+      zod:
+        specifier: 3.23.8
+        version: 3.23.8
     devDependencies:
+      '@vex/db':
+        specifier: workspace:*
+        version: link:../db
       '@vex/domain':
         specifier: workspace:*
         version: link:../domain
@@ -2579,6 +2633,9 @@ packages:
 
   fastify@4.28.0:
     resolution: {integrity: sha512-HhW7UHW07YlqH5qpS0af8d2Gl/o98DhJ8ZDQWHRNDnzeOhZvtreWsX8xanjGgXmkYerGbo8ax/n40Dpwqkot8Q==}
+
+  fastify@4.28.1:
+    resolution: {integrity: sha512-kFWUtpNr4i7t5vY2EJPCN2KgMVpuqfU4NjnJNCgiNB900oiDeYqaNDRcAfeBbOF5hGixixxcKnOU4KN9z6QncQ==}
 
   fastq@1.20.1:
     resolution: {integrity: sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==}
@@ -6525,6 +6582,25 @@ snapshots:
   fastify-plugin@4.5.1: {}
 
   fastify@4.28.0:
+    dependencies:
+      '@fastify/ajv-compiler': 3.6.0
+      '@fastify/error': 3.4.1
+      '@fastify/fast-json-stringify-compiler': 4.3.0
+      abstract-logging: 2.0.1
+      avvio: 8.4.0
+      fast-content-type-parse: 1.1.0
+      fast-json-stringify: 5.16.1
+      find-my-way: 8.2.2
+      light-my-request: 5.13.0
+      pino: 9.14.0
+      process-warning: 3.0.0
+      proxy-addr: 2.0.7
+      rfdc: 1.4.1
+      secure-json-parse: 2.7.0
+      semver: 7.7.4
+      toad-cache: 3.7.0
+
+  fastify@4.28.1:
     dependencies:
       '@fastify/ajv-compiler': 3.6.0
       '@fastify/error': 3.4.1
