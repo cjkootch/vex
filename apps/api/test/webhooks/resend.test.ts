@@ -44,9 +44,10 @@ describe("POST /webhooks/resend", () => {
 
     expect(response.statusCode).toBe(204);
     expect(handles.rawEventRepo.calls).toHaveLength(1);
+    // insertIfNotExists signature: (tx, tenantId, provider, providerEventId, ...)
     const insertArgs = handles.rawEventRepo.calls[0]!;
-    expect(insertArgs[1]).toBe("resend");
-    expect(insertArgs[2]).toBe("msg_test_unique_1");
+    expect(insertArgs[2]).toBe("resend");
+    expect(insertArgs[3]).toBe("msg_test_unique_1");
     expect(handles.queue.calls).toHaveLength(1);
     expect(handles.queue.calls[0]!.jobId).toBe(handles.queue.calls[0]!.data.raw_event_id);
   });

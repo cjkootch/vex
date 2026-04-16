@@ -1,24 +1,16 @@
-import { and, eq } from "drizzle-orm";
-import type { Db } from "../client.js";
+import { eq } from "drizzle-orm";
+import type { Tx } from "../client.js";
 import { contacts, type Contact } from "../schema/contacts.js";
 
+/** Stateless. Caller must wrap in `withTenant` so RLS scopes the queries. */
 export class ContactRepository {
-  constructor(private readonly db: Db) {}
-
-  async findById(tenantId: string, id: string): Promise<Contact | null> {
-    const [row] = await this.db
-      .select()
-      .from(contacts)
-      .where(and(eq(contacts.tenantId, tenantId), eq(contacts.id, id)))
-      .limit(1);
+  async findById(tx: Tx, id: string): Promise<Contact | null> {
+    const [row] = await tx.select().from(contacts).where(eq(contacts.id, id)).limit(1);
     return row ?? null;
   }
 
-  async findByEmail(tenantId: string, email: string): Promise<Contact | null> {
-    const rows = await this.db
-      .select()
-      .from(contacts)
-      .where(eq(contacts.tenantId, tenantId));
+  async findByEmail(tx: Tx, email: string): Promise<Contact | null> {
+    const rows = await tx.select().from(contacts);
     const lower = email.toLowerCase();
     return (
       rows.find((row) =>
@@ -27,10 +19,7 @@ export class ContactRepository {
     );
   }
 
-  async findByOrgId(tenantId: string, orgId: string): Promise<Contact[]> {
-    return this.db
-      .select()
-      .from(contacts)
-      .where(and(eq(contacts.tenantId, tenantId), eq(contacts.orgId, orgId)));
+  async findByOrgId(tx: Tx, orgId: string): Promise<Contact[]> {
+    return tx.select().from(contacts).where(eq(contacts.orgId, orgId));
   }
 }

@@ -1,5 +1,5 @@
 import { createId } from "@vex/domain";
-import type { Db } from "../client.js";
+import type { Tx } from "../client.js";
 import { touchpoints, type Touchpoint } from "../schema/touchpoints.js";
 
 export interface TouchpointInsert {
@@ -14,10 +14,8 @@ export interface TouchpointInsert {
 }
 
 export class TouchpointRepository {
-  constructor(private readonly db: Db) {}
-
-  async insert(tenantId: string, data: TouchpointInsert): Promise<Touchpoint> {
-    const [row] = await this.db
+  async insert(tx: Tx, tenantId: string, data: TouchpointInsert): Promise<Touchpoint> {
+    const [row] = await tx
       .insert(touchpoints)
       .values({
         id: createId(),

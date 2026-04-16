@@ -63,8 +63,9 @@ describe("POST /webhooks/twilio", () => {
 
     expect(response.statusCode).toBe(204);
     expect(handles.rawEventRepo.calls).toHaveLength(1);
-    expect(handles.rawEventRepo.calls[0]![1]).toBe("twilio");
-    expect(handles.rawEventRepo.calls[0]![2]).toBe(`${params.CallSid}:completed`);
+    // insertIfNotExists signature: (tx, tenantId, provider, providerEventId, ...)
+    expect(handles.rawEventRepo.calls[0]![2]).toBe("twilio");
+    expect(handles.rawEventRepo.calls[0]![3]).toBe(`${params.CallSid}:completed`);
     expect(handles.queue.calls).toHaveLength(1);
   });
 

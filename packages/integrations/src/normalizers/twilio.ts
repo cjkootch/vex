@@ -61,7 +61,7 @@ export class TwilioNormalizer {
     if (payload.CallStatus === "completed" && payload.CallDuration) {
       const seconds = Number(payload.CallDuration);
       if (Number.isFinite(seconds)) {
-        await this.deps.activities.insert(raw.tenantId, {
+        await this.deps.activities.insert(this.deps.tx, raw.tenantId, {
           type: "voice_call",
           relatedObjectIds: { call_sid: payload.CallSid },
           occurredAt,
@@ -72,18 +72,22 @@ export class TwilioNormalizer {
       }
     }
 
-    const { event, isNew } = await this.deps.events.insertIfNotExists(raw.tenantId, {
-      verb,
-      subjectType: "call",
-      subjectId: payload.CallSid,
-      actorType: payload.Direction === "inbound" ? "external" : "agent",
-      actorId: null,
-      objectType: "phone_number",
-      objectId: payload.To ?? null,
-      occurredAt,
-      idempotencyKey: `twilio:${payload.CallSid}:${payload.CallStatus}`,
-      metadata,
-    });
+    const { event, isNew } = await this.deps.events.insertIfNotExists(
+      this.deps.tx,
+      raw.tenantId,
+      {
+        verb,
+        subjectType: "call",
+        subjectId: payload.CallSid,
+        actorType: payload.Direction === "inbound" ? "external" : "agent",
+        actorId: null,
+        objectType: "phone_number",
+        objectId: payload.To ?? null,
+        occurredAt,
+        idempotencyKey: `twilio:${payload.CallSid}:${payload.CallStatus}`,
+        metadata,
+      },
+    );
 
     return { status: "ok", eventId: event.id, isNewEvent: isNew };
   }

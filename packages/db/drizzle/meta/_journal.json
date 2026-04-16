@@ -8,6 +8,13 @@
       "when": 1745712000000,
       "tag": "0000_sprint1_canonical",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1748131200000,
+      "tag": "0001_enable_rls",
+      "breakpoints": true
     }
   ]
 }

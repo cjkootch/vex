@@ -3,23 +3,23 @@ import type {
   ContactRepository,
   EventRepository,
   TouchpointRepository,
+  Tx,
 } from "@vex/db";
 
 /**
- * Dependency surface that every normalizer needs. Passed in rather than
- * imported so processors can wire test fakes.
+ * Dependency surface that every normalizer needs. The transaction is passed
+ * in by the caller (the BullMQ processor wraps each job in `withTenant`),
+ * so the normalizer never sees the parent `Db` and can't escape RLS.
  */
 export interface NormalizerDeps {
+  tx: Tx;
   contacts: ContactRepository;
   touchpoints: TouchpointRepository;
   activities: ActivityRepository;
   events: EventRepository;
 }
 
-/**
- * Outcome of a normalization run. Captures the canonical event id (or marks
- * skip) so the caller can update the originating raw_event row.
- */
+/** Outcome of a single normalization run. */
 export type NormalizerOutcome =
   | { status: "ok"; eventId: string; isNewEvent: boolean }
   | { status: "skipped"; reason: string };

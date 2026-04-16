@@ -1,21 +1,21 @@
 import { and, desc, eq } from "drizzle-orm";
 import { createId } from "@vex/domain";
-import type { Db } from "../client.js";
+import type { Tx } from "../client.js";
 import { rawEvents, type RawEvent } from "../schema/raw-events.js";
 
 export type RawEventStatus = "pending" | "processed" | "failed";
 
+/**
+ * Stateless. Inserts take an explicit `tenantId` so RLS WITH CHECK passes;
+ * reads/updates are filtered by the policy via `app.tenant_id`.
+ */
 export class RawEventRepository {
-  constructor(private readonly db: Db) {}
-
   /**
    * Idempotent insert. Returns the existing id if `(tenantId, provider,
-   * providerEventId)` already exists, otherwise inserts a new row and returns
-   * its id. The uniqueness constraint is enforced at the DB layer; this method
-   * short-circuits on an in-memory lookup to avoid unique-violation errors in
-   * the hot path.
+   * providerEventId)` already exists, otherwise inserts a new row.
    */
   async insertIfNotExists(
+    tx: Tx,
     tenantId: string,
     provider: string,
     providerEventId: string,
@@ -24,12 +24,11 @@ export class RawEventRepository {
     checksum: string | null,
     receivedAt: Date = new Date(),
   ): Promise<{ id: string; isNew: boolean }> {
-    const [existing] = await this.db
+    const [existing] = await tx
       .select({ id: rawEvents.id })
       .from(rawEvents)
       .where(
         and(
-          eq(rawEvents.tenantId, tenantId),
           eq(rawEvents.provider, provider),
           eq(rawEvents.providerEventId, providerEventId),
         ),
@@ -39,7 +38,7 @@ export class RawEventRepository {
     if (existing) return { id: existing.id, isNew: false };
 
     const id = createId();
-    await this.db.insert(rawEvents).values({
+    await tx.insert(rawEvents).values({
       id,
       tenantId,
       provider,
@@ -52,30 +51,20 @@ export class RawEventRepository {
     return { id, isNew: true };
   }
 
-  async findById(tenantId: string, id: string): Promise<RawEvent | null> {
-    const rows = await this.db
-      .select()
-      .from(rawEvents)
-      .where(and(eq(rawEvents.tenantId, tenantId), eq(rawEvents.id, id)));
+  async findById(tx: Tx, id: string): Promise<RawEvent | null> {
+    const rows = await tx.select().from(rawEvents).where(eq(rawEvents.id, id));
     return rows[0] ?? null;
   }
 
-  async updateStatus(
-    tenantId: string,
-    id: string,
-    status: RawEventStatus,
-  ): Promise<void> {
-    await this.db
-      .update(rawEvents)
-      .set({ status })
-      .where(and(eq(rawEvents.tenantId, tenantId), eq(rawEvents.id, id)));
+  async updateStatus(tx: Tx, id: string, status: RawEventStatus): Promise<void> {
+    await tx.update(rawEvents).set({ status }).where(eq(rawEvents.id, id));
   }
 
-  async listFailed(tenantId: string, limit = 100): Promise<RawEvent[]> {
-    return this.db
+  async listFailed(tx: Tx, limit = 100): Promise<RawEvent[]> {
+    return tx
       .select()
       .from(rawEvents)
-      .where(and(eq(rawEvents.tenantId, tenantId), eq(rawEvents.status, "failed")))
+      .where(eq(rawEvents.status, "failed"))
       .orderBy(desc(rawEvents.receivedAt))
       .limit(limit);
   }

@@ -1,5 +1,5 @@
 import { createId } from "@vex/domain";
-import type { Db } from "../client.js";
+import type { Tx } from "../client.js";
 import { activities, type Activity } from "../schema/activities.js";
 
 export interface ActivityInsert {
@@ -13,10 +13,8 @@ export interface ActivityInsert {
 }
 
 export class ActivityRepository {
-  constructor(private readonly db: Db) {}
-
-  async insert(tenantId: string, data: ActivityInsert): Promise<Activity> {
-    const [row] = await this.db
+  async insert(tx: Tx, tenantId: string, data: ActivityInsert): Promise<Activity> {
+    const [row] = await tx
       .insert(activities)
       .values({
         id: createId(),

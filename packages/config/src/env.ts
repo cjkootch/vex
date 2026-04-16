@@ -63,6 +63,19 @@ export const EnvSchema = z.object({
   // App
   LOG_LEVEL: z.enum(["trace", "debug", "info", "warn", "error", "fatal"]).default("info"),
   PORT: z.coerce.number().int().positive().default(3000),
+
+  // Auth (NextAuth.js v5)
+  /**
+   * Shared secret for NextAuth JWE encryption. Both apps/web (issuer) and
+   * apps/api (verifier) MUST use the same value or tokens won't decode.
+   * Generate with `openssl rand -base64 32`.
+   */
+  NEXTAUTH_SECRET: z.string().min(32).optional(),
+  NEXTAUTH_URL: z.string().url().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GITHUB_CLIENT_ID: z.string().optional(),
+  GITHUB_CLIENT_SECRET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

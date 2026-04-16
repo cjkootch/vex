@@ -25,12 +25,23 @@ import {
 async function main(): Promise<void> {
   const env = loadEnv();
   const pool = new Pool({ connectionString: env.MIGRATION_DATABASE_URL });
-  const db = drizzle(pool, { schema });
 
   const tenantId = SEED_WORKSPACE_ID;
   const now = new Date();
 
+  const client = await pool.connect();
   try {
+    // Seed needs to write rows that span tenants and bypass the RLS WITH
+    // CHECK constraint on every business table. vex_migrator (BYPASSRLS) is
+    // the same role the migration runner uses for the same reason.
+    try {
+      await client.query("SET ROLE vex_migrator");
+    } catch {
+      // Pre-Sprint-3 deployments don't have the role yet — RLS isn't enabled
+      // either, so the seed can run as the connection's default role.
+    }
+    const db = drizzle(client, { schema });
+
     await db.insert(schema.workspaces).values({
       id: SEED_WORKSPACE_ID,
       name: "Acme Demo",
@@ -276,6 +287,7 @@ async function main(): Promise<void> {
     // eslint-disable-next-line no-console
     console.log("seed complete");
   } finally {
+    client.release();
     await pool.end();
   }
 }

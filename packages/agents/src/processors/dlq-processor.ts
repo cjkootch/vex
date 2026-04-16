@@ -1,9 +1,10 @@
 import type { Job, Queue } from "bullmq";
 import { metrics } from "@opentelemetry/api";
-import type { RawEventRepository } from "@vex/db";
+import { withTenant, type Db, type RawEventRepository } from "@vex/db";
 import type { DlqJobData } from "../queues.js";
 
 export interface DlqProcessorDeps {
+  db: Db;
   rawEvents: RawEventRepository;
   /**
    * The DLQ Queue handle. Used to register an OpenTelemetry asynchronous
@@ -64,8 +65,11 @@ export function buildDlqProcessor(deps: DlqProcessorDeps) {
       }),
     );
 
+    if (!data.tenant_id) return;
     try {
-      await deps.rawEvents.updateStatus(data.tenant_id, data.raw_event_id, "failed");
+      await withTenant(deps.db, data.tenant_id, async (tx) => {
+        await deps.rawEvents.updateStatus(tx, data.raw_event_id, "failed");
+      });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(
