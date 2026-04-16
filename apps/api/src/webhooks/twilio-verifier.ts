@@ -1,4 +1,7 @@
-import { validateRequest } from "twilio";
+// Twilio's SDK is CommonJS — Node's strict ESM resolver in production
+// can't see named exports off it, so import the default and destructure.
+import twilio from "twilio";
+const { validateRequest } = twilio;
 
 export interface TwilioVerifierOptions {
   authToken: string;
