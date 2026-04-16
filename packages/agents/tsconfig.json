@@ -6,5 +6,10 @@
     "composite": true
   },
   "include": ["src/**/*"],
-  "references": [{ "path": "../domain" }]
+  "references": [
+    { "path": "../db" },
+    { "path": "../domain" },
+    { "path": "../integrations" },
+    { "path": "../telemetry" }
+  ]
 }

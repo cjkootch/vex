@@ -43,6 +43,12 @@ export const EnvSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
+  /**
+   * Resend (Svix) webhook signing secret. Format: `whsec_<base64>`. Required
+   * by the Resend webhook handler — the verifier strips the `whsec_` prefix
+   * and base64-decodes the remainder for HMAC-SHA256.
+   */
+  RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
 
   // Temporal
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),

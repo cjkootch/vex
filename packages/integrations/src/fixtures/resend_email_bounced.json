@@ -1,0 +1,24 @@
+{
+  "headers": {
+    "svix-id": "msg_2nVmW7QBouncedExampleAAAAA",
+    "svix-timestamp": "1714000300",
+    "content-type": "application/json"
+  },
+  "payload": {
+    "type": "email.bounced",
+    "created_at": "2026-04-15T13:47:11.000Z",
+    "data": {
+      "email_id": "8d2c1f0a-2dcb-4f50-93d0-b69e0f50b8ca",
+      "from": "outbound@vexhq.ai",
+      "to": ["contact2@example1.test"],
+      "subject": "Vex pipeline brief — week of Apr 14",
+      "tags": [
+        { "name": "campaign_id", "value": "01HSEEDCMP0000000000000001" },
+        { "name": "tenant_id", "value": "01HSEEDWRK0000000000000001" }
+      ],
+      "bounce": {
+        "type": "permanent"
+      }
+    }
+  }
+}

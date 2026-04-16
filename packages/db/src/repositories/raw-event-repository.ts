@@ -1,7 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Db } from "../client.js";
-import { rawEvents } from "../schema/raw-events.js";
+import { rawEvents, type RawEvent } from "../schema/raw-events.js";
+
+export type RawEventStatus = "pending" | "processed" | "failed";
 
 export class RawEventRepository {
   constructor(private readonly db: Db) {}
@@ -48,5 +50,33 @@ export class RawEventRepository {
       receivedAt,
     });
     return { id, isNew: true };
+  }
+
+  async findById(tenantId: string, id: string): Promise<RawEvent | null> {
+    const rows = await this.db
+      .select()
+      .from(rawEvents)
+      .where(and(eq(rawEvents.tenantId, tenantId), eq(rawEvents.id, id)));
+    return rows[0] ?? null;
+  }
+
+  async updateStatus(
+    tenantId: string,
+    id: string,
+    status: RawEventStatus,
+  ): Promise<void> {
+    await this.db
+      .update(rawEvents)
+      .set({ status })
+      .where(and(eq(rawEvents.tenantId, tenantId), eq(rawEvents.id, id)));
+  }
+
+  async listFailed(tenantId: string, limit = 100): Promise<RawEvent[]> {
+    return this.db
+      .select()
+      .from(rawEvents)
+      .where(and(eq(rawEvents.tenantId, tenantId), eq(rawEvents.status, "failed")))
+      .orderBy(desc(rawEvents.receivedAt))
+      .limit(limit);
   }
 }

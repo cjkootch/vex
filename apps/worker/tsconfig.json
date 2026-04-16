@@ -6,8 +6,11 @@
   },
   "include": ["src/**/*"],
   "references": [
+    { "path": "../../packages/agents" },
     { "path": "../../packages/config" },
+    { "path": "../../packages/db" },
     { "path": "../../packages/domain" },
+    { "path": "../../packages/integrations" },
     { "path": "../../packages/telemetry" }
   ]
 }
