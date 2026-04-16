@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { buildUpstreamHeaders } from "@/lib/upstream-headers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -19,14 +20,11 @@ export async function POST(
   if (upstream) {
     const url = `${upstream.replace(/\/$/, "")}/approvals/${encodeURIComponent(params.id)}/${params.action}`;
     try {
+      const upstreamHeaders = buildUpstreamHeaders(req);
+      upstreamHeaders.set("content-type", "application/json");
       const response = await fetch(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(req.headers.get("authorization")
-            ? { authorization: req.headers.get("authorization")! }
-            : {}),
-        },
+        headers: upstreamHeaders,
         body: await req.text(),
       });
       const body = await response.text();

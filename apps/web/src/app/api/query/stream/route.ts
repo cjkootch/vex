@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { buildUpstreamHeaders } from "@/lib/upstream-headers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -61,7 +62,7 @@ async function proxy(upstreamBase: string, req: NextRequest): Promise<Response> 
   try {
     const response = await fetch(url, {
       method: "POST",
-      headers: forwardHeaders(req.headers),
+      headers: buildUpstreamHeaders(req),
       body: req.body,
       // @ts-expect-error — duplex required for streaming POST in Node fetch
       duplex: "half",
@@ -76,14 +77,6 @@ async function proxy(upstreamBase: string, req: NextRequest): Promise<Response> 
       { status: 502 },
     );
   }
-}
-
-function forwardHeaders(src: Headers): Headers {
-  const out = new Headers();
-  for (const [k, v] of src.entries()) {
-    if (k.startsWith("x-") || k === "authorization" || k === "content-type") out.set(k, v);
-  }
-  return out;
 }
 
 function stubAnswer(message: string): string {

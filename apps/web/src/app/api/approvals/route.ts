@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { buildUpstreamHeaders } from "@/lib/upstream-headers";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest): Promise<Response> {
     const url = `${upstream.replace(/\/$/, "")}/approvals?status=${encodeURIComponent(status)}`;
     try {
       const response = await fetch(url, {
-        headers: forwardHeaders(req.headers),
+        headers: buildUpstreamHeaders(req),
       });
       const body = await response.text();
       return new Response(body, {
@@ -66,9 +67,3 @@ export async function GET(req: NextRequest): Promise<Response> {
   });
 }
 
-function forwardHeaders(src: Headers): Headers {
-  const out = new Headers();
-  const auth = src.get("authorization");
-  if (auth) out.set("authorization", auth);
-  return out;
-}
