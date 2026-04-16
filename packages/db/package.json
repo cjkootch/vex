@@ -22,6 +22,7 @@
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf dist *.tsbuildinfo",
     "migrate": "tsx src/migrate.ts",
+    "seed": "tsx src/seed.ts",
     "drizzle:generate": "drizzle-kit generate"
   },
   "dependencies": {

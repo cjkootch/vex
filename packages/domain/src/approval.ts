@@ -2,7 +2,8 @@
  * Approval tiers.
  *
  * Actions are classified by risk. Per invariants, T2+ actions MUST NOT execute
- * without a corresponding approval row with decision=approved.
+ * without a corresponding approval row with decision = approved (or
+ * auto_approved for whitelisted cases).
  */
 export const ApprovalTier = {
   /** Read-only / reversible within the user's own view. */
@@ -20,7 +21,7 @@ export const ApprovalDecision = {
   Pending: "pending",
   Approved: "approved",
   Rejected: "rejected",
-  Expired: "expired",
+  AutoApproved: "auto_approved",
 } as const;
 export type ApprovalDecision = (typeof ApprovalDecision)[keyof typeof ApprovalDecision];
 
