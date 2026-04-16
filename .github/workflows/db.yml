@@ -1,0 +1,103 @@
+name: DB
+
+# Manual trigger only — never auto-runs. Click "Run workflow" in the Actions
+# tab and pick the command + Neon target. The job sets dummy values for the
+# non-DB env vars (S3, LLM keys) so loadEnv() validates without you having
+# to maintain unused secrets.
+on:
+  workflow_dispatch:
+    inputs:
+      command:
+        description: "Which command to run"
+        required: true
+        type: choice
+        default: migrate
+        options:
+          - migrate
+          - seed
+          - migrate-then-seed
+          - verify
+      target:
+        description: "Which database — 'production' uses MIGRATION_DATABASE_URL, 'dev' uses NEON_DEV_URL"
+        required: true
+        type: choice
+        default: production
+        options:
+          - production
+          - dev
+
+concurrency:
+  # Serialize runs against the same target so concurrent dispatches don't race.
+  group: db-${{ github.event.inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MIGRATION_DATABASE_URL: ${{ inputs.target == 'production' && secrets.MIGRATION_DATABASE_URL || secrets.NEON_DEV_URL }}
+      APPLICATION_DATABASE_URL: ${{ inputs.target == 'production' && (secrets.APPLICATION_DATABASE_URL || secrets.MIGRATION_DATABASE_URL) || secrets.NEON_DEV_URL }}
+      # loadEnv() requires these but migrate/seed don't actually read them.
+      REDIS_URL: redis://localhost:6379
+      S3_BUCKET: not-used-by-db-jobs
+      S3_ACCESS_KEY_ID: not-used-by-db-jobs
+      S3_SECRET_ACCESS_KEY: not-used-by-db-jobs
+      ANTHROPIC_API_KEY: not-used-by-db-jobs
+      OPENAI_API_KEY: not-used-by-db-jobs
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Confirm target
+        run: |
+          if [ -z "$MIGRATION_DATABASE_URL" ]; then
+            echo "::error::No MIGRATION_DATABASE_URL set for target='${{ inputs.target }}'. Add the secret in repo settings."
+            exit 1
+          fi
+          # Print only the host portion — never the credentials.
+          host="$(node -e "console.log(new URL(process.env.MIGRATION_DATABASE_URL).host)")"
+          echo "::notice::Target host: $host"
+
+      - name: Migrate
+        if: ${{ inputs.command == 'migrate' || inputs.command == 'migrate-then-seed' }}
+        run: pnpm db:migrate
+
+      - name: Seed
+        if: ${{ inputs.command == 'seed' || inputs.command == 'migrate-then-seed' }}
+        run: pnpm db:seed
+
+      - name: Verify
+        if: ${{ inputs.command == 'verify' }}
+        run: |
+          node -e "
+          const { Pool } = require('pg');
+          const pool = new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL });
+          (async () => {
+            const r = await pool.query(\`
+              SELECT
+                (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public') AS tables_total,
+                (SELECT COUNT(*) FROM pg_tables WHERE schemaname = 'public' AND rowsecurity = true) AS rls_enabled,
+                (SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'public') AS policies_total,
+                (SELECT COUNT(*) FROM pg_extension WHERE extname = 'vector') AS vector_extension,
+                (SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname LIKE '%hnsw%') AS hnsw_indexes,
+                (SELECT COUNT(*) FROM pg_partitioned_table) AS partitioned_tables,
+                (SELECT COUNT(*) FROM workspaces) AS workspaces,
+                (SELECT COUNT(*) FROM organizations) AS organizations,
+                (SELECT COUNT(*) FROM contacts) AS contacts;
+            \`);
+            console.log(JSON.stringify(r.rows[0], null, 2));
+            await pool.end();
+          })().catch((e) => { console.error(e); process.exit(1); });
+          "
