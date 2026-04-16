@@ -1,5 +1,7 @@
 # apps/api on Fly.io. Generated for Sprint 8 deploy.
-# Deploy from repo root: `fly deploy --config apps/api/fly.toml --dockerfile apps/api/Dockerfile`
+# Lives at repo root so the Docker build context is the whole monorepo
+# (the Dockerfile copies packages/ + pnpm-workspace.yaml).
+# Deploy from repo root: `fly deploy`
 
 app = "vex-api"
 primary_region = "iad"
