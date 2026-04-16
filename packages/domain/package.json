@@ -26,6 +26,9 @@
     "test": "vitest run --passWithNoTests",
     "clean": "rm -rf dist *.tsbuildinfo"
   },
+  "dependencies": {
+    "ulid": "2.3.0"
+  },
   "devDependencies": {
     "typescript": "5.5.3",
     "vitest": "1.6.0"

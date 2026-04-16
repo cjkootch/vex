@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { TenantId } from "@vex/domain";
+import { TenantId, createId } from "@vex/domain";
 import { InMemoryCostLedger } from "./cost-ledger.js";
 
-const tenant = TenantId("3f5b3c4e-2a8d-4f11-8a8b-1a2b3c4d5e6f");
+const tenant = TenantId(createId());
 
 describe("InMemoryCostLedger", () => {
   it("records entries idempotently by key", async () => {

@@ -205,6 +205,10 @@ importers:
         version: 1.6.0(@types/node@20.14.10)(terser@5.46.1)
 
   packages/domain:
+    dependencies:
+      ulid:
+        specifier: 2.3.0
+        version: 2.3.0
     devDependencies:
       typescript:
         specifier: 5.5.3
@@ -4040,6 +4044,10 @@ packages:
   uid@2.0.2:
     resolution: {integrity: sha512-u3xV3X7uzvi5b1MncmZo3i2Aw222Zk1keqLA1YkHldREkAhAqi65wuPfe7lHx8H/Wzy+8CE7S7uS3jekIM5s8g==}
     engines: {node: '>=8'}
+
+  ulid@2.3.0:
+    resolution: {integrity: sha512-keqHubrlpvT6G2wH0OEfSW4mquYRcbe/J8NMmveoQOjUqmo+hXtO+ORCpWhdbZ7k72UtY61BL7haGxW6enBnjw==}
+    hasBin: true
 
   unbox-primitive@1.1.0:
     resolution: {integrity: sha512-nWJ91DjeOkej/TA8pXQ3myruKpKEYgqvpw9lz4OPHj/NWFNluYrjbz9j01CJ8yKQd2g4jFoOkINCTW2I5LEEyw==}
@@ -8101,6 +8109,8 @@ snapshots:
   uid@2.0.2:
     dependencies:
       '@lukeed/csprng': 1.1.0
+
+  ulid@2.3.0: {}
 
   unbox-primitive@1.1.0:
     dependencies:

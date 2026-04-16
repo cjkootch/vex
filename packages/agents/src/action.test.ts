@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApprovalTier } from "@vex/domain";
+import { ApprovalTier, createId } from "@vex/domain";
 import { ActionDescriptor, actionRequiresApproval } from "./action.js";
 
 describe("ActionDescriptor", () => {
@@ -18,7 +18,7 @@ describe("ActionDescriptor", () => {
     const parsed = ActionDescriptor.parse({
       kind: "crm.note",
       tier: ApprovalTier.T1,
-      accountId: "3f5b3c4e-2a8d-4f11-8a8b-1a2b3c4d5e6f",
+      organizationId: createId(),
       body: "Had a call, they want pricing",
     });
     expect(actionRequiresApproval(parsed)).toBe(false);
@@ -27,12 +27,23 @@ describe("ActionDescriptor", () => {
   it("rejects an action whose tier doesn't match its kind", () => {
     expect(() =>
       ActionDescriptor.parse({
-        kind: "opportunity.close",
+        kind: "lead.close",
         tier: ApprovalTier.T1,
-        opportunityId: "3f5b3c4e-2a8d-4f11-8a8b-1a2b3c4d5e6f",
+        leadId: createId(),
         outcome: "won",
         reason: "—",
       }),
     ).toThrow();
+  });
+
+  it("rejects a crm.note with a non-ULID organizationId", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "crm.note",
+        tier: ApprovalTier.T1,
+        organizationId: "not-a-ulid",
+        body: "hi",
+      }),
+    ).toThrow(/ULID/);
   });
 });

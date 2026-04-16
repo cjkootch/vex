@@ -3,6 +3,13 @@
  * drizzle-orm pgEnum declarations (string tuple) and runtime checks.
  */
 
+export const WorkspacePlan = {
+  Free: "free",
+  Essentials: "essentials",
+  Pro: "pro",
+} as const;
+export type WorkspacePlan = (typeof WorkspacePlan)[keyof typeof WorkspacePlan];
+
 export const UserRole = {
   Owner: "owner",
   Admin: "admin",
@@ -11,32 +18,50 @@ export const UserRole = {
 } as const;
 export type UserRole = (typeof UserRole)[keyof typeof UserRole];
 
-export const OpportunityStage = {
-  Lead: "lead",
+export const RecordStatus = {
+  Active: "active",
+  Inactive: "inactive",
+  Archived: "archived",
+} as const;
+export type RecordStatus = (typeof RecordStatus)[keyof typeof RecordStatus];
+
+export const LeadStatus = {
+  New: "new",
   Qualified: "qualified",
-  Proposal: "proposal",
-  Negotiation: "negotiation",
-  ClosedWon: "closed_won",
-  ClosedLost: "closed_lost",
+  Disqualified: "disqualified",
+  Won: "won",
+  Lost: "lost",
 } as const;
-export type OpportunityStage = (typeof OpportunityStage)[keyof typeof OpportunityStage];
+export type LeadStatus = (typeof LeadStatus)[keyof typeof LeadStatus];
 
-export const ConversationChannel = {
-  Email: "email",
-  Voice: "voice",
-  Chat: "chat",
-  Sms: "sms",
+export const CampaignStatus = {
+  Active: "active",
+  Paused: "paused",
+  Completed: "completed",
+  Archived: "archived",
 } as const;
-export type ConversationChannel = (typeof ConversationChannel)[keyof typeof ConversationChannel];
+export type CampaignStatus = (typeof CampaignStatus)[keyof typeof CampaignStatus];
 
-export const AgentStatus = {
-  Queued: "queued",
-  Running: "running",
-  Succeeded: "succeeded",
+export const MessageDirection = {
+  Inbound: "inbound",
+  Outbound: "outbound",
+} as const;
+export type MessageDirection = (typeof MessageDirection)[keyof typeof MessageDirection];
+
+export const RawEventStatus = {
+  Pending: "pending",
+  Processed: "processed",
   Failed: "failed",
-  Cancelled: "cancelled",
 } as const;
-export type AgentStatus = (typeof AgentStatus)[keyof typeof AgentStatus];
+export type RawEventStatus = (typeof RawEventStatus)[keyof typeof RawEventStatus];
+
+export const AgentRunStatus = {
+  Pending: "pending",
+  Running: "running",
+  Completed: "completed",
+  Failed: "failed",
+} as const;
+export type AgentRunStatus = (typeof AgentRunStatus)[keyof typeof AgentRunStatus];
 
 export const IntegrationProvider = {
   Anthropic: "anthropic",
@@ -47,6 +72,9 @@ export const IntegrationProvider = {
   Hubspot: "hubspot",
   Gmail: "gmail",
   Outlook: "outlook",
+  Apollo: "apollo",
+  Ga4: "ga4",
+  Internal: "internal",
 } as const;
 export type IntegrationProvider =
   (typeof IntegrationProvider)[keyof typeof IntegrationProvider];

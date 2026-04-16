@@ -1,0 +1,96 @@
+[
+  {
+    "id": "eval_001",
+    "question": "Find the organization named Acme Corporation.",
+    "expected_subject_types": ["organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000001"],
+    "expected_answer_contains": ["Acme", "Manufacturing"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_002",
+    "question": "Which contact has the email contact2@example1.test?",
+    "expected_subject_types": ["contact"],
+    "expected_evidence_object_ids": ["01HSEEDCNT0000000000000002"],
+    "expected_answer_contains": ["Contact 2"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_003",
+    "question": "Show the touchpoint history for the email_nurture campaign.",
+    "expected_subject_types": ["campaign", "touchpoint"],
+    "expected_evidence_object_ids": [
+      "01HSEEDCMP0000000000000001",
+      "01HSEEDTCH0000000000000001",
+      "01HSEEDTCH0000000000000004"
+    ],
+    "expected_answer_contains": ["email_nurture", "touchpoint"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_004",
+    "question": "What is the status of the lead for Stark Industries?",
+    "expected_subject_types": ["lead", "organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000005"],
+    "expected_answer_contains": ["Stark"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_005",
+    "question": "What is the latest profile summary for Globex Industries?",
+    "expected_subject_types": ["summary", "organization"],
+    "expected_evidence_object_ids": [
+      "01HSEEDSMR0000000000000002",
+      "01HSEEDCRP0000000000000002"
+    ],
+    "expected_answer_contains": ["Globex", "energy"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_006",
+    "question": "How many contacts belong to Initech across the workspace?",
+    "expected_subject_types": ["contact", "organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000003"],
+    "expected_answer_contains": ["Initech"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_007",
+    "question": "Show recent email-click activity in the last 30 days.",
+    "expected_subject_types": ["event", "touchpoint"],
+    "expected_evidence_object_ids": [
+      "01HSEEDEVT0000000000000001",
+      "01HSEEDEVT0000000000000002",
+      "01HSEEDEVT0000000000000003"
+    ],
+    "expected_answer_contains": ["email.clicked"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_008",
+    "question": "Identify stale leads with no activity in the last 14 days.",
+    "expected_subject_types": ["lead", "touchpoint"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000004"],
+    "expected_answer_contains": ["stale"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_009",
+    "question": "What is the confidence of the legal_name field on the Acme organization, and what source produced it?",
+    "expected_subject_types": ["organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000001"],
+    "expected_answer_contains": ["internal", "1"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_010",
+    "question": "Compare paid_search_q2 spend against the volume of touchpoints it produced.",
+    "expected_subject_types": ["campaign", "touchpoint"],
+    "expected_evidence_object_ids": [
+      "01HSEEDCMP0000000000000002",
+      "01HSEEDTCH0000000000000002"
+    ],
+    "expected_answer_contains": ["paid_search_q2", "spend"],
+    "retrieval_mode": "hybrid"
+  }
+]
