@@ -1,31 +1,9 @@
-import { manifestFallback, validateManifest } from "@vex/ui";
-import { ManifestRenderer } from "@/components/manifest-renderer";
+import { redirect } from "next/navigation";
 
 /**
- * Marketing landing. Hand-authored manifest demonstrates the panel surface.
- * The /app page (auth-gated) renders model-produced manifests through the
- * exact same renderer.
+ * Root → `/app`. The real experience lives behind auth; the middleware
+ * on `/app` will redirect unauthenticated visitors to `/login`.
  */
-export default function Home() {
-  const result = validateManifest({
-    panels: [
-      {
-        type: "profile",
-        objectType: "platform",
-        objectId: "vex",
-        fields: {
-          Name: "Vex",
-          Tagline: "AI-native revenue intelligence",
-          URL: "https://vexhq.ai",
-        },
-      },
-    ],
-  });
-  const manifest = result.success ? result.manifest : manifestFallback("Welcome to Vex.");
-
-  return (
-    <main style={{ padding: 32, fontFamily: "system-ui, sans-serif" }}>
-      <ManifestRenderer manifest={manifest} />
-    </main>
-  );
+export default function Home(): never {
+  redirect("/app");
 }
