@@ -108,6 +108,16 @@ jobs:
         env:
           MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
         run: pnpm --filter @vex/db run migrate
+      # The eval fixtures reference the seeded tenant's record ids
+      # (SEED_FUEL_DEAL_IDS, SEED_ORG_IDS, etc). Migrations alone
+      # leave the DB with only schema — expected_evidence_object_ids
+      # then all miss with `evidence 0/N`. The seed script wipes and
+      # re-inserts every row matching `id LIKE '01HSEED%'` so it is
+      # effectively idempotent and safe to re-run on every push.
+      - name: Seed demo tenant on dev branch
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
+        run: pnpm --filter @vex/db run seed
       # Runner enforces the 85% gate + fails on any regression vs
       # evals/results/latest.json. See packages/agents/src/evals/runner.ts.
       - name: Run eval suite
