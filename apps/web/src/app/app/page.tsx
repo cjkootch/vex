@@ -157,3 +157,197 @@ function AppHomeInner() {
           )}
         </Section>
       )}
+      {brief.handled.length > 0 && (
+        <Section title="Vex handled" count={brief.handled.length} dim>
+          <button
+            type="button"
+            onClick={() => setShowHandled((v) => !v)}
+            aria-expanded={showHandled}
+            className="text-xs text-white/50 hover:text-white/80"
+          >
+            {showHandled
+              ? "Hide"
+              : `Show what Vex did (${brief.handled.length})`}
+          </button>
+          {showHandled && (
+            <ul className="mt-3 space-y-1">
+              {brief.handled.map((h) => (
+                <li
+                  key={h.id}
+                  className="flex items-center gap-3 rounded-md px-2 py-1.5 text-xs text-white/60"
+                >
+                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/80">
+                    {h.agentName}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{h.summary}</span>
+                  <span className="text-white/30">
+                    ${h.costUsd.toFixed(2)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      )}
+      {brief.blocked.length > 0 && (
+        <Section title="Blocked" tone="warning">
+          <div className="space-y-3">
+            {brief.blocked.map((b) => (
+              <BlockedCard key={b.id} item={b} />
+            ))}
+          </div>
+        </Section>
+      )}
+      {brief.risks.length > 0 && (
+        <Section title="Watch" tone="attention">
+          <div className="space-y-3">
+            {brief.risks.map((r) => (
+              <RiskCard key={r.id} risk={r} />
+            ))}
+          </div>
+        </Section>
+      )}
+      <FocusFooter focus={brief.recommendedFocus} />
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Small presentational helpers — kept in this file so /app/page.tsx is
+// self-contained and ~300 lines end to end. Hero / Section / Focus
+// are specific to the brief layout; skeleton + not-ready cover the
+// loading and empty states.
+// ---------------------------------------------------------------------------
+
+function Hero({ brief }: { brief: DailyBrief }) {
+  const generatedAt = new Date(brief.generatedAt);
+  return (
+    <section className="flex flex-wrap items-start justify-between gap-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight text-white">
+          {brief.greeting}
+        </h1>
+        <p className="mt-1 text-xs text-white/40">
+          Updated{" "}
+          {generatedAt.toLocaleTimeString(undefined, {
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <StatPill
+          label={`${brief.pendingApprovalCount} pending approval${brief.pendingApprovalCount === 1 ? "" : "s"}`}
+          tone={brief.pendingApprovalCount > 0 ? "warning" : "neutral"}
+        />
+        <StatPill
+          label={`$${brief.totalAgentCostToday.toFixed(2)} spent today by Vex`}
+          tone="neutral"
+        />
+      </div>
+    </section>
+  );
+}
+
+function StatPill({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "warning" | "neutral";
+}) {
+  const toneClass =
+    tone === "warning"
+      ? "border-amber-500/60 bg-amber-500/10 text-amber-200"
+      : "border-line bg-muted/40 text-white/70";
+  return (
+    <span
+      className={`rounded-full border px-3 py-1 text-xs ${toneClass}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function Section({
+  title,
+  count,
+  tone,
+  dim,
+  children,
+}: {
+  title: string;
+  count?: number;
+  tone?: "attention" | "warning";
+  dim?: boolean;
+  children: React.ReactNode;
+}) {
+  const headerTone =
+    tone === "attention"
+      ? "text-red-300"
+      : tone === "warning"
+        ? "text-amber-300"
+        : dim
+          ? "text-white/40"
+          : "text-white";
+  return (
+    <section>
+      <header className="mb-3 flex items-baseline gap-2">
+        <h2 className={`text-sm font-semibold uppercase tracking-wider ${headerTone}`}>
+          {title}
+        </h2>
+        {typeof count === "number" && (
+          <span className="text-xs text-white/40">· {count}</span>
+        )}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function FocusFooter({ focus }: { focus: string }) {
+  if (!focus) return null;
+  return (
+    <footer className="rounded-lg border border-teal-400/40 bg-teal-400/5 px-5 py-4 text-sm text-white/80">
+      <span className="mr-2 font-semibold uppercase tracking-wider text-teal-300">
+        Focus
+      </span>
+      {focus}
+    </footer>
+  );
+}
+
+function HomeSkeleton() {
+  return (
+    <main
+      className="mx-auto max-w-5xl space-y-10 px-8 py-10 text-white"
+      aria-busy="true"
+    >
+      <div className="space-y-3">
+        <div className="h-6 w-2/3 rounded bg-white/10" />
+        <div className="h-3 w-24 rounded bg-white/5" />
+      </div>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="space-y-2">
+          <div className="h-3 w-32 rounded bg-white/10" />
+          <div className="h-20 w-full rounded bg-white/5" />
+        </div>
+      ))}
+    </main>
+  );
+}
+
+function NotReadyState({ message }: { message: string }) {
+  return (
+    <main className="mx-auto max-w-xl space-y-4 px-8 py-20 text-center text-white">
+      <h1 className="text-xl font-semibold">Brief not ready</h1>
+      <p className="text-sm text-white/60">{message}</p>
+      <Link
+        href="/app/chat"
+        className="inline-block rounded-md border border-line bg-muted/40 px-4 py-2 text-sm text-white/80 transition hover:border-white/30 hover:text-white"
+      >
+        Ask Vex anything →
+      </Link>
+    </main>
+  );
+}
