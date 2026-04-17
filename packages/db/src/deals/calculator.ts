@@ -1091,14 +1091,20 @@ export function calculateSensitivityGrids(
   const priceVsVolume: SensitivityGrid = {
     rowLabels: priceOffsets20.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
     colLabels: volumeMultipliers.map((m) => fmtVolume(inputs.volumeUsg * m)),
+    // Avoid calling calculateFuelDeal here — it would call
+    // calculateSensitivityGrids recursively and blow the stack. Only
+    // the EBITDA total is needed, so run just the unit-economics +
+    // totals pipeline per cell.
     values: priceOffsets20.map((o) =>
       volumeMultipliers.map((m) => {
-        const cell = calculateFuelDeal({
+        const cellInputs = {
           ...inputs,
           sellPricePerUsg: inputs.sellPricePerUsg + o,
           volumeUsg: inputs.volumeUsg * m,
-        });
-        return cell.totals.ebitdaUsd;
+        };
+        const cellPerUsg = calculateUnitEconomics(cellInputs);
+        const cellTotals = calculateTotals(cellInputs, cellPerUsg);
+        return cellTotals.ebitdaUsd;
       }),
     ),
     highlightRow: 2,
@@ -1168,13 +1174,15 @@ export function calculateSensitivityGrids(
         const freightAtUtil =
           actualVolume > 0 ? totalVesselCost / actualVolume : 0;
         return priceOffsets15.map((o) => {
-          const cell = calculateFuelDeal({
+          // Same recursion-dodge as grid 1 — only netMargin from perUsg
+          // is needed, so skip the full calculateFuelDeal pipeline.
+          const cellInputs = {
             ...inputs,
             sellPricePerUsg: inputs.sellPricePerUsg + o,
             freightPerUsg: freightAtUtil,
             vessel: { ...vessel, utilizationPct: u },
-          });
-          return cell.perUsg.netMargin;
+          };
+          return calculateUnitEconomics(cellInputs).netMargin;
         });
       }),
       highlightRow: nearestRow,
@@ -1190,12 +1198,15 @@ export function calculateSensitivityGrids(
     colLabels: priceOffsets15.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
     values: productCostOffsets15.map((oRow) =>
       priceOffsets15.map((oCol) => {
-        const cell = calculateFuelDeal({
+        // Same recursion-dodge — unit econ + totals is all we need.
+        const cellInputs = {
           ...inputs,
           productCostPerUsg: inputs.productCostPerUsg + oRow,
           sellPricePerUsg: inputs.sellPricePerUsg + oCol,
-        });
-        return cell.totals.ebitdaUsd;
+        };
+        const cellPerUsg = calculateUnitEconomics(cellInputs);
+        const cellTotals = calculateTotals(cellInputs, cellPerUsg);
+        return cellTotals.ebitdaUsd;
       }),
     ),
     highlightRow: 2,
