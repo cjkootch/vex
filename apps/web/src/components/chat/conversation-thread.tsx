@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useVexQuery, type ManifestEvent } from "@/lib/use-vex-query";
+import { renderProse } from "@/lib/render-prose";
 import { ManifestCanvas } from "@/components/canvas/manifest-canvas";
 
 export interface ChatTurn {
@@ -79,7 +80,7 @@ export function ConversationThread({ turns, onTurns }: Props) {
           {isStreaming && (
             <div className="self-start" data-testid="assistant-streaming">
               <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90">
-                {text || <TypingIndicator />}
+                {text ? renderProse(text) : <TypingIndicator />}
               </div>
               {manifest && (
                 <div className="mt-3">
@@ -135,7 +136,7 @@ function Turn({ turn }: { turn: ChatTurn }) {
   return (
     <div className="self-start max-w-[85%]" data-testid="assistant-turn">
       <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90">
-        {turn.text || <span className="text-white/40">No response.</span>}
+        {turn.text ? renderProse(turn.text) : <span className="text-white/40">No response.</span>}
       </div>
       {turn.manifest && (
         <div className="mt-3" data-testid="manifest-canvas">
