@@ -38,14 +38,32 @@ jobs:
       - name: Unit test
         run: pnpm -r run test
 
+  # GitHub Actions disallows `secrets` in job-level `if:`, so a step
+  # translates the secret's presence into an output the eval job can gate on.
+  check-eval-secrets:
+    name: Detect eval secrets
+    runs-on: ubuntu-latest
+    outputs:
+      available: ${{ steps.check.outputs.available }}
+    steps:
+      - id: check
+        env:
+          NEON_DEV_URL: ${{ secrets.NEON_DEV_URL }}
+        run: |
+          if [ -n "$NEON_DEV_URL" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
   eval:
     name: Run eval suite
-    needs: ci
+    needs: [ci, check-eval-secrets]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Sprint 4 — blocking eval gate. Skips when secrets aren't configured
     # (forks, dependabot) so we don't fail PRs that can't access them.
-    if: ${{ secrets.NEON_DEV_URL != '' }}
+    if: needs.check-eval-secrets.outputs.available == 'true'
     env:
       APPLICATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
       MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
