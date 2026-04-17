@@ -91,6 +91,13 @@ jobs:
           cache: pnpm
       - name: Install
         run: pnpm install --frozen-lockfile
+      # The eval runner imports compiled package output (@vex/config
+      # points at dist/index.js, etc). On a fresh CI install dist/ is
+      # missing, which ends the suite with ERR_MODULE_NOT_FOUND before
+      # a single fixture runs. Build the workspace packages first so
+      # the runner resolves its own imports.
+      - name: Build workspace packages
+        run: pnpm -r --filter="./packages/*" run build
       # Runner enforces the 85% gate + fails on any regression vs
       # evals/results/latest.json. See packages/agents/src/evals/runner.ts.
       - name: Run eval suite

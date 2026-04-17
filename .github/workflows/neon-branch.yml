@@ -153,6 +153,12 @@ jobs:
           echo "MIGRATION_DATABASE_URL=$conn_direct" >> "$GITHUB_ENV"
           echo "NEON_BRANCH_URL=$conn" >> "$GITHUB_ENV"
 
+      # Migrator + eval runner both import compiled package output
+      # (@vex/config → dist/index.js, etc). Without dist/ the eval
+      # ends with ERR_MODULE_NOT_FOUND before a fixture runs.
+      - name: Build workspace packages
+        run: pnpm -r --filter="./packages/*" run build
+
       - name: Run migrations against the PR branch
         run: pnpm --filter @vex/db run migrate
         env:
