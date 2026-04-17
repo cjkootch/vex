@@ -64,7 +64,17 @@ export class QueryService {
       this.retrieval.buildEvidencePack(tx, input.message, embedding),
     );
 
-    if (pack.summaries.length === 0 && pack.items.length === 0) {
+    // Short-circuit ONLY for plainly conversational openers (hello,
+    // hi, help) AND only when the pack is empty. For substantive
+    // questions with empty packs we still call Claude — the v5
+    // prompt handles that case with a positive, jargon-free answer,
+    // and the retrieval ILIKE fallback will usually have populated
+    // the pack anyway once the workspace has records.
+    if (
+      pack.summaries.length === 0 &&
+      pack.items.length === 0 &&
+      isConversationalOpener(input.message)
+    ) {
       return emptyWorkspaceResponse();
     }
 
@@ -106,6 +116,40 @@ const EMPTY_WORKSPACE_ANSWER = [
   "- Summarise the last 30 days of activity for Acme",
   "- Which contacts at Initech are likely decision-makers?",
 ].join("\n");
+
+/**
+ * True iff the message reads as a plain greeting or help request
+ * with no specific workspace intent. Keeps the empty-workspace
+ * canned response focused on "hi"/"hello"/"what can you do" while
+ * letting substantive queries fall through to Claude — where the v5
+ * prompt handles the empty-evidence case with a positive answer.
+ */
+const CONVERSATIONAL_OPENERS = new Set([
+  "hi",
+  "hello",
+  "hey",
+  "help",
+  "yo",
+  "sup",
+]);
+
+function isConversationalOpener(message: string): boolean {
+  const trimmed = message.trim().toLowerCase();
+  if (trimmed.length === 0) return true;
+  // Strip trailing punctuation.
+  const clean = trimmed.replace(/[!?.,]+$/g, "");
+  if (CONVERSATIONAL_OPENERS.has(clean)) return true;
+  const phrases = [
+    "what can you do",
+    "what can you tell me",
+    "what data do you have",
+    "how does this work",
+    "how do i start",
+    "who are you",
+    "what are you",
+  ];
+  return phrases.some((p) => clean === p || clean.startsWith(`${p} `));
+}
 
 function emptyWorkspaceResponse(): RunQueryOutput {
   return {
