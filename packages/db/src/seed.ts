@@ -836,6 +836,235 @@ async function main(): Promise<void> {
         "Base case at current Platts FOB. Healthy vessel utilization, clean compliance — recommendation lands in the acceptable band.",
     });
 
+    // -----------------------------------------------------------------------
+    // Sprint 11 — Deal 3 (VTC-2026-003)
+    //
+    // Jet A-1 Houston → Pointe-à-Pierre (Caribbean Airlines). Draft status,
+    // no vessel chartered yet — the `vessel` sub-record is intentionally
+    // omitted so calculateVesselEconomics returns undefined and no vessel
+    // warnings fire. The critical warning instead comes from the BIS
+    // export licence being required but not yet issued; EEI filing is
+    // also outstanding (caution). Expected recommendation: do_not_proceed
+    // regardless of numeric score, per the compliance gate.
+    // -----------------------------------------------------------------------
+    const deal3Inputs: FuelDealInputs = {
+      dealRef: SEED_FUEL_DEAL_REFS.deal3,
+      product: "jet_a1",
+      incoterm: "cif",
+      volumeUsg: 1_500_000,
+      densityKgL: 0.8, // Jet A-1 nominal
+      volumeTolerancePct: 5,
+      sellPricePerUsg: 2.9,
+      buyerCurrencyCode: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      productCostPerUsg: 2.55, // Platts USGC Jet
+      productQualityPremiumPerUsg: 0,
+      freightPerUsg: 0.1, // placeholder — no vessel chartered yet
+      cargoInsurancePct: 0.0018,
+      warRiskPremiumPct: 0.0008,
+      politicalRiskPremiumPct: 0.0002,
+      dischargeHandlingPerUsg: 0.015,
+      compliancePerUsg: 0.003,
+      tradeFinancePerUsg: 0.008,
+      intermediaryFeePerUsg: 0.005,
+      vtcVariableOpsPerUsg: 0.003,
+      // vessel intentionally omitted — draft deal, no charter yet.
+      overheadAllocationUsd: 40_000,
+      tradeFinance: {
+        type: "prepayment_80_20",
+        prepaymentPct: 0.8,
+      },
+      counterpartyRiskScore: 20,
+      countryRiskScore: 35, // Trinidad & Tobago — lower risk
+      thresholds: {
+        maxPeakCashExposureUsd: 5_000_000,
+        minGrossMarginPct: 0.05,
+        minNetMarginPerUsg: 0.03,
+        maxCounterpartyRiskScore: 65,
+        maxCountryRiskScore: 70,
+        maxDemurrageDays: 2,
+      },
+      monthlyFixedOverheadUsd: 120_000,
+      compliance: {
+        ofac: "cleared",
+        bisRequired: true,
+        bisIssued: false,
+        eeiRequired: true,
+        eeiFiled: false,
+      },
+    };
+    const deal3Results = calculateFuelDeal(deal3Inputs);
+
+    await db.insert(schema.fuelDeals).values({
+      id: SEED_FUEL_DEAL_IDS.deal3,
+      tenantId,
+      dealRef: SEED_FUEL_DEAL_REFS.deal3,
+      status: "draft",
+      dealType: "spot",
+      product: "jet_a1",
+      productGrade: "Jet A-1 DEF STAN 91-091",
+      productSpecNotes: "Flashpoint 38°C min, freeze point -47°C max, AN-8 anti-icing required",
+      originCountry: "US",
+      originPort: "Houston",
+      originTerminal: "Kinder Morgan Pasadena",
+      destinationCountry: "TT",
+      destinationPort: "Pointe-à-Pierre",
+      destinationTerminal: "Petrotrin Refinery Jetty",
+      incoterm: "cif",
+      pricingBasis: "platts",
+      pricingFormula: "Platts US Gulf Coast Jet + $0.05/gal",
+      priceLockDate: "2026-04-16",
+      priceLockTime: "Platts 7-day average around BL date",
+      volumeUsg: deal3Inputs.volumeUsg,
+      volumeMt: deal3Results.volumeMt,
+      volumeBbls: deal3Results.volumeBbls,
+      densityKgL: deal3Inputs.densityKgL,
+      volumeTolerancePct: deal3Inputs.volumeTolerancePct,
+      currency: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      buyerOrgId: SEED_ORG_IDS.caribAir,
+      laycanStart: "2026-05-05",
+      laycanEnd: "2026-05-10",
+      blDateEstimated: "2026-05-07",
+      etaDestination: "2026-05-11",
+      paymentTerms: "prepayment_80_20",
+      tradeFinanceCostPct: 0.005,
+      ofacScreeningStatus: "cleared",
+      bisLicenseRequired: true,
+      // BIS licence number and expiry intentionally null — the licence
+      // is the blocker that forces the do_not_proceed recommendation.
+      bisLicenseNumber: null,
+      bisLicenseExpiry: null,
+      eeiFilingRequired: true,
+      eeiItn: null,
+      complianceHold: true,
+      complianceNotes:
+        "BIS export licence application submitted 2026-04-10, awaiting adjudication. EEI filing blocked on BIS issuance.",
+      counterpartyRiskScore: 20,
+      countryRiskScore: 35,
+      politicalRiskInsured: false,
+      notes:
+        "Draft. Cannot progress beyond negotiating until BIS licence is issued — airline has agreed to 80/20 prepayment structure contingent on licence clearance.",
+      internalNotes: "VTC demo deal — seeded to exercise the BIS-critical compliance path and the do_not_proceed recommendation.",
+      createdBy: SEED_ADMIN_USER_ID,
+    });
+
+    await db.insert(schema.fuelDealCostStack).values({
+      id: SEED_FUEL_DEAL_COST_STACK_IDS.deal3,
+      tenantId,
+      dealId: SEED_FUEL_DEAL_IDS.deal3,
+      productCostPerUsg: deal3Inputs.productCostPerUsg,
+      productQualityPremiumUsg: 0,
+      productCostBasis: "Platts Jet USGC + 5¢ (preliminary, to be re-locked at BL)",
+      // Vessel fields left null — no charter yet; the cost-stack row for
+      // a pre-charter deal stores only the product + shore-side + finance
+      // build-up. Freight figures still carry the placeholder so panels
+      // that read the stack have something to render.
+      freightBasis: "per_usg",
+      freightRateRaw: deal3Inputs.freightPerUsg,
+      freightRatePerUsg: deal3Inputs.freightPerUsg,
+      freightCurrency: "usd",
+      freightTotalUsd: deal3Inputs.freightPerUsg * deal3Inputs.volumeUsg,
+      freightPerUsgAllIn: deal3Inputs.freightPerUsg,
+      cargoInsurancePct: deal3Inputs.cargoInsurancePct,
+      cargoInsuranceUsd: deal3Results.insurance.cargoInsuranceUsd,
+      warRiskPremiumPct: deal3Inputs.warRiskPremiumPct,
+      warRiskUsd: deal3Results.insurance.warRiskUsd,
+      politicalRiskPremiumPct: deal3Inputs.politicalRiskPremiumPct,
+      politicalRiskUsd: deal3Results.insurance.politicalRiskUsd,
+      totalInsurancePerUsg: deal3Results.insurance.totalInsurancePerUsg,
+      dischargeHandlingPerUsg: deal3Inputs.dischargeHandlingPerUsg,
+      inspectionFeeUsd: 5_500, // Jet A-1 requires a fuller MSEP/particulate panel
+      samplingTestingUsd: 3_000,
+      totalCompliancePerUsg: deal3Inputs.compliancePerUsg,
+      ofacScreeningFeeUsd: 1_200,
+      bisLicenseFeeUsd: 2_500,
+      eeiFilingFeeUsd: 300,
+      complianceLegalUsd: 6_500,
+      tradeFinanceTotalUsd: deal3Inputs.tradeFinancePerUsg * deal3Inputs.volumeUsg,
+      tradeFinancePerUsg: deal3Inputs.tradeFinancePerUsg,
+      brokeragePct: 0.002,
+      intermediaryFeePct: 0,
+      totalAgentPerUsg: deal3Inputs.intermediaryFeePerUsg,
+      vtcVariableOpsPerUsg: deal3Inputs.vtcVariableOpsPerUsg,
+      overheadAllocationUsd: deal3Inputs.overheadAllocationUsd,
+      overheadPerUsg: deal3Results.perUsg.overheadAllocation,
+      totalLandedCostPerUsg:
+        deal3Results.perUsg.totalVariableCost + deal3Results.perUsg.overheadAllocation,
+      grossMarginPerUsg: deal3Results.perUsg.grossMargin,
+      grossMarginPct: deal3Results.totals.grossMarginPct,
+      netMarginPerUsg: deal3Results.perUsg.netMargin,
+      netMarginPct: deal3Results.totals.ebitdaMarginPct,
+      ebitdaUsd: deal3Results.totals.ebitdaUsd,
+      breakevenSellPriceUsg: deal3Results.breakeven.sellPricePerUsg,
+    });
+
+    await db.insert(schema.fuelDealCashflowEvents).values([
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[6]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal3,
+        dayRelative: -10,
+        label: "Buyer prepayment (80% of revenue)",
+        direction: "inflow",
+        eventType: "buyer_prepayment",
+        baseType: "revenue",
+        amountPct: 0.8,
+        amountFixedUsd: null,
+        amountCalculatedUsd: 0.8 * deal3Results.totals.revenueUsd,
+        counterparty: "Caribbean Airlines",
+        paymentMethod: "wire",
+      },
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[7]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal3,
+        dayRelative: -3,
+        label: "Product purchase (100% of product cost)",
+        direction: "outflow",
+        eventType: "product_purchase",
+        baseType: "product_cost",
+        amountPct: 1,
+        amountFixedUsd: null,
+        amountCalculatedUsd: deal3Results.totals.productCostUsd,
+        counterparty: "US Gulf Coast Jet supplier",
+        paymentMethod: "wire",
+      },
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[8]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal3,
+        dayRelative: 5,
+        label: "Buyer final payment (20% of revenue)",
+        direction: "inflow",
+        eventType: "buyer_final_payment",
+        baseType: "revenue",
+        amountPct: 0.2,
+        amountFixedUsd: null,
+        amountCalculatedUsd: 0.2 * deal3Results.totals.revenueUsd,
+        counterparty: "Caribbean Airlines",
+        paymentMethod: "wire",
+      },
+    ]);
+
+    await db.insert(schema.fuelDealScenarios).values({
+      id: SEED_FUEL_DEAL_SCENARIO_IDS.deal3Base,
+      tenantId,
+      dealId: SEED_FUEL_DEAL_IDS.deal3,
+      scenarioName: "Base Case",
+      scenarioType: "base",
+      isActive: true,
+      sellPricePerUsg: deal3Inputs.sellPricePerUsg,
+      resultsJson: deal3Results as unknown as Record<string, unknown>,
+      score: deal3Results.scorecard.overallScore,
+      recommendation: deal3Results.scorecard.recommendation,
+      calculatedAt: now,
+      notes:
+        "Base case at current Platts Jet. BIS export licence is the gating item — recommendation is do_not_proceed until the licence is issued.",
+    });
+
     // eslint-disable-next-line no-console
     console.log("seed complete");
   } finally {
