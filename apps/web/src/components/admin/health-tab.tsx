@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { fetchWithRetry } from "@/lib/fetch-with-retry";
 
 interface AgentStats {
   agentName: string;
@@ -35,10 +36,16 @@ export function HealthTab() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/admin/health", {
+        const res = await fetchWithRetry("/api/admin/health", {
           credentials: "include",
           cache: "no-store",
+          onWaking: () => {
+            if (!cancelled) setError("API is waking up…");
+          },
         });
+        if (res.status === 502 || res.status === 503) {
+          throw new Error("API is still waking up. Try again in a moment.");
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = (await res.json()) as HealthMetrics;
         if (!cancelled) {
