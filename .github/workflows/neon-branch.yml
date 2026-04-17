@@ -121,6 +121,26 @@ jobs:
           if [ -n "$existing" ]; then
             echo "branch already exists: $existing"
             BRANCH_ID="$existing"
+            # Belt-and-suspenders: branches created by the older
+            # workflow (before the \`endpoints\` key was added to the
+            # POST body) have no compute endpoint, so the
+            # /connection_uri call returns 404 and the job dies.
+            # Create a read_write endpoint on demand if none exist.
+            endpoint_count=$(
+              curl -fsS --noproxy '*' \
+                -H "Authorization: Bearer $NEON_API_KEY" \
+                "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID" \
+                | jq '.endpoints // [] | length'
+            )
+            if [ "$endpoint_count" = "0" ]; then
+              echo "branch has no endpoint — creating a read_write endpoint"
+              curl -fsS --noproxy '*' -X POST \
+                -H "Authorization: Bearer $NEON_API_KEY" \
+                -H "Content-Type: application/json" \
+                "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/endpoints" \
+                -d "{\"endpoint\":{\"branch_id\":\"$BRANCH_ID\",\"type\":\"read_write\"}}" \
+                > /dev/null
+            fi
           else
             response=$(
               curl -fsS --noproxy '*' -X POST \
