@@ -39,6 +39,9 @@ function isNotReady(b: unknown): b is BriefNotReady {
   );
 }
 
+/** Cap the per-tick wait so a stuck upstream can't strand the home page on skeletons. */
+const BRIEF_FETCH_TIMEOUT_MS = 10_000;
+
 function useDailyBrief() {
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [notReady, setNotReady] = useState<BriefNotReady | null>(null);
@@ -47,10 +50,16 @@ function useDailyBrief() {
   useEffect(() => {
     let cancelled = false;
     const tick = async (): Promise<void> => {
+      const controller = new AbortController();
+      const timeout = setTimeout(
+        () => controller.abort(),
+        BRIEF_FETCH_TIMEOUT_MS,
+      );
       try {
         const res = await fetch("/api/brief/today", {
           credentials: "include",
           cache: "no-store",
+          signal: controller.signal,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as unknown;
@@ -65,8 +74,14 @@ function useDailyBrief() {
         setError(null);
       } catch (e) {
         if (cancelled) return;
-        setError((e as Error).message);
+        const err = e as Error;
+        setError(
+          err.name === "AbortError"
+            ? "Brief request timed out — the API may be warming up."
+            : err.message,
+        );
       } finally {
+        clearTimeout(timeout);
         if (!cancelled) setLoading(false);
       }
     };
