@@ -26,13 +26,25 @@ async function main(): Promise<void> {
   try {
     const client = await pool.connect();
     try {
+      const { rows: [who] } = await client.query<{
+        current_user: string;
+        session_user: string;
+        current_database: string;
+      }>("SELECT current_user, session_user, current_database()");
+      // eslint-disable-next-line no-console
+      console.log(
+        `migrate: connected user=${who.current_user} session=${who.session_user} db=${who.current_database}`,
+      );
+
       try {
         await client.query("SET ROLE vex_migrator");
         // eslint-disable-next-line no-console
         console.log("migrate: running as vex_migrator (BYPASSRLS)");
-      } catch {
+      } catch (err) {
         // eslint-disable-next-line no-console
-        console.log("migrate: vex_migrator role not present yet; using default role");
+        console.log(
+          `migrate: SET ROLE vex_migrator skipped (${(err as Error).message}); using default role`,
+        );
       }
       const db = drizzle(client);
       await migrate(db, { migrationsFolder });

@@ -33,14 +33,28 @@ async function main(): Promise<void> {
 
   const client = await pool.connect();
   try {
+    const { rows: [who] } = await client.query<{
+      current_user: string;
+      session_user: string;
+      current_database: string;
+    }>("SELECT current_user, session_user, current_database()");
+    // eslint-disable-next-line no-console
+    console.log(
+      `seed: connected user=${who.current_user} session=${who.session_user} db=${who.current_database}`,
+    );
+
     // Seed needs to write rows that span tenants and bypass the RLS WITH
     // CHECK constraint on every business table. vex_migrator (BYPASSRLS) is
     // the same role the migration runner uses for the same reason.
     try {
       await client.query("SET ROLE vex_migrator");
-    } catch {
-      // Pre-Sprint-3 deployments don't have the role yet — RLS isn't enabled
-      // either, so the seed can run as the connection's default role.
+      // eslint-disable-next-line no-console
+      console.log("seed: running as vex_migrator (BYPASSRLS)");
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `seed: SET ROLE vex_migrator skipped (${(err as Error).message}); using default role`,
+      );
     }
     const db = drizzle(client, { schema });
 

@@ -71,9 +71,10 @@ jobs:
             echo "::error::No MIGRATION_DATABASE_URL set for target='${{ inputs.target }}'. Add the secret in repo settings."
             exit 1
           fi
-          # Print only the host portion — never the credentials.
+          # Print host + user — never the password.
           host="$(node -e "console.log(new URL(process.env.MIGRATION_DATABASE_URL).host)")"
-          echo "::notice::Target host: $host"
+          user="$(node -e "console.log(new URL(process.env.MIGRATION_DATABASE_URL).username)")"
+          echo "::notice::Target user@host: $user @ $host"
 
       - name: Migrate
         if: ${{ inputs.command == 'migrate' || inputs.command == 'migrate-then-seed' }}
