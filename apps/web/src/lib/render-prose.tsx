@@ -12,8 +12,32 @@ import { Fragment, type ReactNode } from "react";
  * Not a full markdown parser: no tables, no links, no headings, no
  * nested lists. Anything we don't recognise is rendered as plain text.
  */
+/**
+ * Pull the bracketed `[chunk 01H…]` citation literals out of the
+ * prose. Claude inserts them inline because the system prompt asks
+ * for chunk_id-grounded answers, but they read as noise — the
+ * EvidencePanel already lists every cited chunk. We strip them from
+ * the prose and let the panel be the source of truth.
+ *
+ * Pattern matches single (`[chunk 01H…]`) and comma-separated
+ * (`[chunk 01H…, 01H…, 01H…]`) forms. We tolerate any whitespace
+ * between commas and accept ULID-shape ids (Crockford base32, 26
+ * chars).
+ */
+const CHUNK_CITATION_RE =
+  /\s*\[\s*chunk\s+(?:01[A-Z0-9]{24})(?:\s*,\s*(?:01[A-Z0-9]{24}))*\s*\]/g;
+
+function stripChunkCitations(source: string): string {
+  return source
+    .replace(CHUNK_CITATION_RE, "")
+    // Tidy double-spaces and orphaned spaces before punctuation.
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+([.,;:!?])/g, "$1");
+}
+
 export function renderProse(source: string): ReactNode {
-  const blocks = splitBlocks(source.replace(/\r\n/g, "\n"));
+  const cleaned = stripChunkCitations(source.replace(/\r\n/g, "\n"));
+  const blocks = splitBlocks(cleaned);
   return (
     <>
       {blocks.map((block, idx) => (
