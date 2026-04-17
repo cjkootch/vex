@@ -51,16 +51,17 @@ const NAV_ITEMS: NavItem[] = [
       "M3 21h18M5 21V7l7-4 7 4v14M9 9h1M9 13h1M9 17h1M14 9h1M14 13h1M14 17h1",
   },
   {
+    href: "/app/contacts",
+    label: "Contacts",
+    matchKey: "/app/contacts",
+    iconPath:
+      "M16 11c1.657 0 3-1.79 3-4s-1.343-4-3-4-3 1.79-3 4 1.343 4 3 4zM8 11c1.657 0 3-1.79 3-4S9.657 3 8 3 5 4.79 5 7s1.343 4 3 4zM2 20c0-3.314 2.686-6 6-6s6 2.686 6 6M14 14c3.314 0 6 2.686 6 6",
+  },
+  {
     href: "/app/approvals",
     label: "Approvals",
     matchKey: "/app/approvals",
     iconPath: "M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-  },
-  {
-    href: "/app/activity",
-    label: "Activity",
-    matchKey: "/app/activity",
-    iconPath: "M3 12h4l3-9 4 18 3-9h4",
   },
   {
     // Sprint-13 admin console. Non-owners get a 403-style denied page

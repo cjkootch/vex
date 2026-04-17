@@ -1,4 +1,5 @@
 import { Global, Module, type DynamicModule } from "@nestjs/common";
+import { AuthController } from "./auth.controller.js";
 import { JwtAuthGuard, NEXTAUTH_SECRET_TOKEN } from "./jwt-auth.guard.js";
 import { RolesGuard } from "./roles.guard.js";
 import { TenantContext } from "./tenant-context.service.js";
@@ -14,6 +15,7 @@ export class AuthModule {
     return {
       module: AuthModule,
       global: true,
+      controllers: [AuthController],
       providers: [
         { provide: NEXTAUTH_SECRET_TOKEN, useValue: config.nextAuthSecret },
         JwtAuthGuard,
