@@ -50,6 +50,27 @@ export class S3Uploader {
     );
   }
 
+  /**
+   * Upload a binary payload (e.g. a Twilio recording MP3). Sprint 12
+   * uses this for PSTN call recordings — the workflow downloads the
+   * file from Twilio, then this method re-stores it under a tenant-
+   * prefixed key so Vex owns the canonical reference.
+   */
+  async putBuffer(
+    key: string,
+    body: Buffer,
+    contentType: string,
+  ): Promise<void> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Body: body,
+        ContentType: contentType,
+      }),
+    );
+  }
+
   async getText(key: string): Promise<string> {
     const out = await this.client.send(
       new GetObjectCommand({ Bucket: this.bucket, Key: key }),

@@ -1,0 +1,82 @@
+name: RLS audit
+
+# Sprint 13 — nightly cross-tenant isolation check. Runs
+# scripts/audit-rls.ts against the staging Neon branch. The script
+# verifies every business table (16 original + 7 Sprint-11 fuel-deal
+# tables) has RLS enabled AND returns zero rows when queried with a
+# fake tenant id. Exit 1 on any failure so a broken isolation
+# guarantee pages the on-call via the workflow-fail notification.
+#
+# Also wired as a `workflow_dispatch` trigger so an operator can
+# re-run the audit on demand after applying a migration.
+
+on:
+  schedule:
+    # 08:00 UTC every day → 03:00 CT, 04:00 ET. Overlap with the
+    # developer's day is deliberate — a failed audit should land in
+    # a human's notifications before the next release window.
+    - cron: "0 8 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  # Preflight matches the CI pattern — secrets.* isn't allowed in
+  # job-level `if:` expressions, so we resolve it via a boolean
+  # output from this tiny job.
+  preflight:
+    name: preflight-secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      has_staging: ${{ steps.check.outputs.has_staging }}
+    steps:
+      - id: check
+        env:
+          NEON_STAGING_DIRECT_URL: ${{ secrets.NEON_STAGING_DIRECT_URL }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NEON_STAGING_DIRECT_URL:-}" ]; then
+            echo "has_staging=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_staging=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  audit:
+    name: audit-rls
+    needs: preflight
+    if: ${{ needs.preflight.outputs.has_staging == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # scripts/audit-rls.ts reads MIGRATION_DATABASE_URL from
+      # @vex/config's env loader. The direct Neon endpoint is
+      # required — the pooled endpoint resets SET LOCAL state
+      # across statements.
+      MIGRATION_DATABASE_URL: ${{ secrets.NEON_STAGING_DIRECT_URL }}
+      APPLICATION_DATABASE_URL: ${{ secrets.NEON_STAGING_DIRECT_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # @vex/config + @vex/db need their dist for the script's
+      # imports to resolve under tsx's strict ESM loader.
+      - name: Build prerequisites
+        run: |
+          pnpm --filter=@vex/config run build
+          pnpm --filter=@vex/db run build
+
+      - name: Run RLS audit
+        run: pnpm --filter=@vex/db exec tsx ../../scripts/audit-rls.ts
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::RLS audit failed — investigate cross-tenant exposure immediately."

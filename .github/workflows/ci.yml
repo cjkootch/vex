@@ -38,14 +38,39 @@ jobs:
       - name: Unit test
         run: pnpm -r run test
 
-  eval:
-    name: Run eval suite
+  # Preflight is the workaround for GitHub Actions refusing
+  # `secrets.*` in job-level `if:` expressions. The preflight job
+  # reads the needed secrets into step env and emits plain boolean
+  # outputs; downstream jobs gate on `needs.preflight.outputs.*`.
+  preflight:
+    name: preflight-secrets
     needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      has_eval_secrets: ${{ steps.check.outputs.has_eval_secrets }}
+    steps:
+      - id: check
+        env:
+          NEON_DEV_URL: ${{ secrets.NEON_DEV_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NEON_DEV_URL:-}" ] \
+             && [ -n "${ANTHROPIC_API_KEY:-}" ] \
+             && [ -n "${OPENAI_API_KEY:-}" ]; then
+            echo "has_eval_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_eval_secrets=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  eval:
+    name: Run eval suite (gate 85%)
+    needs: [ci, preflight]
+    if: ${{ needs.preflight.outputs.has_eval_secrets == 'true' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Sprint 4 — blocking eval gate. Skips when secrets aren't configured
-    # (forks, dependabot) so we don't fail PRs that can't access them.
-    if: ${{ secrets.NEON_DEV_URL != '' }}
     env:
       APPLICATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
       MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
@@ -66,6 +91,8 @@ jobs:
           cache: pnpm
       - name: Install
         run: pnpm install --frozen-lockfile
+      # Runner enforces the 85% gate + fails on any regression vs
+      # evals/results/latest.json. See packages/agents/src/evals/runner.ts.
       - name: Run eval suite
         run: pnpm eval:run
       - name: Upload eval results

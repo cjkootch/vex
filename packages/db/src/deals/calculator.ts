@@ -219,6 +219,8 @@ export interface FuelDealResults {
   breakeven: BreakevenAnalysis;
   warnings: DealWarning[];
   scorecard: DealScorecard;
+  cashflow: CashflowResults;
+  sensitivity: SensitivityOutputs;
 }
 
 // ===========================================================================
@@ -834,6 +836,8 @@ export function calculateFuelDeal(inputs: FuelDealInputs): FuelDealResults {
     breakeven,
     warnings,
     scorecard,
+    cashflow: calculateCashflow(inputs),
+    sensitivity: calculateSensitivityGrids(inputs),
   };
 }
 
@@ -851,4 +855,357 @@ function fmtMoneyPerUsg(n: number): string {
 
 function fmtMoney(n: number): string {
   return `$${Math.round(n).toLocaleString("en-US")}`;
+}
+
+// ===========================================================================
+// Cashflow timeline
+// ===========================================================================
+
+/**
+ * Cashflow input event. One row per inflow / outflow on the deal's
+ * timeline; `day_relative` is measured against the BL date (negative =
+ * before loading, 0 = loading, positive = after).
+ *
+ * Exactly one of `amount_fixed_usd` / `amount_pct` is set per event.
+ * `amount_pct` is a percentage (e.g. 20 = 20% of the base) and is
+ * applied against the USD total for the named `base_type`:
+ *
+ *   revenue | product_cost | freight | insurance | port_handling |
+ *   compliance | finance | overhead | custom
+ *
+ * When both fields are null the event contributes zero.
+ */
+export interface DealCashflowEvent {
+  day_relative: number;
+  label: string;
+  direction: "inflow" | "outflow";
+  event_type: string;
+  base_type: string;
+  amount_pct: number | null;
+  amount_fixed_usd: number | null;
+  counterparty?: string;
+}
+
+/**
+ * Append-only extension of {@link FuelDealInputs} adding the optional
+ * cashflow timeline. Declaration merging (legal TypeScript) preserves
+ * the existing interface and just adds the new field; callers that don't
+ * supply events continue to typecheck.
+ */
+export interface FuelDealInputs {
+  cashflowEvents?: DealCashflowEvent[];
+}
+
+/** One resolved row in the computed cashflow timeline. */
+export interface CashflowEventResult {
+  day: number;
+  label: string;
+  direction: "inflow" | "outflow";
+  amountUsd: number;
+  cumulativeCash: number;
+  eventType: string;
+  counterparty?: string;
+}
+
+export interface CashflowResults {
+  events: CashflowEventResult[];
+  /** Magnitude of the most-negative cumulative position reached (≥ 0). */
+  peakExposureUsd: number;
+  /** `day_relative` at which `peakExposureUsd` was first reached. */
+  peakExposureDay: number;
+  /** Cumulative position after the final event. */
+  finalPositionUsd: number;
+  /**
+   * First `day_relative` where the cumulative position re-crossed into
+   * non-negative territory after having gone negative. 0 when the
+   * timeline either never went negative or never recovered.
+   */
+  daysToBreakEven: number;
+}
+
+/**
+ * Walk the cashflow timeline and resolve cumulative position, peak
+ * exposure, and days-to-breakeven. The function is pure — no DB calls —
+ * and deterministic. Unit economics / totals are recomputed internally
+ * so the base_type lookup for `amount_pct` events is always consistent
+ * with the rest of {@link calculateFuelDeal}'s output.
+ *
+ * When `inputs.cashflowEvents` is missing or empty the function returns
+ * a zeroed {@link CashflowResults} — callers can treat this as "no
+ * timeline supplied" without branching.
+ */
+export function calculateCashflow(inputs: FuelDealInputs): CashflowResults {
+  const events = inputs.cashflowEvents ?? [];
+  if (events.length === 0) {
+    return {
+      events: [],
+      peakExposureUsd: 0,
+      peakExposureDay: 0,
+      finalPositionUsd: 0,
+      daysToBreakEven: 0,
+    };
+  }
+
+  const perUsg = calculateUnitEconomics(inputs);
+  const totals = calculateTotals(inputs, perUsg);
+
+  // Total-USD base for each `base_type`. Matches the naming in
+  // DealCashflowEvent so callers can reason about what each event
+  // resolves against.
+  const baseTotals: Record<string, number> = {
+    revenue: totals.revenueUsd,
+    product_cost: totals.productCostUsd,
+    freight: totals.freightUsd,
+    insurance: totals.insuranceUsd,
+    port_handling: totals.dischargeHandlingUsd,
+    compliance: totals.complianceUsd,
+    // `finance` rolls trade-finance and intermediary fees together so
+    // callers can book both against a single "finance" base if desired.
+    finance: totals.tradeFinanceUsd + totals.intermediaryFeesUsd,
+    overhead: totals.overheadUsd,
+    custom: 0,
+  };
+
+  const sorted = [...events].sort((a, b) => a.day_relative - b.day_relative);
+
+  const resolved: CashflowEventResult[] = [];
+  let cumulative = 0;
+  let mostNegative = 0;
+  let peakDay = 0;
+  let hasGoneNegative = false;
+  let daysToBreakEven = 0;
+
+  for (const ev of sorted) {
+    const amount = resolveAmount(ev, baseTotals);
+    const signed = ev.direction === "inflow" ? amount : -amount;
+    cumulative += signed;
+
+    if (cumulative < mostNegative) {
+      mostNegative = cumulative;
+      peakDay = ev.day_relative;
+    }
+    if (cumulative < 0) {
+      hasGoneNegative = true;
+    } else if (hasGoneNegative && daysToBreakEven === 0) {
+      daysToBreakEven = ev.day_relative;
+    }
+
+    const row: CashflowEventResult = {
+      day: ev.day_relative,
+      label: ev.label,
+      direction: ev.direction,
+      amountUsd: amount,
+      cumulativeCash: cumulative,
+      eventType: ev.event_type,
+    };
+    if (ev.counterparty !== undefined) row.counterparty = ev.counterparty;
+    resolved.push(row);
+  }
+
+  return {
+    events: resolved,
+    peakExposureUsd: Math.abs(mostNegative),
+    peakExposureDay: peakDay,
+    finalPositionUsd: cumulative,
+    daysToBreakEven,
+  };
+}
+
+function resolveAmount(
+  ev: DealCashflowEvent,
+  baseTotals: Record<string, number>,
+): number {
+  if (ev.amount_fixed_usd !== null && ev.amount_fixed_usd !== undefined) {
+    return ev.amount_fixed_usd;
+  }
+  if (ev.amount_pct !== null && ev.amount_pct !== undefined) {
+    const base = baseTotals[ev.base_type] ?? 0;
+    // `amount_pct` is a percentage (e.g. 20 = 20%). Divide by 100 to get
+    // the proportion. Callers that store amount_pct as a 0-1 fraction
+    // need to multiply by 100 before passing through — the calculator
+    // follows the spec literally.
+    return (ev.amount_pct / 100) * base;
+  }
+  return 0;
+}
+
+// ===========================================================================
+// Sensitivity grids
+// ===========================================================================
+
+/**
+ * One 5x5 sensitivity grid. `values[r][c]` is the computed metric at
+ * (rowLabels[r], colLabels[c]). `highlightRow` / `highlightCol` point at
+ * the current deal's position in the grid so UI panels can render a
+ * "you are here" marker; -1 means the grid isn't applicable (e.g. the
+ * utilizationVsMargin grid on a deal with no vessel).
+ */
+export interface SensitivityGrid {
+  rowLabels: string[];
+  colLabels: string[];
+  values: number[][];
+  highlightRow: number;
+  highlightCol: number;
+}
+
+export interface SensitivityOutputs {
+  /** EBITDA $, rows = sellPrice ±$0.20, cols = volume × 0.7..1.3. */
+  priceVsVolume: SensitivityGrid;
+  /** Peak cash exposure $, rows = sellPrice ±$0.20, cols = freight × 0.5..1.5. */
+  priceVsFreight: SensitivityGrid;
+  /** Net margin $/USG, rows = utilization 10/30/50/75/100%,
+   *  cols = sellPrice ±$0.15. Empty rows/cols/values when no vessel. */
+  utilizationVsMargin: SensitivityGrid;
+  /** EBITDA $, rows = productCost ±$0.15, cols = sellPrice ±$0.15. */
+  productCostVsPrice: SensitivityGrid;
+}
+
+/**
+ * Pre-compute the four canonical sensitivity grids. Each cell re-runs
+ * {@link calculateFuelDeal} (or {@link calculateCashflow} for the peak-
+ * cash grid) with modified inputs — pure, deterministic, ~100 calculator
+ * invocations per deal. Callers typically run this once at evaluation
+ * time and cache the result on the scenario so UI panels can render
+ * instantly.
+ */
+export function calculateSensitivityGrids(
+  inputs: FuelDealInputs,
+): SensitivityOutputs {
+  // Axis definitions. `priceOffsets20` and `priceOffsets15` are ± offsets
+  // in 5 steps (center at index 2). The multiplier and utilization axes
+  // are absolute values; multipliers center on 1.0 (index 2).
+  const priceOffsets20 = [-0.2, -0.1, 0, 0.1, 0.2];
+  const priceOffsets15 = [-0.15, -0.075, 0, 0.075, 0.15];
+  const productCostOffsets15 = [-0.15, -0.075, 0, 0.075, 0.15];
+  const volumeMultipliers = [0.7, 0.85, 1.0, 1.15, 1.3];
+  const freightMultipliers = [0.5, 0.75, 1.0, 1.25, 1.5];
+  const utilizations = [10, 30, 50, 75, 100];
+
+  const fmtPrice = (p: number): string => `$${p.toFixed(3)}`;
+  const fmtVolume = (v: number): string =>
+    `${(v / 1_000_000).toFixed(2)}M USG`;
+  const fmtFreight = (f: number): string => `$${f.toFixed(4)}/USG`;
+  const fmtUtil = (u: number): string => `${u.toFixed(0)}%`;
+
+  // -------- Grid 1: priceVsVolume → EBITDA ----------------------------------
+  const priceVsVolume: SensitivityGrid = {
+    rowLabels: priceOffsets20.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
+    colLabels: volumeMultipliers.map((m) => fmtVolume(inputs.volumeUsg * m)),
+    values: priceOffsets20.map((o) =>
+      volumeMultipliers.map((m) => {
+        const cell = calculateFuelDeal({
+          ...inputs,
+          sellPricePerUsg: inputs.sellPricePerUsg + o,
+          volumeUsg: inputs.volumeUsg * m,
+        });
+        return cell.totals.ebitdaUsd;
+      }),
+    ),
+    highlightRow: 2,
+    highlightCol: 2,
+  };
+
+  // -------- Grid 2: priceVsFreight → peak cash exposure ---------------------
+  // Only the cashflow walk is needed for this metric, so call
+  // calculateCashflow directly — skips the scorecard / warnings work.
+  const priceVsFreight: SensitivityGrid = {
+    rowLabels: priceOffsets20.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
+    colLabels: freightMultipliers.map((m) =>
+      fmtFreight(inputs.freightPerUsg * m),
+    ),
+    values: priceOffsets20.map((o) =>
+      freightMultipliers.map((m) => {
+        const cashflow = calculateCashflow({
+          ...inputs,
+          sellPricePerUsg: inputs.sellPricePerUsg + o,
+          freightPerUsg: inputs.freightPerUsg * m,
+        });
+        return cashflow.peakExposureUsd;
+      }),
+    ),
+    highlightRow: 2,
+    highlightCol: 2,
+  };
+
+  // -------- Grid 3: utilizationVsMargin → net margin / USG ------------------
+  // Recompute freightPerUsg from the vessel lump sum + fixed costs at each
+  // utilization rung. When the deal has no vessel input this grid is
+  // not applicable — return empty rows/cols/values and -1 highlights.
+  let utilizationVsMargin: SensitivityGrid;
+  if (!inputs.vessel) {
+    utilizationVsMargin = {
+      rowLabels: [],
+      colLabels: [],
+      values: [],
+      highlightRow: -1,
+      highlightCol: -1,
+    };
+  } else {
+    const vessel = inputs.vessel;
+    const fixedUsd =
+      vessel.portDuesLoadUsd +
+      vessel.portDuesDischargeUsd +
+      vessel.canalTransitUsd +
+      vessel.demurrageRatePerDay * vessel.demurrageEstimatedDays;
+    const totalVesselCost = vessel.freightLumpSumUsd + fixedUsd;
+
+    // highlightRow picks the utilization rung nearest the current deal.
+    let nearestRow = 0;
+    let nearestDist = Number.POSITIVE_INFINITY;
+    utilizations.forEach((u, i) => {
+      const d = Math.abs(u - vessel.utilizationPct);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestRow = i;
+      }
+    });
+
+    utilizationVsMargin = {
+      rowLabels: utilizations.map(fmtUtil),
+      colLabels: priceOffsets15.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
+      values: utilizations.map((u) => {
+        const actualVolume = vessel.capacityUsg * (u / 100);
+        const freightAtUtil =
+          actualVolume > 0 ? totalVesselCost / actualVolume : 0;
+        return priceOffsets15.map((o) => {
+          const cell = calculateFuelDeal({
+            ...inputs,
+            sellPricePerUsg: inputs.sellPricePerUsg + o,
+            freightPerUsg: freightAtUtil,
+            vessel: { ...vessel, utilizationPct: u },
+          });
+          return cell.perUsg.netMargin;
+        });
+      }),
+      highlightRow: nearestRow,
+      highlightCol: 2,
+    };
+  }
+
+  // -------- Grid 4: productCostVsPrice → EBITDA -----------------------------
+  const productCostVsPrice: SensitivityGrid = {
+    rowLabels: productCostOffsets15.map((o) =>
+      fmtPrice(inputs.productCostPerUsg + o),
+    ),
+    colLabels: priceOffsets15.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
+    values: productCostOffsets15.map((oRow) =>
+      priceOffsets15.map((oCol) => {
+        const cell = calculateFuelDeal({
+          ...inputs,
+          productCostPerUsg: inputs.productCostPerUsg + oRow,
+          sellPricePerUsg: inputs.sellPricePerUsg + oCol,
+        });
+        return cell.totals.ebitdaUsd;
+      }),
+    ),
+    highlightRow: 2,
+    highlightCol: 2,
+  };
+
+  return {
+    priceVsVolume,
+    priceVsFreight,
+    utilizationVsMargin,
+    productCostVsPrice,
+  };
 }

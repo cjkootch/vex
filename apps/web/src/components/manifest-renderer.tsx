@@ -175,5 +175,11 @@ function Panel({ panel }: { panel: ManifestPanel }) {
           </div>
         </section>
       );
+    // Sprint-11 panel types (disambiguation, confirm_entity,
+    // workspace_mode_switch) are handled by the ComponentRegistry-based
+    // ManifestCanvas, not this legacy renderer. Return null so this
+    // path stays inert without breaking union-exhaustiveness checks.
+    default:
+      return null;
   }
 }

@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { approvals, type Approval } from "../schema/approvals.js";
@@ -44,6 +44,29 @@ export class ApprovalRepository {
       .where(eq(approvals.decision, decision))
       .orderBy(desc(approvals.createdAt))
       .limit(limit);
+  }
+
+  /**
+   * Find the approval row whose `proposed_payload.workflow_id` matches.
+   * Sprint 12 — used by the OutboundCallWorkflow's createApprovalRow
+   * activity to stay idempotent across Temporal retries. Reads via a
+   * `->>` JSONB extract so the index-less path is acceptable for the
+   * single-row check; under sustained load we'd add a functional
+   * index on `(proposed_payload ->> 'workflow_id')`.
+   */
+  async findByWorkflowId(
+    tx: Tx,
+    workflowId: string,
+  ): Promise<Approval | null> {
+    const rows = await tx
+      .select()
+      .from(approvals)
+      .where(
+        sql`${approvals.proposedPayload} ->> 'workflow_id' = ${workflowId}`,
+      )
+      .orderBy(desc(approvals.createdAt))
+      .limit(1);
+    return rows[0] ?? null;
   }
 
   async decide(

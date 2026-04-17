@@ -178,5 +178,45 @@
     "expected_evidence_object_ids": ["01HSEEDDEA0000000000000002"],
     "expected_answer_contains": ["VTC-2026-002", "margin"],
     "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_call_001",
+    "question": "If I ask Vex to place an outbound call to a contact who has opt_out_at set, what does Vex do?",
+    "expected_subject_types": ["contact"],
+    "expected_evidence_object_ids": ["01HSEEDCNT0000000000000001"],
+    "expected_answer_contains": ["opt", "suppress"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_marketing_001",
+    "question": "Summarise the most recent marketing anomalies the analyst agent surfaced for the paid search Q2 campaign.",
+    "expected_subject_types": ["campaign"],
+    "expected_evidence_object_ids": ["01HSEEDCMP0000000000000002"],
+    "expected_answer_contains": ["paid_search_q2", "campaign"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_voice_001",
+    "question": "When a voice call transcript surfaces a commitment as an action item, what approval tier does Vex assign before it can fire?",
+    "expected_subject_types": ["workspace"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["approval", "T2"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_isolation_001",
+    "question": "Can a user from a different workspace tenant read Acme Corporation's contacts through the API?",
+    "expected_subject_types": ["organization"],
+    "expected_evidence_object_ids": ["01HSEEDCRP0000000000000001"],
+    "expected_answer_contains": ["tenant", "Acme"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_cost_limit_001",
+    "question": "What happens to a T1 agent run once the workspace's daily cost limit has been reached for the day?",
+    "expected_subject_types": ["workspace"],
+    "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
+    "expected_answer_contains": ["limit", "skip"],
+    "retrieval_mode": "hybrid"
   }
 ]

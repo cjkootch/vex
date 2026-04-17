@@ -1,0 +1,2 @@
+# The eval runner writes `latest.json` (+ optional history) here.
+# Keep this file so the directory survives `git clean`.

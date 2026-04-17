@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { asc, desc, eq, isNotNull } from "drizzle-orm";
 import type { Tx } from "../client.js";
 import { contacts, type Contact } from "../schema/contacts.js";
 
@@ -21,5 +21,68 @@ export class ContactRepository {
 
   async findByOrgId(tx: Tx, orgId: string): Promise<Contact[]> {
     return tx.select().from(contacts).where(eq(contacts.orgId, orgId));
+  }
+
+  /**
+   * Mark a contact as opted out. Sprint 12 suppression-list primitive
+   * consumed by the `checkSuppression` Temporal activity; the call
+   * workflow refuses to dial once this is set. Idempotent — a second
+   * call with the same reason overwrites the timestamp so the audit
+   * trail on the `contact.opted_out` event reflects the latest action.
+   */
+  async setOptOut(tx: Tx, id: string, reason: string, at: Date = new Date()): Promise<Contact> {
+    const [row] = await tx
+      .update(contacts)
+      .set({
+        optOutAt: at,
+        optOutReason: reason,
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, id))
+      .returning();
+    if (!row) throw new Error(`contact ${id} not found`);
+    return row;
+  }
+
+  /**
+   * Clear the opt-out flag. Gated behind a separate endpoint so it
+   * leaves a distinct audit event from setOptOut.
+   */
+  async clearOptOut(tx: Tx, id: string): Promise<Contact> {
+    const [row] = await tx
+      .update(contacts)
+      .set({
+        optOutAt: null,
+        optOutReason: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, id))
+      .returning();
+    if (!row) throw new Error(`contact ${id} not found`);
+    return row;
+  }
+
+  /**
+   * List every contact in the tenant that currently has opt_out_at set.
+   * Sorted by most recent opt-out first — the admin UI surfaces this as
+   * a table so a reviewer can see recent additions at the top.
+   */
+  async listSuppressed(tx: Tx, limit = 200): Promise<Contact[]> {
+    return tx
+      .select()
+      .from(contacts)
+      .where(isNotNull(contacts.optOutAt))
+      .orderBy(desc(contacts.optOutAt))
+      .limit(limit);
+  }
+
+  /** Alphabetical list of active contacts for admin / picker UIs. */
+  async listActive(tx: Tx, limit = 100): Promise<Contact[]> {
+    return tx
+      .select()
+      .from(contacts)
+      .where(eq(contacts.status, "active"))
+      .orderBy(asc(contacts.fullName))
+      .limit(limit);
   }
 }

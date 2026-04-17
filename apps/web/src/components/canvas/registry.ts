@@ -11,6 +11,10 @@ import { EvidencePanel } from "./panels/evidence-panel";
 import { GraphPanel } from "./panels/graph-panel";
 import { CampaignPanel } from "./panels/campaign-panel";
 import { VoiceSessionPanel } from "./panels/voice-session-panel";
+import {
+  ConfirmEntityPanel,
+  DisambiguationPanel,
+} from "../uncertainty/disambiguation-card";
 
 /**
  * `PanelComponent<T>` — a React component for one specific panel type.
@@ -48,6 +52,11 @@ registry.register("evidence", EvidencePanel);
 registry.register("graph", GraphPanel);
 registry.register("campaign", CampaignPanel);
 registry.register("voice_session", VoiceSessionPanel);
+registry.register("disambiguation", DisambiguationPanel);
+registry.register("confirm_entity", ConfirmEntityPanel);
+// Signal panel: ManifestCanvas handles the side effect (setMode + toast);
+// the registry entry just prevents FallbackPanel from showing stray JSON.
+registry.register("workspace_mode_switch", () => null);
 
 export function resolvePanel(type: ManifestPanelType): ComponentType<unknown> {
   return registry.resolve(type);

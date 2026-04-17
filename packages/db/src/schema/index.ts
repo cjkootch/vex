@@ -15,6 +15,7 @@ export * from "./events.js";
 export * from "./embedding-chunks.js";
 export * from "./agent-runs.js";
 export * from "./approvals.js";
+export * from "./cost-ledger.js";
 export * from "./fuel-deals.js";
 export * from "./fuel-deal-cost-stack.js";
 export * from "./fuel-deal-cashflow-events.js";
