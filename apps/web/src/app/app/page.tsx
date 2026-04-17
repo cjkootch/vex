@@ -1,71 +1,159 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { auth } from "@/auth";
+import { WorkspaceMode } from "@vex/ui";
+import type { DailyBrief } from "@vex/domain";
+import {
+  WorkspaceModeProvider,
+  useWorkspaceMode,
+} from "@/lib/workspace-mode-context";
+import { PriorityCard } from "@/components/brief/priority-card";
+import { DealPipelineRow } from "@/components/brief/deal-pipeline-row";
+import { BlockedCard, RiskCard } from "@/components/brief/blocked-card";
 
 /**
- * Authenticated landing page. Shows who you're signed in as and links to
- * the two live surfaces (chat + approvals). Middleware redirects
- * unauthenticated users to /login before this renders.
+ * /app home — daily brief. Depends on PriorityCard (B-4),
+ * DealPipelineRow (B-5), BlockedCard + RiskCard (B-6); imports fail
+ * to resolve until those land. Polling uses plain fetch +
+ * setInterval (5m) — no SWR dependency in the web graph.
+ * Wraps itself in WorkspaceModeProvider since /app/layout.tsx hasn't
+ * landed; nested providers inner-win, so this merges cleanly later.
  */
-export default async function AppHome() {
-  const session = await auth();
-  const email = session?.user?.email ?? "unknown";
-  const role = session?.user?.role ?? "member";
 
+const POLL_INTERVAL_MS = 5 * 60 * 1000;
+const PRIORITIES_COLLAPSED = 5;
+const PIPELINE_COLLAPSED = 4;
+
+interface BriefNotReady {
+  status: "not_ready";
+  message: string;
+}
+
+function isNotReady(b: unknown): b is BriefNotReady {
   return (
-    <main className="min-h-screen bg-canvas text-white">
-      <div className="mx-auto max-w-3xl px-8 py-16">
-        <header className="mb-10 flex items-baseline justify-between">
-          <h1 className="text-3xl font-semibold tracking-tight">Vex</h1>
-          <span className="text-sm text-white/50">
-            {email} · {role}
-          </span>
-        </header>
-
-        <p className="mb-10 text-white/70">
-          Welcome back. Pick a surface to jump into.
-        </p>
-
-        <nav className="grid gap-4 sm:grid-cols-2">
-          <Link
-            href="/app/chat"
-            className="group rounded-lg border border-line bg-muted/40 p-6 transition hover:border-white/30 hover:bg-muted/60"
-          >
-            <h2 className="text-lg font-semibold">Chat</h2>
-            <p className="mt-1 text-sm text-white/60">
-              Ask Vex anything. Streams a manifest canvas with evidence.
-            </p>
-            <span className="mt-4 inline-block text-sm text-white/40 group-hover:text-white/70">
-              Open chat →
-            </span>
-          </Link>
-
-          <Link
-            href="/app/voice"
-            className="group rounded-lg border border-line bg-muted/40 p-6 transition hover:border-white/30 hover:bg-muted/60"
-          >
-            <h2 className="text-lg font-semibold">Voice</h2>
-            <p className="mt-1 text-sm text-white/60">
-              Talk to Vex live in the browser. Transcripts summarise and surface action items.
-            </p>
-            <span className="mt-4 inline-block text-sm text-white/40 group-hover:text-white/70">
-              Start a call →
-            </span>
-          </Link>
-
-          <Link
-            href="/app/approvals"
-            className="group rounded-lg border border-line bg-muted/40 p-6 transition hover:border-white/30 hover:bg-muted/60"
-          >
-            <h2 className="text-lg font-semibold">Approvals</h2>
-            <p className="mt-1 text-sm text-white/60">
-              Review and approve or reject outbound actions proposed by agents.
-            </p>
-            <span className="mt-4 inline-block text-sm text-white/40 group-hover:text-white/70">
-              Open inbox →
-            </span>
-          </Link>
-        </nav>
-      </div>
-    </main>
+    typeof b === "object" &&
+    b !== null &&
+    "status" in b &&
+    (b as { status?: unknown }).status === "not_ready"
   );
 }
+
+function useDailyBrief() {
+  const [brief, setBrief] = useState<DailyBrief | null>(null);
+  const [notReady, setNotReady] = useState<BriefNotReady | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async (): Promise<void> => {
+      try {
+        const res = await fetch("/api/brief/today", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as unknown;
+        if (cancelled) return;
+        if (isNotReady(data)) {
+          setNotReady(data);
+          setBrief(null);
+        } else {
+          setBrief(data as DailyBrief);
+          setNotReady(null);
+        }
+        setError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setError((e as Error).message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    void tick();
+    const interval = setInterval(() => void tick(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
+  return { brief, notReady, error, loading };
+}
+
+export default function AppHome() {
+  return (
+    <WorkspaceModeProvider>
+      <AppHomeInner />
+    </WorkspaceModeProvider>
+  );
+}
+
+function AppHomeInner() {
+  const { setMode } = useWorkspaceMode();
+  const { brief, notReady, error, loading } = useDailyBrief();
+  const [showAllPriorities, setShowAllPriorities] = useState(false);
+  const [showHandled, setShowHandled] = useState(false);
+
+  useEffect(() => {
+    setMode(WorkspaceMode.MorningBrief);
+  }, [setMode]);
+
+  const visiblePriorities = useMemo(
+    () =>
+      !brief
+        ? []
+        : showAllPriorities
+          ? brief.priorities
+          : brief.priorities.slice(0, PRIORITIES_COLLAPSED),
+    [brief, showAllPriorities],
+  );
+  const visiblePipeline = useMemo(
+    () => (brief ? brief.pipeline.slice(0, PIPELINE_COLLAPSED) : []),
+    [brief],
+  );
+
+  if (loading) return <HomeSkeleton />;
+  if (notReady) return <NotReadyState message={notReady.message} />;
+  if (!brief)
+    return <NotReadyState message={error ?? "Brief unavailable."} />;
+
+  return (
+    <main className="mx-auto max-w-5xl space-y-10 px-8 py-10 text-white">
+      <Hero brief={brief} />
+      {brief.priorities.length > 0 && (
+        <Section title="Needs your attention" count={brief.priorities.length}>
+          <div className="space-y-3">
+            {visiblePriorities.map((p) => (
+              <PriorityCard key={p.id} priority={p} />
+            ))}
+          </div>
+          {brief.priorities.length > PRIORITIES_COLLAPSED && (
+            <button
+              type="button"
+              onClick={() => setShowAllPriorities((v) => !v)}
+              className="mt-3 text-xs text-white/50 hover:text-white/80"
+            >
+              {showAllPriorities
+                ? "Show less"
+                : `Show all (${brief.priorities.length})`}
+            </button>
+          )}
+        </Section>
+      )}
+      {brief.pipeline.length > 0 && (
+        <Section title="Deal pipeline">
+          <div className="divide-y divide-line/60 rounded-lg border border-line bg-muted/20">
+            {visiblePipeline.map((d) => (
+              <DealPipelineRow key={d.dealId} deal={d} />
+            ))}
+          </div>
+          {brief.pipeline.length > PIPELINE_COLLAPSED && (
+            <Link
+              href="/app/deals"
+              className="mt-3 inline-block text-xs text-white/50 hover:text-white/80"
+            >
+              View all deals →
+            </Link>
+          )}
+        </Section>
+      )}
