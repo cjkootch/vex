@@ -10,6 +10,7 @@ import {
 } from "@/lib/workspace-mode-context";
 import { ContextChip, type ContextChipType } from "./context-chip";
 import { CommandPalette } from "./command-palette";
+import { VexLogo } from "@/components/brand/vex-logo";
 
 /**
  * Persistent shell wrapping all /app/* pages: 48px TopBar, 240px
@@ -175,9 +176,10 @@ function TopBar({ pending }: { pending: number }) {
     <header className="flex h-12 flex-shrink-0 items-center border-b border-line bg-muted/40 px-4">
       <Link
         href="/app"
-        className="font-mono text-sm font-semibold tracking-wider"
+        aria-label="Vex home"
+        className="flex items-center text-white hover:text-white/80"
       >
-        VEX
+        <VexLogo className="h-6 w-9" />
       </Link>
       <div className="flex flex-1 justify-center px-6">
         {/* exactOptionalPropertyTypes: spread onClear only when set. */}
