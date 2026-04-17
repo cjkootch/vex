@@ -160,16 +160,29 @@ async function main(): Promise<void> {
       // grants.
       try {
         await client.query("RESET ROLE");
+        // Grant to the captured runtime role AND to PUBLIC. The PUBLIC
+        // grant is the safety net for cases where APPLICATION_DATABASE_URL
+        // connects as a different role than MIGRATION_DATABASE_URL —
+        // RLS still enforces tenant isolation row-by-row, so granting
+        // table-level access broadly is safe.
         await client.query(`
           GRANT ALL ON ALL TABLES    IN SCHEMA public TO ${quoteIdent(runtimeRole)};
           GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${quoteIdent(runtimeRole)};
+          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO PUBLIC;
+          GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO PUBLIC;
           ALTER DEFAULT PRIVILEGES FOR ROLE vex_migrator IN SCHEMA public
             GRANT ALL ON TABLES    TO ${quoteIdent(runtimeRole)};
           ALTER DEFAULT PRIVILEGES FOR ROLE vex_migrator IN SCHEMA public
             GRANT ALL ON SEQUENCES TO ${quoteIdent(runtimeRole)};
+          ALTER DEFAULT PRIVILEGES FOR ROLE vex_migrator IN SCHEMA public
+            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO PUBLIC;
+          ALTER DEFAULT PRIVILEGES FOR ROLE vex_migrator IN SCHEMA public
+            GRANT USAGE, SELECT ON SEQUENCES TO PUBLIC;
         `);
         // eslint-disable-next-line no-console
-        console.log(`migrate: granted full table access to ${runtimeRole}`);
+        console.log(
+          `migrate: granted full table access to ${runtimeRole} + PUBLIC fallback`,
+        );
       } catch (err) {
         // eslint-disable-next-line no-console
         console.log(
