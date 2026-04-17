@@ -65,7 +65,9 @@ function buildService(overrides: { currentSettings?: unknown } = {}) {
 }
 
 describe("AdminService.getSettings", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("returns the current settings blob", async () => {
     const { service } = buildService();
@@ -81,7 +83,9 @@ describe("AdminService.getSettings", () => {
 });
 
 describe("AdminService.updateSettings", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("refuses a cross-tenant write (tenantId !== workspaceId)", async () => {
     const { service, mocks } = buildService();
@@ -128,7 +132,9 @@ describe("AdminService.updateSettings", () => {
 });
 
 describe("AdminService.getLatestEvalResults", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it("returns null when the results file does not exist yet", async () => {
     const err: NodeJS.ErrnoException = new Error("ENOENT");
