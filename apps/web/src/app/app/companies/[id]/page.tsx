@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
+import { Tabs } from "@/components/ui/tabs";
 
 interface OrganizationContact {
   id: string;
@@ -11,6 +12,15 @@ interface OrganizationContact {
   email: string | null;
   phone: string | null;
   optedOut: boolean;
+}
+
+interface OrganizationDeal {
+  id: string;
+  dealRef: string;
+  status: string;
+  product: string;
+  volumeUsg: number;
+  role: "buyer" | "seller";
 }
 
 interface OrganizationDetail {
@@ -26,6 +36,7 @@ interface OrganizationDetail {
   createdAt: string;
   updatedAt: string;
   contacts: OrganizationContact[];
+  deals: OrganizationDeal[];
 }
 
 export default function CompanyDetailPage({
@@ -35,6 +46,7 @@ export default function CompanyDetailPage({
 }) {
   const [org, setOrg] = useState<OrganizationDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState("overview");
 
   useEffect(() => {
     let cancelled = false;
@@ -46,7 +58,11 @@ export default function CompanyDetailPage({
       })
       .then((body: { organization: OrganizationDetail }) => {
         if (!cancelled) {
-          setOrg(body.organization);
+          setOrg({
+            ...body.organization,
+            deals: body.organization.deals ?? [],
+            contacts: body.organization.contacts ?? [],
+          });
           setError(null);
         }
       })
@@ -98,85 +114,141 @@ export default function CompanyDetailPage({
         </Link>
       </header>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2 flex flex-col gap-4">
-          <section className="rounded-lg border border-line bg-muted/20 p-4">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-white/50">
-              Details
-            </h3>
-            <div className="grid grid-cols-[140px_1fr] gap-2 text-sm">
-              <span className="text-white/50">Status</span>
-              <span className="text-white/90">{org.status}</span>
-              <span className="text-white/50">Domain</span>
-              <span className="text-white/90">{org.domain ?? "—"}</span>
-              <span className="text-white/50">Industry</span>
-              <span className="text-white/90">{org.industry ?? "—"}</span>
-              <span className="text-white/50">Source</span>
-              <span className="text-white/90">{org.sourceOfTruth ?? "—"}</span>
-              <span className="text-white/50">External keys</span>
-              <span className="text-white/90 font-mono text-xs">
-                {Object.keys(org.externalKeys).length === 0
-                  ? "—"
-                  : Object.entries(org.externalKeys)
-                      .map(([k, v]) => `${k}: ${v}`)
-                      .join(", ")}
-              </span>
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-line bg-muted/20 p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-white/50">
-                Contacts ({org.contactCount})
-              </h3>
-              <Link
-                href="/app/contacts"
-                className="text-xs text-accent hover:underline"
-              >
-                View all →
-              </Link>
-            </div>
-            {org.contacts.length === 0 ? (
-              <p className="text-sm text-white/50">No contacts at this company yet.</p>
-            ) : (
-              <ul className="flex flex-col divide-y divide-line/60">
-                {org.contacts.map((c) => (
-                  <li
-                    key={c.id}
-                    className="flex items-start justify-between py-2 text-sm"
-                  >
-                    <div>
-                      <Link
-                        href={`/app/contacts/${c.id}`}
-                        className="font-medium text-accent hover:underline"
-                      >
-                        {c.fullName}
-                      </Link>
-                      <div className="text-xs text-white/50">
-                        {c.title ?? "—"} · {c.email ?? "no email"}
-                      </div>
-                    </div>
-                    {c.optedOut && (
-                      <span className="rounded bg-bad/20 px-1.5 py-0.5 text-xs text-bad">
-                        suppressed
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
-
-        <aside className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-white/50">
-            Activity
-          </h2>
-          <ActivityTimeline subjectType="organization" subjectId={org.id} />
-        </aside>
-      </div>
+      <Tabs
+        active={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            id: "overview",
+            label: "Overview",
+            content: <OverviewTab org={org} />,
+          },
+          {
+            id: "contacts",
+            label: "Contacts",
+            count: org.contacts.length,
+            content: <ContactsTab contacts={org.contacts} />,
+          },
+          {
+            id: "deals",
+            label: "Deals",
+            count: org.deals.length,
+            content: <DealsTab deals={org.deals} />,
+          },
+          {
+            id: "activity",
+            label: "Activity",
+            content: (
+              <ActivityTimeline subjectType="organization" subjectId={org.id} />
+            ),
+          },
+        ]}
+      />
     </div>
   );
+}
+
+function OverviewTab({ org }: { org: OrganizationDetail }) {
+  return (
+    <section className="rounded-lg border border-line bg-muted/20 p-4">
+      <div className="grid grid-cols-[140px_1fr] gap-2 text-sm">
+        <span className="text-white/50">Status</span>
+        <span className="text-white/90">{org.status}</span>
+        <span className="text-white/50">Domain</span>
+        <span className="text-white/90">{org.domain ?? "—"}</span>
+        <span className="text-white/50">Industry</span>
+        <span className="text-white/90">{org.industry ?? "—"}</span>
+        <span className="text-white/50">Source</span>
+        <span className="text-white/90">{org.sourceOfTruth ?? "—"}</span>
+        <span className="text-white/50">External keys</span>
+        <span className="text-white/90 font-mono text-xs">
+          {Object.keys(org.externalKeys).length === 0
+            ? "—"
+            : Object.entries(org.externalKeys)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join(", ")}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function ContactsTab({ contacts }: { contacts: OrganizationContact[] }) {
+  if (contacts.length === 0) {
+    return (
+      <p className="rounded-md border border-line bg-muted/20 px-3 py-4 text-sm text-white/50">
+        No contacts at this company yet.
+      </p>
+    );
+  }
+  return (
+    <ul className="flex flex-col divide-y divide-line/60 rounded-lg border border-line bg-muted/20 px-4">
+      {contacts.map((c) => (
+        <li
+          key={c.id}
+          className="flex items-start justify-between py-3 text-sm"
+        >
+          <div>
+            <Link
+              href={`/app/contacts/${c.id}`}
+              className="font-medium text-accent hover:underline"
+            >
+              {c.fullName}
+            </Link>
+            <div className="text-xs text-white/50">
+              {c.title ?? "—"} · {c.email ?? "no email"}
+            </div>
+          </div>
+          {c.optedOut && (
+            <span className="rounded bg-bad/20 px-1.5 py-0.5 text-xs text-bad">
+              suppressed
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function DealsTab({ deals }: { deals: OrganizationDeal[] }) {
+  if (deals.length === 0) {
+    return (
+      <p className="rounded-md border border-line bg-muted/20 px-3 py-4 text-sm text-white/50">
+        No deals linked to this company yet.
+      </p>
+    );
+  }
+  return (
+    <ul className="flex flex-col divide-y divide-line/60 rounded-lg border border-line bg-muted/20 px-4">
+      {deals.map((d) => (
+        <li
+          key={d.id}
+          className="flex items-start justify-between py-3 text-sm"
+        >
+          <div>
+            <Link
+              href={`/app/deals/${d.id}`}
+              className="font-mono font-medium text-accent hover:underline"
+            >
+              {d.dealRef}
+            </Link>
+            <div className="text-xs text-white/50">
+              {d.product} · {formatVolume(d.volumeUsg)} · as {d.role}
+            </div>
+          </div>
+          <span className="rounded bg-muted/60 px-1.5 py-0.5 text-xs text-white/70">
+            {d.status.replace(/_/g, " ")}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function formatVolume(usg: number): string {
+  if (usg >= 1_000_000) return `${(usg / 1_000_000).toFixed(1)}M USG`;
+  if (usg >= 1_000) return `${(usg / 1_000).toFixed(0)}k USG`;
+  return `${usg} USG`;
 }
 
 function Breadcrumb({ name }: { name: string | null }) {

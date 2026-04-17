@@ -70,5 +70,15 @@ function stubOrganization(id: string) {
         optedOut: false,
       },
     ],
+    deals: [
+      {
+        id: "01HSEEDDEA0000000000000001",
+        dealRef: "VTC-2026-001",
+        status: "negotiating",
+        product: "ulsd",
+        volumeUsg: 3_200_000,
+        role: "buyer",
+      },
+    ],
   };
 }

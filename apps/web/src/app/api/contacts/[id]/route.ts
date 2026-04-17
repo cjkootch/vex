@@ -79,5 +79,6 @@ export async function GET(
         updatedAt: now,
       },
     ],
+    deals: [],
   });
 }

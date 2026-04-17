@@ -14,6 +14,7 @@ import { CallsModule } from "./calls/calls.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
 import { EventsModule } from "./events/events.module.js";
+import { SearchModule } from "./search/search.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { TenantThrottlerGuard } from "./throttler/tenant-throttler.guard.js";
 
@@ -28,6 +29,7 @@ export interface AppModuleConfig {
   deals?: DynamicModule;
   events?: DynamicModule;
   organizations?: DynamicModule;
+  search?: DynamicModule;
   admin?: DynamicModule;
   voice?: DynamicModule;
   health?: DynamicModule;
@@ -73,6 +75,7 @@ export class AppModule {
     if (config.deals) imports.push(config.deals);
     if (config.events) imports.push(config.events);
     if (config.organizations) imports.push(config.organizations);
+    if (config.search) imports.push(config.search);
     if (config.calls) imports.push(config.calls);
     if (config.admin) imports.push(config.admin);
     if (config.voice) imports.push(config.voice);
@@ -100,6 +103,7 @@ export {
   DealsModule,
   EventsModule,
   OrganizationsModule,
+  SearchModule,
   VoiceModule,
   HealthModule,
 };

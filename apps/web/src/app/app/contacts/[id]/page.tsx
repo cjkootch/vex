@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
+import { Tabs } from "@/components/ui/tabs";
 
 interface Membership {
   tenantId: string;
@@ -31,9 +32,19 @@ interface Contact {
   updatedAt: string;
 }
 
+interface ContactDeal {
+  id: string;
+  dealRef: string;
+  status: string;
+  product: string;
+  volumeUsg: number;
+  buyerOrgId: string;
+}
+
 interface ContactResponse {
   contact: Contact;
   memberships: Membership[];
+  deals: ContactDeal[];
 }
 
 export default function ContactDetailPage({
@@ -45,6 +56,7 @@ export default function ContactDetailPage({
   const [orgNames, setOrgNames] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [activeTab, setActiveTab] = useState("overview");
 
   useEffect(() => {
     let cancelled = false;
@@ -56,7 +68,11 @@ export default function ContactDetailPage({
       })
       .then((body: ContactResponse) => {
         if (!cancelled) {
-          setData(body);
+          setData({
+            ...body,
+            memberships: body.memberships ?? [],
+            deals: body.deals ?? [],
+          });
           setError(null);
         }
       })
@@ -68,7 +84,6 @@ export default function ContactDetailPage({
     };
   }, [params.id, refreshKey]);
 
-  // Look up the org names so the membership list shows labels.
   useEffect(() => {
     let cancelled = false;
     fetch("/api/organizations")
@@ -148,7 +163,7 @@ export default function ContactDetailPage({
     );
   }
 
-  const { contact, memberships } = data;
+  const { contact, memberships, deals } = data;
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-6">
@@ -174,87 +189,177 @@ export default function ContactDetailPage({
         </Link>
       </header>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2 flex flex-col gap-4">
-          <section className="rounded-lg border border-line bg-muted/20 p-4">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-white/50">
-              Contact info
-            </h3>
-            <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
-              <span className="text-white/50">Emails</span>
-              <span className="text-white/90">
-                {contact.emails.length > 0 ? contact.emails.join(", ") : "—"}
-              </span>
-              <span className="text-white/50">Phones</span>
-              <span className="text-white/90">
-                {contact.phones.length > 0 ? contact.phones.join(", ") : "—"}
-              </span>
-              <span className="text-white/50">Status</span>
-              <span className="text-white/90">{contact.status}</span>
-            </div>
-          </section>
-
-          <section className="rounded-lg border border-line bg-muted/20 p-4">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-white/50">
-              Companies ({memberships.length})
-            </h3>
-            <ul className="flex flex-col divide-y divide-line/60">
-              {memberships.map((m) => (
-                <li
-                  key={m.orgId}
-                  className="flex items-center justify-between py-2 text-sm"
-                >
-                  <div>
-                    <Link
-                      href={`/app/companies/${m.orgId}`}
-                      className="font-medium text-accent hover:underline"
-                    >
-                      {orgNames[m.orgId] ?? m.orgId.slice(-6)}
-                    </Link>
-                    {m.isPrimary && (
-                      <span className="ml-2 rounded bg-accent/25 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-accent">
-                        Primary
-                      </span>
-                    )}
-                    <div className="text-xs text-white/50">
-                      {m.role ?? "no role"}
-                    </div>
-                  </div>
-                  <div className="flex gap-2">
-                    {!m.isPrimary && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => void setPrimary(m.orgId)}
-                          className="text-xs text-white/70 hover:text-accent"
-                        >
-                          Make primary
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void removeMembership(m.orgId)}
-                          className="text-xs text-white/50 hover:text-bad"
-                        >
-                          Remove
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
-
-        <aside className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-white/50">
-            Activity
-          </h2>
-          <ActivityTimeline subjectType="contact" subjectId={contact.id} />
-        </aside>
-      </div>
+      <Tabs
+        active={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            id: "overview",
+            label: "Overview",
+            content: <OverviewTab contact={contact} />,
+          },
+          {
+            id: "companies",
+            label: "Companies",
+            count: memberships.length,
+            content: (
+              <CompaniesTab
+                memberships={memberships}
+                orgNames={orgNames}
+                onMakePrimary={setPrimary}
+                onRemove={removeMembership}
+              />
+            ),
+          },
+          {
+            id: "deals",
+            label: "Deals",
+            count: deals.length,
+            content: <DealsTab deals={deals} orgNames={orgNames} />,
+          },
+          {
+            id: "activity",
+            label: "Activity",
+            content: (
+              <ActivityTimeline subjectType="contact" subjectId={contact.id} />
+            ),
+          },
+        ]}
+      />
     </div>
   );
+}
+
+function OverviewTab({ contact }: { contact: Contact }) {
+  return (
+    <section className="rounded-lg border border-line bg-muted/20 p-4">
+      <div className="grid grid-cols-[120px_1fr] gap-2 text-sm">
+        <span className="text-white/50">Emails</span>
+        <span className="text-white/90">
+          {contact.emails.length > 0 ? contact.emails.join(", ") : "—"}
+        </span>
+        <span className="text-white/50">Phones</span>
+        <span className="text-white/90">
+          {contact.phones.length > 0 ? contact.phones.join(", ") : "—"}
+        </span>
+        <span className="text-white/50">Status</span>
+        <span className="text-white/90">{contact.status}</span>
+      </div>
+    </section>
+  );
+}
+
+function CompaniesTab({
+  memberships,
+  orgNames,
+  onMakePrimary,
+  onRemove,
+}: {
+  memberships: Membership[];
+  orgNames: Record<string, string>;
+  onMakePrimary: (orgId: string) => Promise<void>;
+  onRemove: (orgId: string) => Promise<void>;
+}) {
+  return (
+    <ul className="flex flex-col divide-y divide-line/60 rounded-lg border border-line bg-muted/20 px-4">
+      {memberships.map((m) => (
+        <li
+          key={m.orgId}
+          className="flex items-center justify-between py-3 text-sm"
+        >
+          <div>
+            <Link
+              href={`/app/companies/${m.orgId}`}
+              className="font-medium text-accent hover:underline"
+            >
+              {orgNames[m.orgId] ?? m.orgId.slice(-6)}
+            </Link>
+            {m.isPrimary && (
+              <span className="ml-2 rounded bg-accent/25 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-accent">
+                Primary
+              </span>
+            )}
+            <div className="text-xs text-white/50">
+              {m.role ?? "no role"}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            {!m.isPrimary && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void onMakePrimary(m.orgId)}
+                  className="text-xs text-white/70 hover:text-accent"
+                >
+                  Make primary
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void onRemove(m.orgId)}
+                  className="text-xs text-white/50 hover:text-bad"
+                >
+                  Remove
+                </button>
+              </>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function DealsTab({
+  deals,
+  orgNames,
+}: {
+  deals: ContactDeal[];
+  orgNames: Record<string, string>;
+}) {
+  if (deals.length === 0) {
+    return (
+      <p className="rounded-md border border-line bg-muted/20 px-3 py-4 text-sm text-white/50">
+        No deals reference this contact as buyer yet.
+      </p>
+    );
+  }
+  return (
+    <ul className="flex flex-col divide-y divide-line/60 rounded-lg border border-line bg-muted/20 px-4">
+      {deals.map((d) => (
+        <li
+          key={d.id}
+          className="flex items-start justify-between py-3 text-sm"
+        >
+          <div>
+            <Link
+              href={`/app/deals/${d.id}`}
+              className="font-mono font-medium text-accent hover:underline"
+            >
+              {d.dealRef}
+            </Link>
+            <div className="text-xs text-white/50">
+              {d.product} · {formatVolume(d.volumeUsg)} ·{" "}
+              <Link
+                href={`/app/companies/${d.buyerOrgId}`}
+                className="hover:text-accent hover:underline"
+              >
+                {orgNames[d.buyerOrgId] ?? d.buyerOrgId.slice(-6)}
+              </Link>
+            </div>
+          </div>
+          <span className="rounded bg-muted/60 px-1.5 py-0.5 text-xs text-white/70">
+            {d.status.replace(/_/g, " ")}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function formatVolume(usg: number): string {
+  if (usg >= 1_000_000) return `${(usg / 1_000_000).toFixed(1)}M USG`;
+  if (usg >= 1_000) return `${(usg / 1_000).toFixed(0)}k USG`;
+  return `${usg} USG`;
 }
 
 function Breadcrumb({ name }: { name: string | null }) {

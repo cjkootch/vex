@@ -170,12 +170,12 @@ export class ContactsController {
 
   @Get(":id")
   async getContact(@Param("id") id: string) {
-    const contact = await this.service.findById(this.tenant.tenantId, id);
-    const memberships = await this.service.listMemberships(
-      this.tenant.tenantId,
-      id,
-    );
-    return { contact, memberships };
+    const [contact, memberships, deals] = await Promise.all([
+      this.service.findById(this.tenant.tenantId, id),
+      this.service.listMemberships(this.tenant.tenantId, id),
+      this.service.listDealsForContact(this.tenant.tenantId, id),
+    ]);
+    return { contact, memberships, deals };
   }
 
   @Post(":id/optout")

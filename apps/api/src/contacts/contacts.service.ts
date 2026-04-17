@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { eq } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import {
   schema,
   withTenant,
@@ -229,6 +229,42 @@ export class ContactsService {
   ): Promise<ContactOrgMembership[]> {
     return withTenant(this.db, tenantId, async (tx) =>
       this.memberships.listByContact(tx, contactId),
+    );
+  }
+
+  /**
+   * Deals where this contact is the named buyer_contact on the deal
+   * record. Used by the Contact detail page's Deals tab. Limited to
+   * 100 rows — a contact with more than that in the pipeline is a
+   * case for a dedicated filter page rather than an inline list.
+   */
+  async listDealsForContact(
+    tenantId: string,
+    contactId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      dealRef: string;
+      status: string;
+      product: string;
+      volumeUsg: number;
+      buyerOrgId: string;
+    }>
+  > {
+    return withTenant(this.db, tenantId, async (tx) =>
+      tx
+        .select({
+          id: schema.fuelDeals.id,
+          dealRef: schema.fuelDeals.dealRef,
+          status: schema.fuelDeals.status,
+          product: schema.fuelDeals.product,
+          volumeUsg: schema.fuelDeals.volumeUsg,
+          buyerOrgId: schema.fuelDeals.buyerOrgId,
+        })
+        .from(schema.fuelDeals)
+        .where(eq(schema.fuelDeals.buyerContactId, contactId))
+        .orderBy(desc(schema.fuelDeals.createdAt))
+        .limit(100),
     );
   }
 

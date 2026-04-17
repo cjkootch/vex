@@ -13,7 +13,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { count, desc, eq } from "drizzle-orm";
+import { count, desc, eq, or } from "drizzle-orm";
 import { z } from "zod";
 import { createId } from "@vex/domain";
 import type { EventRepository, OrganizationRepository } from "@vex/db";
@@ -65,10 +65,20 @@ export interface OrganizationContactSummary {
   optedOut: boolean;
 }
 
+export interface OrganizationDealSummary {
+  id: string;
+  dealRef: string;
+  status: string;
+  product: string;
+  volumeUsg: number;
+  role: "buyer" | "seller";
+}
+
 export interface OrganizationDetail extends OrganizationListRow {
   sourceOfTruth: string | null;
   externalKeys: Record<string, string>;
   contacts: OrganizationContactSummary[];
+  deals: OrganizationDealSummary[];
 }
 
 const STATUS_VALUES = new Set<RecordStatus>([
@@ -228,6 +238,36 @@ export class OrganizationsController {
           .limit(200);
         const contacts = contactRows.map((r) => r.contact);
 
+        // Deals where this org is buyer or seller — powers the Deals
+        // tab on the detail page.
+        const dealRows = await tx
+          .select({
+            id: schema.fuelDeals.id,
+            dealRef: schema.fuelDeals.dealRef,
+            status: schema.fuelDeals.status,
+            product: schema.fuelDeals.product,
+            volumeUsg: schema.fuelDeals.volumeUsg,
+            buyerOrgId: schema.fuelDeals.buyerOrgId,
+            sellerOrgId: schema.fuelDeals.sellerOrgId,
+          })
+          .from(schema.fuelDeals)
+          .where(
+            or(
+              eq(schema.fuelDeals.buyerOrgId, id),
+              eq(schema.fuelDeals.sellerOrgId, id),
+            ),
+          )
+          .orderBy(desc(schema.fuelDeals.createdAt))
+          .limit(100);
+        const deals: OrganizationDealSummary[] = dealRows.map((d) => ({
+          id: d.id,
+          dealRef: d.dealRef,
+          status: d.status,
+          product: d.product,
+          volumeUsg: d.volumeUsg,
+          role: d.buyerOrgId === id ? "buyer" : "seller",
+        }));
+
         const detail: OrganizationDetail = {
           id: row.id,
           legalName: row.legalName,
@@ -248,6 +288,7 @@ export class OrganizationsController {
             phone: c.phones[0] ?? null,
             optedOut: c.optOutAt !== null,
           })),
+          deals,
         };
         return detail;
       },

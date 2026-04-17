@@ -113,7 +113,15 @@ export default function DealsPage() {
       {
         accessorKey: "buyerName",
         header: "Buyer",
-        cell: ({ row }) => row.original.buyerName ?? row.original.buyerOrgId,
+        cell: ({ row }) => (
+          <Link
+            href={`/app/companies/${row.original.buyerOrgId}`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-white/90 hover:text-accent hover:underline"
+          >
+            {row.original.buyerName ?? row.original.buyerOrgId}
+          </Link>
+        ),
       },
       {
         accessorKey: "status",
