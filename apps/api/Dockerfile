@@ -2,6 +2,11 @@
 # Multi-stage build for apps/api in the pnpm workspace.
 # Keeps the runtime image small by discarding devDeps + source after build.
 
+# CACHE_BUSTER — bump when Depot's layer cache is serving stale code even
+# though packages/** or apps/api/** changed. Value isn't consumed by any
+# layer; its presence just forces a fresh hash for the base stage.
+ARG CACHE_BUSTER=2026-04-17-oom-fix
+
 FROM node:20-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
