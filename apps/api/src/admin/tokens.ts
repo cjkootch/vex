@@ -1,0 +1,4 @@
+export const ADMIN_DB_CLIENT = Symbol("ADMIN_DB_CLIENT");
+export const ADMIN_WORKSPACES_REPO = Symbol("ADMIN_WORKSPACES_REPO");
+export const ADMIN_EVENTS_REPO = Symbol("ADMIN_EVENTS_REPO");
+export const ADMIN_EVAL_RESULTS_PATH = Symbol("ADMIN_EVAL_RESULTS_PATH");

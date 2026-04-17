@@ -17,4 +17,25 @@ export class WorkspaceRepository {
     const ws = await this.findById(db, id);
     return ws?.settings ?? null;
   }
+
+  /**
+   * Overwrite the entire settings blob for a workspace. Same Db-not-Tx
+   * rationale as findById — workspaces row is its own tenant boundary
+   * (RLS USING `id = current_setting('app.tenant_id', true)`), so the
+   * caller must already have established that the session user is an
+   * OWNER of this workspace before invoking.
+   */
+  async updateSettings(
+    db: Db,
+    id: string,
+    settings: WorkspaceSettings,
+  ): Promise<Workspace> {
+    const [row] = await db
+      .update(workspaces)
+      .set({ settings, updatedAt: new Date() })
+      .where(eq(workspaces.id, id))
+      .returning();
+    if (!row) throw new Error(`workspace ${id} not found`);
+    return row;
+  }
 }

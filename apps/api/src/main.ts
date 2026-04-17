@@ -1,4 +1,5 @@
 import "reflect-metadata";
+import { resolve } from "node:path";
 import { NestFactory } from "@nestjs/core";
 import {
   FastifyAdapter,
@@ -38,6 +39,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
+import { AdminModule } from "./admin/admin.module.js";
 import { BriefModule } from "./brief/brief.module.js";
 import { CallsModule } from "./calls/calls.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
@@ -168,6 +170,14 @@ async function bootstrap(): Promise<void> {
         db,
         contacts: contactRepository,
         events: eventRepository,
+      }),
+      admin: AdminModule.register({
+        db,
+        workspaces: workspaceRepository,
+        events: eventRepository,
+        evalResultsPath:
+          process.env["EVAL_RESULTS_PATH"] ??
+          resolve(process.cwd(), "evals/results/latest.json"),
       }),
       ...(temporal && twilio && twilioVerifier
         ? {

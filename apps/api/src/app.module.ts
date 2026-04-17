@@ -8,6 +8,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
+import { AdminModule } from "./admin/admin.module.js";
 import { BriefModule } from "./brief/brief.module.js";
 import { CallsModule } from "./calls/calls.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
@@ -22,6 +23,7 @@ export interface AppModuleConfig {
   brief?: DynamicModule;
   calls?: DynamicModule;
   contacts?: DynamicModule;
+  admin?: DynamicModule;
   voice?: DynamicModule;
   health?: DynamicModule;
   nextAuthSecret: string;
@@ -64,6 +66,7 @@ export class AppModule {
     if (config.brief) imports.push(config.brief);
     if (config.contacts) imports.push(config.contacts);
     if (config.calls) imports.push(config.calls);
+    if (config.admin) imports.push(config.admin);
     if (config.voice) imports.push(config.voice);
     if (config.health) imports.push(config.health);
     return {
@@ -82,6 +85,7 @@ export {
   QueryModule,
   ApprovalsModule,
   AgentRunsModule,
+  AdminModule,
   BriefModule,
   CallsModule,
   ContactsModule,
