@@ -182,6 +182,7 @@ async function bootstrap(): Promise<void> {
         db,
         deals: fuelDealRepository,
         events: eventRepository,
+        approvals: approvalRepository,
       }),
       organizations: OrganizationsModule.register({
         db,
