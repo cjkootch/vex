@@ -1,6 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  WORKSPACE_MODE_CONFIGS,
+  WorkspaceMode,
+  type WorkspaceModeConfig,
+} from "@vex/ui";
+import {
+  WorkspaceModeProvider,
+  useWorkspaceMode,
+} from "@/lib/workspace-mode-context";
 import {
   ConversationSidebar,
   type ConversationListItem,
@@ -19,14 +30,26 @@ interface Conversation {
 }
 
 /**
- * Sprint 5 chat surface. Three-pane layout:
- *   - Left:   conversation list (local state — Sprint 6 will persist)
- *   - Center: streaming message thread + adaptive ManifestCanvas
- *   - Right:  evidence inspection
+ * Sprint 5 chat surface with Sprint 11 orientation additions.
  *
- * State lives entirely in the client per Sprint 5 spec.
+ * The outer <WorkspaceModeProvider> is local to the page: the /app
+ * layout wrapper (AppShell) hasn't been wired yet, and the spec for
+ * this turn is "stop after chat/page.tsx update only". When AppShell
+ * lands its provider will be a parent of this one — React allows
+ * nested providers and the inner wins, so nothing breaks.
  */
 export default function ChatPage() {
+  return (
+    <WorkspaceModeProvider>
+      <ChatPageInner />
+    </WorkspaceModeProvider>
+  );
+}
+
+function ChatPageInner() {
+  const { mode, config, contextId, contextLabel, contextSublabel, setMode } =
+    useWorkspaceMode();
+  const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>(() => [
     initialConversation(),
   ]);
@@ -41,8 +64,13 @@ export default function ChatPage() {
     .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt }))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
-  const lastAssistantTurn = [...active.turns].reverse().find((t) => t.role === "assistant");
+  const lastAssistantTurn = [...active.turns]
+    .reverse()
+    .find((t) => t.role === "assistant");
   const evidenceRefs = lastAssistantTurn?.manifest?.evidence_refs ?? [];
+
+  const isDealWarRoom = mode === WorkspaceMode.DealWarRoom;
+  const showBreadcrumb = mode !== WorkspaceMode.Global;
 
   return (
     <div className="flex h-[calc(100vh-0px)] w-full overflow-hidden">
@@ -58,13 +86,26 @@ export default function ChatPage() {
       />
 
       <main className="flex h-full min-w-0 flex-1 flex-col">
+        {showBreadcrumb ? (
+          <Breadcrumb
+            config={config}
+            contextLabel={contextLabel}
+            onHome={() => {
+              setMode(WorkspaceMode.Global);
+              router.push("/app");
+            }}
+            onClearContext={() => setMode(mode)}
+          />
+        ) : null}
         <header className="flex items-center justify-between border-b border-line px-6 py-3">
           <input
             value={active.title}
             onChange={(e) =>
               setConversations((prev) =>
                 prev.map((c) =>
-                  c.id === active.id ? { ...c, title: e.target.value, updatedAt: Date.now() } : c,
+                  c.id === active.id
+                    ? { ...c, title: e.target.value, updatedAt: Date.now() }
+                    : c,
                 ),
               )
             }
@@ -72,16 +113,38 @@ export default function ChatPage() {
             className="bg-transparent text-sm font-semibold text-white outline-none focus:underline"
           />
         </header>
-        <ConversationThread
-          turns={active.turns}
-          onTurns={(turns) =>
-            setConversations((prev) =>
-              prev.map((c) =>
-                c.id === active.id ? { ...c, turns, updatedAt: Date.now() } : c,
-              ),
-            )
-          }
-        />
+        <div
+          className="grid min-h-0 flex-1"
+          style={{
+            gridTemplateColumns: isDealWarRoom ? "2fr 3fr" : "1fr 0fr",
+            transition: "grid-template-columns 300ms ease",
+          }}
+        >
+          <div className="min-w-0">
+            <ConversationThread
+              turns={active.turns}
+              onTurns={(turns) =>
+                setConversations((prev) =>
+                  prev.map((c) =>
+                    c.id === active.id
+                      ? { ...c, turns, updatedAt: Date.now() }
+                      : c,
+                  ),
+                )
+              }
+            />
+          </div>
+          {isDealWarRoom ? (
+            <DealWorkspacePane
+              dealId={contextId}
+              dealRef={contextLabel}
+              sublabel={contextSublabel}
+              config={config}
+            />
+          ) : (
+            <div aria-hidden="true" />
+          )}
+        </div>
       </main>
 
       <EvidenceDetail
@@ -95,17 +158,4 @@ export default function ChatPage() {
       />
     </div>
   );
-}
-
-function initialConversation(): Conversation {
-  return newConversation("New conversation");
-}
-
-function newConversation(title = "Untitled conversation"): Conversation {
-  return {
-    id: crypto.randomUUID(),
-    title,
-    updatedAt: Date.now(),
-    turns: [],
-  };
 }
