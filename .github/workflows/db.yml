@@ -13,8 +13,10 @@ on:
         type: choice
         default: migrate
         options:
+          - bootstrap
           - migrate
           - seed
+          - bootstrap-then-migrate-then-seed
           - migrate-then-seed
           - verify
       target:
@@ -76,12 +78,16 @@ jobs:
           user="$(node -e "console.log(new URL(process.env.MIGRATION_DATABASE_URL).username)")"
           echo "::notice::Target user@host: $user @ $host"
 
+      - name: Bootstrap
+        if: ${{ inputs.command == 'bootstrap' || inputs.command == 'bootstrap-then-migrate-then-seed' }}
+        run: pnpm db:bootstrap
+
       - name: Migrate
-        if: ${{ inputs.command == 'migrate' || inputs.command == 'migrate-then-seed' }}
+        if: ${{ inputs.command == 'migrate' || inputs.command == 'migrate-then-seed' || inputs.command == 'bootstrap-then-migrate-then-seed' }}
         run: pnpm db:migrate
 
       - name: Seed
-        if: ${{ inputs.command == 'seed' || inputs.command == 'migrate-then-seed' }}
+        if: ${{ inputs.command == 'seed' || inputs.command == 'migrate-then-seed' || inputs.command == 'bootstrap-then-migrate-then-seed' }}
         run: pnpm db:seed
 
       - name: Verify
