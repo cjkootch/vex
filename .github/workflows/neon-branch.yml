@@ -80,8 +80,16 @@ jobs:
           set -euo pipefail
           BRANCH_NAME="pr-${PR_NUMBER}"
 
+          # Curl exit 5 = COULDNT_RESOLVE_PROXY. This has been failing
+          # identically across PRs; print any proxy-ish env vars so the
+          # cause is visible in the log, and pass --noproxy '*' on every
+          # call so a leaky HTTP(S)_PROXY from the runner env can't take
+          # curl down again.
+          echo "proxy env snapshot:"
+          env | grep -iE '^(http|https|no)_proxy=' || echo "  (none set)"
+
           existing=$(
-            curl -sf \
+            curl -fsS --noproxy '*' \
               -H "Authorization: Bearer $NEON_API_KEY" \
               "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
               | jq -r --arg n "$BRANCH_NAME" '.branches[] | select(.name == $n) | .id' \
@@ -93,7 +101,7 @@ jobs:
             BRANCH_ID="$existing"
           else
             response=$(
-              curl -sf -X POST \
+              curl -fsS --noproxy '*' -X POST \
                 -H "Authorization: Bearer $NEON_API_KEY" \
                 -H "Content-Type: application/json" \
                 "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
@@ -104,13 +112,13 @@ jobs:
 
           # The API returns the connection URI on the connection_uris array.
           conn=$(
-            curl -sf \
+            curl -fsS --noproxy '*' \
               -H "Authorization: Bearer $NEON_API_KEY" \
               "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true" \
               | jq -r '.uri'
           )
           conn_direct=$(
-            curl -sf \
+            curl -fsS --noproxy '*' \
               -H "Authorization: Bearer $NEON_API_KEY" \
               "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=false" \
               | jq -r '.uri'
@@ -188,7 +196,7 @@ jobs:
           BRANCH_NAME="pr-${PR_NUMBER}"
 
           BRANCH_ID=$(
-            curl -sf \
+            curl -fsS --noproxy '*' \
               -H "Authorization: Bearer $NEON_API_KEY" \
               "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
               | jq -r --arg n "$BRANCH_NAME" '.branches[] | select(.name == $n) | .id' \
