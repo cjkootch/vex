@@ -26,6 +26,7 @@ import {
   ActivityRepository,
   AgentRunRepository,
   ApprovalRepository,
+  ContactOrgMembershipRepository,
   ContactRepository,
   EventRepository,
   FuelDealRepository,
@@ -42,6 +43,7 @@ import {
   createDb,
   type Db,
 } from "@vex/db";
+import { createId } from "@vex/domain";
 import { AnthropicAdapter, OpenAIAdapter, S3Uploader } from "@vex/integrations";
 import {
   InMemoryCostLedger,
@@ -152,6 +154,9 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       db,
       approvals: repos.approvals,
       deals: repos.deals,
+      organizations: repos.organizations,
+      contacts: repos.contacts,
+      memberships: repos.memberships,
       events: repos.events,
     }),
     connection,
@@ -259,6 +264,9 @@ interface ApprovalExecutorDeps {
   db: Db;
   approvals: ApprovalRepository;
   deals: FuelDealRepository;
+  organizations: OrganizationRepository;
+  contacts: ContactRepository;
+  memberships: ContactOrgMembershipRepository;
   events: EventRepository;
 }
 
@@ -283,12 +291,23 @@ function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
       const approval = await deps.approvals.findById(tx, approval_id);
       if (!approval) return;
 
-      if (
-        approval.actionType === "deal.status_change" &&
-        approval.decision === "approved"
-      ) {
-        await applyDealStatusChange(tx, deps, workspace_id, approval);
-        return;
+      if (approval.decision === "approved") {
+        if (approval.actionType === "deal.status_change") {
+          await applyDealStatusChange(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "crm.create_company") {
+          await applyCreateCompany(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "crm.create_contact") {
+          await applyCreateContact(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "crm.create_deal") {
+          await applyCreateDeal(tx, deps, workspace_id, approval);
+          return;
+        }
       }
 
       await deps.events.insertIfNotExists(tx, workspace_id, {
@@ -376,6 +395,213 @@ async function applyDealStatusChange(
   });
 }
 
+type ApprovalRow = { id: string; proposedPayload: unknown; reviewerId: string | null };
+
+async function applyCreateCompany(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    legalName?: string;
+    domain?: string;
+    industry?: string;
+    rationale?: string;
+  } | null;
+  if (!payload?.legalName) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "crm.create_company", "missing legalName");
+    return;
+  }
+  const id = createId();
+  await deps.organizations.create(tx, tenantId, {
+    id,
+    legalName: payload.legalName,
+    ...(payload.domain ? { domain: payload.domain } : {}),
+    ...(payload.industry ? { industry: payload.industry } : {}),
+  });
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "organization.created",
+    subjectType: "organization",
+    subjectId: id,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "organization",
+    objectId: id,
+    occurredAt: new Date(),
+    idempotencyKey: `organization.created:via-approval:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      legal_name: payload.legalName,
+      domain: payload.domain ?? null,
+      rationale: payload.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
+}
+
+async function applyCreateContact(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    fullName?: string;
+    title?: string;
+    emails?: string[];
+    phones?: string[];
+    orgs?: Array<{ orgId: string; role?: string; isPrimary?: boolean }>;
+    rationale?: string;
+  } | null;
+  if (!payload?.fullName || !payload.orgs || payload.orgs.length === 0) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "crm.create_contact", "missing fullName or orgs");
+    return;
+  }
+  const primaryCount = payload.orgs.filter((o) => o.isPrimary).length;
+  if (primaryCount > 1) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "crm.create_contact", "more than one primary org");
+    return;
+  }
+  const normalisedOrgs =
+    primaryCount === 0
+      ? payload.orgs.map((o, idx) => ({ ...o, isPrimary: idx === 0 }))
+      : payload.orgs;
+  const primary = normalisedOrgs.find((o) => o.isPrimary)!;
+
+  const id = createId();
+  await deps.contacts.create(tx, tenantId, {
+    id,
+    orgId: primary.orgId,
+    fullName: payload.fullName,
+    ...(payload.title ? { title: payload.title } : {}),
+    ...(payload.emails ? { emails: payload.emails } : {}),
+    ...(payload.phones ? { phones: payload.phones } : {}),
+  });
+  for (const org of normalisedOrgs) {
+    await deps.memberships.create(tx, tenantId, {
+      contactId: id,
+      orgId: org.orgId,
+      role: org.role ?? null,
+      isPrimary: org.isPrimary ?? false,
+    });
+  }
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "contact.created",
+    subjectType: "contact",
+    subjectId: id,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "contact",
+    objectId: id,
+    occurredAt: new Date(),
+    idempotencyKey: `contact.created:via-approval:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      full_name: payload.fullName,
+      primary_org_id: primary.orgId,
+      org_count: normalisedOrgs.length,
+      rationale: payload.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
+}
+
+async function applyCreateDeal(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    dealRef?: string;
+    product?: string;
+    incoterm?: string;
+    pricingBasis?: string;
+    paymentTerms?: string;
+    volumeUsg?: number;
+    densityKgL?: number;
+    buyerOrgId?: string;
+    destinationPort?: string;
+    laycanStart?: string;
+    laycanEnd?: string;
+    notes?: string;
+    rationale?: string;
+  } | null;
+  if (
+    !payload?.dealRef ||
+    !payload.product ||
+    !payload.incoterm ||
+    !payload.pricingBasis ||
+    !payload.paymentTerms ||
+    !payload.volumeUsg ||
+    !payload.densityKgL ||
+    !payload.buyerOrgId
+  ) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "crm.create_deal", "missing required field");
+    return;
+  }
+  const id = createId();
+  await deps.deals.create(tx, tenantId, {
+    id,
+    dealRef: payload.dealRef,
+    product: payload.product as Parameters<FuelDealRepository["create"]>[2]["product"],
+    incoterm: payload.incoterm as Parameters<FuelDealRepository["create"]>[2]["incoterm"],
+    pricingBasis: payload.pricingBasis as Parameters<FuelDealRepository["create"]>[2]["pricingBasis"],
+    paymentTerms: payload.paymentTerms as Parameters<FuelDealRepository["create"]>[2]["paymentTerms"],
+    volumeUsg: payload.volumeUsg,
+    densityKgL: payload.densityKgL,
+    buyerOrgId: payload.buyerOrgId,
+    ...(payload.destinationPort ? { destinationPort: payload.destinationPort } : {}),
+    ...(payload.laycanStart ? { laycanStart: payload.laycanStart } : {}),
+    ...(payload.laycanEnd ? { laycanEnd: payload.laycanEnd } : {}),
+    ...(payload.notes ? { notes: payload.notes } : {}),
+    createdBy: approval.reviewerId ?? null,
+  });
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "deal.created",
+    subjectType: "fuel_deal",
+    subjectId: id,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "fuel_deal",
+    objectId: id,
+    occurredAt: new Date(),
+    idempotencyKey: `deal.created:via-approval:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      deal_ref: payload.dealRef,
+      product: payload.product,
+      buyer_org_id: payload.buyerOrgId,
+      volume_usg: payload.volumeUsg,
+      rationale: payload.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
+}
+
+async function recordExecutorFailure(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approvalId: string,
+  actionType: string,
+  reason: string,
+): Promise<void> {
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.failed",
+    subjectType: "approval",
+    subjectId: approvalId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approvalId,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor.failed:${approvalId}`,
+    metadata: { action_type: actionType, reason },
+  });
+}
+
 function buildRepos() {
   return {
     rawEvents: new RawEventRepository(),
@@ -387,6 +613,7 @@ function buildRepos() {
     agentRuns: new AgentRunRepository(),
     approvals: new ApprovalRepository(),
     deals: new FuelDealRepository(),
+    memberships: new ContactOrgMembershipRepository(),
     organizations: new OrganizationRepository(),
     leads: new LeadRepository(),
     summaries: new SummaryRepository(),

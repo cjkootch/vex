@@ -35,6 +35,85 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     outcome: z.enum(["won", "lost"]),
     reason: z.string().min(1),
   }),
+  // Sprint 14 Group 4 — chat-initiated CRM writes. The agent proposes
+  // the shape; the approval executor applies it after a human approves.
+  z.object({
+    kind: z.literal("crm.create_company"),
+    tier: z.literal(ApprovalTier.T2),
+    legalName: z.string().min(1).max(200),
+    domain: z.string().max(255).optional(),
+    industry: z.string().max(120).optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
+  z.object({
+    kind: z.literal("crm.create_contact"),
+    tier: z.literal(ApprovalTier.T2),
+    fullName: z.string().min(1).max(200),
+    title: z.string().max(200).optional(),
+    emails: z.array(z.string().email()).max(10).optional(),
+    phones: z.array(z.string().max(40)).max(10).optional(),
+    // Exactly one org must be marked primary — the executor enforces.
+    orgs: z
+      .array(
+        z.object({
+          orgId: zUlid,
+          role: z.string().max(200).optional(),
+          isPrimary: z.boolean().optional(),
+        }),
+      )
+      .min(1)
+      .max(20),
+    rationale: z.string().min(1).max(1000),
+  }),
+  z.object({
+    kind: z.literal("crm.create_deal"),
+    tier: z.literal(ApprovalTier.T2),
+    dealRef: z.string().min(1).max(50),
+    product: z.enum([
+      "ulsd",
+      "gasoline_87",
+      "gasoline_91",
+      "jet_a",
+      "jet_a1",
+      "avgas",
+      "lfo",
+      "hfo",
+      "lng",
+      "lpg",
+      "biodiesel_b20",
+    ]),
+    incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]),
+    pricingBasis: z.enum([
+      "platts",
+      "argus",
+      "opis",
+      "nymex_wti",
+      "nymex_rbob",
+      "ice_brent",
+      "fixed",
+      "negotiated",
+    ]),
+    paymentTerms: z.enum([
+      "prepayment_100",
+      "prepayment_80_20",
+      "lc_sight",
+      "lc_60d",
+      "lc_90d",
+      "lc_120d",
+      "sblc",
+      "open_account",
+      "telegraphic_transfer",
+      "mixed",
+    ]),
+    volumeUsg: z.number().positive(),
+    densityKgL: z.number().positive().max(2),
+    buyerOrgId: zUlid,
+    destinationPort: z.string().optional(),
+    laycanStart: z.string().optional(),
+    laycanEnd: z.string().optional(),
+    notes: z.string().optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;
