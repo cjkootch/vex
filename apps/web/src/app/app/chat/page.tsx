@@ -69,7 +69,7 @@ function ChatPageInner() {
   const showBreadcrumb = mode !== WorkspaceMode.Global;
 
   return (
-    <div className="flex h-[calc(100vh-0px)] w-full overflow-hidden">
+    <div className="flex h-full w-full overflow-hidden">
       <ConversationSidebar
         items={sidebarItems}
         activeId={activeId}

@@ -95,8 +95,26 @@ export class QueryService {
       ...pack.items.map((i) => i.chunk_id),
     ];
 
+    // Deterministic limited-evidence prefix — the v5 prompt asks
+    // Claude to add this when avg confidence < 0.5, but the model
+    // sometimes skips it. Compute it server-side so the badge is
+    // always present whenever the evidence shape warrants it.
+    const cited = [...pack.summaries, ...pack.items];
+    const avgConfidence =
+      cited.length > 0
+        ? cited.reduce((sum, item) => sum + item.confidence_score, 0) /
+          cited.length
+        : 1;
+    const needsLimitedPrefix = cited.length > 0 && avgConfidence < 0.5;
+    const PREFIX = "[Best current view — limited evidence] ";
+    const rawAnswer = queryResult.answer || manifestFallbackText();
+    const answer =
+      needsLimitedPrefix && !rawAnswer.startsWith(PREFIX)
+        ? `${PREFIX}${rawAnswer}`
+        : rawAnswer;
+
     return {
-      answer: queryResult.answer || manifestFallbackText(),
+      answer,
       manifest,
       proposedActions: queryResult.proposedActions,
       evidenceRefs,
