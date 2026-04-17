@@ -36,7 +36,7 @@ describe("apps/api auth", () => {
     });
     const response = await handles.app.inject({
       method: "GET",
-      url: "/organizations",
+      url: "/_auth/whoami",
     });
     expect(response.statusCode).toBe(401);
   });
@@ -48,7 +48,7 @@ describe("apps/api auth", () => {
     });
     const response = await handles.app.inject({
       method: "GET",
-      url: "/organizations",
+      url: "/_auth/whoami",
       headers: { authorization: "Bearer not-a-real-jwe" },
     });
     expect(response.statusCode).toBe(401);
@@ -67,7 +67,7 @@ describe("apps/api auth", () => {
     });
     const response = await handles.app.inject({
       method: "GET",
-      url: "/organizations",
+      url: "/_auth/whoami",
       headers: { authorization: `Bearer ${wrongSecretToken}` },
     });
     expect(response.statusCode).toBe(401);
@@ -87,7 +87,7 @@ describe("apps/api auth", () => {
     });
     const response = await handles.app.inject({
       method: "GET",
-      url: "/organizations",
+      url: "/_auth/whoami",
       headers: { authorization: `Bearer ${token}` },
     });
     expect(response.statusCode).toBe(200);
@@ -110,7 +110,7 @@ describe("apps/api auth", () => {
     });
     const response = await handles.app.inject({
       method: "GET",
-      url: "/organizations",
+      url: "/_auth/whoami",
       headers: { authorization: `Bearer ${token}` },
     });
     expect(response.statusCode).toBe(401);
