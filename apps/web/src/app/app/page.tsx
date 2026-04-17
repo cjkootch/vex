@@ -11,6 +11,7 @@ import {
 import { PriorityCard } from "@/components/brief/priority-card";
 import { DealPipelineRow } from "@/components/brief/deal-pipeline-row";
 import { BlockedCard, RiskCard } from "@/components/brief/blocked-card";
+import { fetchWithRetry } from "@/lib/fetch-with-retry";
 
 /**
  * /app home — daily brief. Depends on PriorityCard (B-4),
@@ -56,11 +57,14 @@ function useDailyBrief() {
         BRIEF_FETCH_TIMEOUT_MS,
       );
       try {
-        const res = await fetch("/api/brief/today", {
+        const res = await fetchWithRetry("/api/brief/today", {
           credentials: "include",
           cache: "no-store",
           signal: controller.signal,
         });
+        if (res.status === 502 || res.status === 503) {
+          throw new Error("API is waking up — retry in a moment.");
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as unknown;
         if (cancelled) return;

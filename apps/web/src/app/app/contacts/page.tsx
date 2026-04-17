@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
 import { NewContactForm } from "@/components/crm/new-contact-form";
+import { fetchWithRetry } from "@/lib/fetch-with-retry";
 
 interface ContactOrgLink {
   orgId: string;
@@ -46,16 +47,19 @@ export default function ContactsPage() {
   useEffect(() => {
     let cancelled = false;
     setContacts(null);
-    fetch(`/api/contacts?status=${tab}`)
+    fetchWithRetry(`/api/contacts?status=${tab}`, {
+      onWaking: () => {
+        if (!cancelled) setError("API is waking up…");
+      },
+    })
       .then(async (res) => {
-        // The upstream may 404 when Fly hasn't redeployed and the
-        // older apps/api doesn't have the list endpoint yet. Surface
-        // a specific message + fall back to empty instead of the
-        // bare HTTP status.
         if (res.status === 404) {
           throw new Error(
             "apps/api doesn't have /contacts list yet — redeploy it on Fly.",
           );
+        }
+        if (res.status === 502 || res.status === 503) {
+          throw new Error("API is still waking up. Try again in a moment.");
         }
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return res.json();
