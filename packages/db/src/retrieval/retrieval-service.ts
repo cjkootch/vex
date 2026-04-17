@@ -241,55 +241,95 @@ export class RetrievalService {
     tx: Tx,
     queryText: string,
   ): Promise<EvidenceItem[]> {
-    const tokens = queryText
-      .toLowerCase()
+    const lower = queryText.toLowerCase();
+    const tokens = lower
       .split(/[^a-z0-9-]+/)
       .filter((t) => t.length >= 3 && !STOPWORDS.has(t))
       .slice(0, 4);
-    if (tokens.length === 0) return [];
+
+    // Category-mention fallback — if the query names an entity type
+    // ("show me deals", "list contacts at Acme", "which companies"),
+    // include the top N rows of that type even if no concrete name
+    // token was extracted. This keeps "show me deals" from coming
+    // back empty when every token was a stopword.
+    const mentionsDeals = /\b(deals?|pipeline|orders?)\b/.test(lower);
+    const mentionsCompanies = /\b(compan(y|ies)|orgs?|organizations?|accounts?|buyers?|customers?)\b/.test(lower);
+    const mentionsContacts = /\b(contacts?|people|leads?|prospects?)\b/.test(lower);
+
+    if (tokens.length === 0 && !mentionsDeals && !mentionsCompanies && !mentionsContacts) {
+      return [];
+    }
 
     const patterns = tokens.map((t) => `%${t.replace(/[%_]/g, (c) => `\\${c}`)}%`);
+    const orgLimit = mentionsCompanies ? 10 : 4;
+    const contactLimit = mentionsContacts ? 10 : 4;
+    const dealLimit = mentionsDeals ? 10 : 4;
+
+    // When a category is mentioned but no name tokens (e.g. "show me
+    // deals"), skip the WHERE clause on that entity and just list the
+    // most recent rows. Name-only queries still filter via ILIKE.
+    const orgQuery = tx
+      .select({
+        id: organizations.id,
+        legalName: organizations.legalName,
+        domain: organizations.domain,
+        industry: organizations.industry,
+        updatedAt: organizations.updatedAt,
+      })
+      .from(organizations);
+    const contactQuery = tx
+      .select({
+        id: contacts.id,
+        fullName: contacts.fullName,
+        title: contacts.title,
+        updatedAt: contacts.updatedAt,
+      })
+      .from(contacts);
+    const dealQuery = tx
+      .select({
+        id: fuelDeals.id,
+        dealRef: fuelDeals.dealRef,
+        status: fuelDeals.status,
+        product: fuelDeals.product,
+        updatedAt: fuelDeals.updatedAt,
+      })
+      .from(fuelDeals);
 
     const [orgRows, contactRows, dealRows] = await Promise.all([
-      tx
-        .select({
-          id: organizations.id,
-          legalName: organizations.legalName,
-          domain: organizations.domain,
-          industry: organizations.industry,
-          updatedAt: organizations.updatedAt,
-        })
-        .from(organizations)
-        .where(
-          or(
-            ...patterns.flatMap((p) => [
-              ilike(organizations.legalName, p),
-              ilike(organizations.domain, p),
-            ]),
-          ),
-        )
-        .limit(4),
-      tx
-        .select({
-          id: contacts.id,
-          fullName: contacts.fullName,
-          title: contacts.title,
-          updatedAt: contacts.updatedAt,
-        })
-        .from(contacts)
-        .where(or(...patterns.map((p) => ilike(contacts.fullName, p))))
-        .limit(4),
-      tx
-        .select({
-          id: fuelDeals.id,
-          dealRef: fuelDeals.dealRef,
-          status: fuelDeals.status,
-          product: fuelDeals.product,
-          updatedAt: fuelDeals.updatedAt,
-        })
-        .from(fuelDeals)
-        .where(or(...patterns.map((p) => ilike(fuelDeals.dealRef, p))))
-        .limit(4),
+      patterns.length > 0 && !mentionsCompanies
+        ? orgQuery
+            .where(
+              or(
+                ...patterns.flatMap((p) => [
+                  ilike(organizations.legalName, p),
+                  ilike(organizations.domain, p),
+                ]),
+              ),
+            )
+            .limit(orgLimit)
+        : mentionsCompanies
+          ? orgQuery
+              .orderBy(desc(organizations.updatedAt))
+              .limit(orgLimit)
+          : Promise.resolve([]),
+      patterns.length > 0 && !mentionsContacts
+        ? contactQuery
+            .where(or(...patterns.map((p) => ilike(contacts.fullName, p))))
+            .limit(contactLimit)
+        : mentionsContacts
+          ? contactQuery
+              .orderBy(desc(contacts.updatedAt))
+              .limit(contactLimit)
+          : Promise.resolve([]),
+      patterns.length > 0 && !mentionsDeals
+        ? dealQuery
+            .where(or(...patterns.map((p) => ilike(fuelDeals.dealRef, p))))
+            .limit(dealLimit)
+        : mentionsDeals
+          ? dealQuery
+              .orderBy(desc(fuelDeals.updatedAt))
+              .limit(dealLimit)
+          : Promise.resolve([]),
     ]);
 
     const items: EvidenceItem[] = [];
