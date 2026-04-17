@@ -6,6 +6,7 @@ import {
 } from "@nestjs/platform-fastify";
 import { loadEnv } from "@vex/config";
 import {
+  AgentRunRepository,
   ApprovalRepository,
   ContactRepository,
   EventRepository,
@@ -31,6 +32,7 @@ import { AppModule } from "./app.module.js";
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
+import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { VoiceSessionStore } from "./voice/voice-session-store.js";
 import { HealthModule } from "./health/health.module.js";
@@ -59,6 +61,7 @@ async function bootstrap(): Promise<void> {
   const db = createDb(env.APPLICATION_DATABASE_URL);
   const rawEventRepository = new RawEventRepository();
   const approvalRepository = new ApprovalRepository();
+  const agentRunRepository = new AgentRunRepository();
   const eventRepository = new EventRepository();
   const organizationRepository = new OrganizationRepository();
   const contactRepository = new ContactRepository();
@@ -115,6 +118,11 @@ async function bootstrap(): Promise<void> {
         events: eventRepository,
         executorQueue: queues.approvalExecutor,
         temporal: temporal?.client ?? null,
+      }),
+      agentRuns: AgentRunsModule.register({
+        db,
+        agentRuns: agentRunRepository,
+        approvals: approvalRepository,
       }),
       voice: VoiceModule.register({
         db,
