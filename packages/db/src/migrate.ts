@@ -166,6 +166,8 @@ async function main(): Promise<void> {
         // RLS still enforces tenant isolation row-by-row, so granting
         // table-level access broadly is safe.
         await client.query(`
+          GRANT USAGE ON SCHEMA public TO ${quoteIdent(runtimeRole)};
+          GRANT USAGE ON SCHEMA public TO PUBLIC;
           GRANT ALL ON ALL TABLES    IN SCHEMA public TO ${quoteIdent(runtimeRole)};
           GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${quoteIdent(runtimeRole)};
           GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO PUBLIC;
