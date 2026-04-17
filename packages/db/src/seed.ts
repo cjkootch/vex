@@ -64,6 +64,12 @@ async function main(): Promise<void> {
         enabled_agents: ["qualifier", "composer"],
         daily_cost_limit: 50,
         kill_all_agents: false,
+        feature_rollout: {
+          voice_alpha: 100,
+          pstn_calls: 100,
+          deal_evaluator: 100,
+        },
+        sharing_enabled: false,
       },
     });
 

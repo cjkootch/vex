@@ -4,7 +4,11 @@ import {
   WorkspaceRepository,
   createDb,
 } from "@vex/db";
-import { AnthropicAdapter } from "@vex/integrations";
+import {
+  AnthropicAdapter,
+  S3Uploader,
+  createTwilioClient,
+} from "@vex/integrations";
 import { InMemoryCostLedger, initOtel, shutdownOtel } from "@vex/telemetry";
 import { AgentScanner } from "./scanner.js";
 import { startBullWorker } from "./queues/runner.js";
@@ -53,6 +57,36 @@ async function main(): Promise<void> {
     },
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
+  // Sprint 12 — the OutboundCallWorkflow needs Twilio + S3 + reachable
+  // webhook URLs. Bundle them only when every required env var is set;
+  // otherwise the worker boots without call activities registered and
+  // any attempted outbound call fails closed at the first activity.
+  const callBundle =
+    env.TWILIO_ACCOUNT_SID &&
+    env.TWILIO_AUTH_TOKEN &&
+    env.TWILIO_PHONE_NUMBER &&
+    env.APP_BASE_URL
+      ? {
+          twilio: createTwilioClient({
+            accountSid: env.TWILIO_ACCOUNT_SID,
+            authToken: env.TWILIO_AUTH_TOKEN,
+            fromNumber: env.TWILIO_PHONE_NUMBER,
+          }),
+          s3: new S3Uploader({
+            region: env.S3_REGION,
+            bucket: env.S3_BUCKET,
+            accessKeyId: env.S3_ACCESS_KEY_ID,
+            secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+            ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
+          }),
+          outboundCall: {
+            twimlUrl: `${env.APP_BASE_URL.replace(/\/$/, "")}/calls/twilio/twiml`,
+            statusCallbackUrl: `${env.APP_BASE_URL.replace(/\/$/, "")}/calls/twilio/status`,
+            recordingCallbackUrl: `${env.APP_BASE_URL.replace(/\/$/, "")}/calls/twilio/recording`,
+          },
+        }
+      : {};
+
   const temporal = await startTemporalWorker({
     address: env.TEMPORAL_ADDRESS,
     namespace: env.TEMPORAL_NAMESPACE,
@@ -60,6 +94,7 @@ async function main(): Promise<void> {
     db,
     anthropic,
     costLedger,
+    ...callBundle,
   });
 
   const scanner = new AgentScanner({

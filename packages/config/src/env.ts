@@ -49,6 +49,13 @@ export const EnvSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+  /**
+   * Public base URL Twilio hits for TwiML + status + recording webhooks.
+   * Required whenever the Twilio credentials above are set — the
+   * OutboundCallWorkflow cannot complete without reachable callback URLs.
+   * Local dev: ngrok tunnel. Prod: the deployed apps/api domain.
+   */
+  APP_BASE_URL: z.string().url().optional(),
   RESEND_API_KEY: z.string().optional(),
   /**
    * Resend (Svix) webhook signing secret. Format: `whsec_<base64>`. Required
