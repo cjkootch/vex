@@ -54,9 +54,7 @@ export default function CompaniesPage() {
         header: "Company",
         cell: ({ row }) => (
           <Link
-            href={`/app/chat?ask=${encodeURIComponent(
-              `Tell me about ${row.original.legalName}`,
-            )}`}
+            href={`/app/companies/${row.original.id}`}
             className="font-medium text-accent hover:underline"
             onClick={(e) => e.stopPropagation()}
           >

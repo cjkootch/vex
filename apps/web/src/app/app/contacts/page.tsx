@@ -98,9 +98,7 @@ export default function ContactsPage() {
         header: "Name",
         cell: ({ row }) => (
           <Link
-            href={`/app/chat?ask=${encodeURIComponent(
-              `What do I know about ${row.original.fullName}?`,
-            )}`}
+            href={`/app/contacts/${row.original.id}`}
             className="font-medium text-accent hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
