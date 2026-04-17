@@ -4,12 +4,15 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { useVexQuery, type ManifestEvent } from "@/lib/use-vex-query";
 import { renderProse } from "@/lib/render-prose";
 import { ManifestCanvas } from "@/components/canvas/manifest-canvas";
+import { AgentTrace } from "@/components/chat/agent-trace";
 
 export interface ChatTurn {
   id: string;
   role: "user" | "assistant";
   text: string;
   manifest?: ManifestEvent | null;
+  /** ISO timestamp the turn was created — scopes the AgentTrace window. */
+  createdAt?: string;
 }
 
 interface Props {
@@ -30,6 +33,7 @@ export function ConversationThread({ turns, onTurns }: Props) {
         role: "assistant",
         text,
         manifest: manifest ?? null,
+        createdAt: new Date().toISOString(),
       };
       onTurns([...turns, assistantTurn]);
     }
@@ -59,7 +63,12 @@ export function ConversationThread({ turns, onTurns }: Props) {
     if (!message || isStreaming) return;
     onTurns([
       ...turns,
-      { id: crypto.randomUUID(), role: "user", text: message },
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        text: message,
+        createdAt: new Date().toISOString(),
+      },
     ]);
     setInput("");
     void send(message);
@@ -85,7 +94,10 @@ export function ConversationThread({ turns, onTurns }: Props) {
                     API is waking up — one moment…
                   </span>
                 ) : text ? (
-                  renderProse(text)
+                  <>
+                    {renderProse(text)}
+                    <StreamingCaret />
+                  </>
                 ) : (
                   <TypingIndicator />
                 )}
@@ -142,10 +154,11 @@ function Turn({ turn }: { turn: ChatTurn }) {
     );
   }
   return (
-    <div className="self-start max-w-[85%]" data-testid="assistant-turn">
+    <div className="self-start w-full max-w-[85%]" data-testid="assistant-turn">
       <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90">
         {turn.text ? renderProse(turn.text) : <span className="text-white/40">No response.</span>}
       </div>
+      {turn.createdAt && <AgentTrace since={turn.createdAt} />}
       {turn.manifest && (
         <div className="mt-3" data-testid="manifest-canvas">
           <ManifestCanvas manifest={turn.manifest.manifest} rawAnswer={turn.text} />
@@ -162,6 +175,20 @@ function TypingIndicator() {
       <Dot delay={0.15} />
       <Dot delay={0.3} />
     </span>
+  );
+}
+
+/**
+ * Terminal-style blinking caret rendered at the tail of an
+ * in-flight streaming answer — Meridian's \"phosphor\" signal that
+ * the model is still writing. Hidden once isStreaming flips off.
+ */
+function StreamingCaret() {
+  return (
+    <span
+      aria-hidden
+      className="ml-0.5 inline-block h-[1em] w-[0.5ch] translate-y-[0.15em] animate-pulse bg-accent"
+    />
   );
 }
 

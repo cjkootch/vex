@@ -11,6 +11,11 @@ import {
   type WorkspaceMode,
 } from "@vex/ui";
 import { useWorkspaceMode } from "@/lib/workspace-mode-context";
+import {
+  panelLabel,
+  panelPinId,
+  usePinnedPanels,
+} from "@/lib/pinned-panels";
 import { resolvePanel } from "./registry";
 import { PanelErrorBoundary } from "./panel-error-boundary";
 import { FallbackPanel } from "./panels/fallback-panel";
@@ -129,7 +134,9 @@ export function ManifestCanvas({ manifest, rawAnswer }: Props) {
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.2, delay: i * 0.05 }}
+          className="relative"
         >
+          <PinButton panel={panel} />
           <PanelErrorBoundary panelType={panel.type}>
             <PanelHost panel={panel} />
           </PanelErrorBoundary>
@@ -144,6 +151,44 @@ function PanelHost({ panel }: { panel: ManifestPanel }) {
     Record<string, unknown>
   >;
   return <Component {...(panel as unknown as Record<string, unknown>)} />;
+}
+
+/**
+ * Floating pin button over the top-right corner of each panel.
+ * Click to pin the panel into the persistent right-side dashboard
+ * (see PinnedPane). Content-hash id keeps re-pins idempotent.
+ */
+function PinButton({ panel }: { panel: ManifestPanel }) {
+  const { isPinned, pin, unpin } = usePinnedPanels();
+  const id = panelPinId(panel);
+  const pinned = isPinned(id);
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        if (pinned) {
+          unpin(id);
+        } else {
+          pin({
+            id,
+            panel,
+            pinnedAt: new Date().toISOString(),
+            label: panelLabel(panel),
+          });
+        }
+      }}
+      title={pinned ? "Unpin" : "Pin to dashboard"}
+      aria-label={pinned ? "Unpin panel" : "Pin panel"}
+      className={`absolute right-2 top-2 z-10 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+        pinned
+          ? "border-accent/60 bg-accent/20 text-accent"
+          : "border-line bg-canvas/60 text-white/50 hover:border-accent hover:text-accent"
+      }`}
+    >
+      {pinned ? "◆ pinned" : "◇ pin"}
+    </button>
+  );
 }
 
 /**
