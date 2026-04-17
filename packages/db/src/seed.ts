@@ -1065,6 +1065,153 @@ async function main(): Promise<void> {
         "Base case at current Platts Jet. BIS export licence is the gating item — recommendation is do_not_proceed until the licence is issued.",
     });
 
+    // -----------------------------------------------------------------------
+    // Sprint 11 — Benchmark prices (fuel_market_rates)
+    //
+    // Five trailing days: three ULSD rows (Platts USGC ULSD) and two Jet
+    // A-1 rows (Platts USGC Jet). Prices are in USD/USG with per-barrel
+    // and per-metric-tonne alternates derived at a fixed ULSD density of
+    // 0.845 kg/L and Jet A-1 density of 0.800 kg/L. Source is stamped as
+    // the benchmark publisher so the rate provenance survives in the UI.
+    // -----------------------------------------------------------------------
+    const ULSD_USG_PER_MT = 1000 / (0.845 * 3.785411784); // ≈ 312.69
+    const JET_USG_PER_MT = 1000 / (0.8 * 3.785411784); // ≈ 330.21
+    await db.insert(schema.fuelMarketRates).values([
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[0]!,
+        tenantId,
+        rateDate: "2026-04-13",
+        product: "ulsd",
+        benchmark: "platts_usgc_ulsd",
+        pricePerUsg: 2.38,
+        pricePerBbl: 2.38 * 42,
+        pricePerMt: 2.38 * ULSD_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[1]!,
+        tenantId,
+        rateDate: "2026-04-14",
+        product: "ulsd",
+        benchmark: "platts_usgc_ulsd",
+        pricePerUsg: 2.4,
+        pricePerBbl: 2.4 * 42,
+        pricePerMt: 2.4 * ULSD_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[2]!,
+        tenantId,
+        rateDate: "2026-04-15",
+        product: "ulsd",
+        benchmark: "platts_usgc_ulsd",
+        pricePerUsg: 2.41,
+        pricePerBbl: 2.41 * 42,
+        pricePerMt: 2.41 * ULSD_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[3]!,
+        tenantId,
+        rateDate: "2026-04-16",
+        product: "jet_a1",
+        benchmark: "platts_usgc_jet",
+        pricePerUsg: 2.54,
+        pricePerBbl: 2.54 * 42,
+        pricePerMt: 2.54 * JET_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[4]!,
+        tenantId,
+        rateDate: "2026-04-17",
+        product: "jet_a1",
+        benchmark: "platts_usgc_jet",
+        pricePerUsg: 2.55,
+        pricePerBbl: 2.55 * 42,
+        pricePerMt: 2.55 * JET_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+    ]);
+
+    // -----------------------------------------------------------------------
+    // Sprint 11 — Counterparty risk scores
+    //
+    // One row per seeded Caribbean buyer. Each dimension is 0-100 with
+    // higher = riskier; composite_score is the simple arithmetic mean of
+    // the eight dimensions. risk_tier reflects the scoring committee's
+    // judgement (not a pure function of composite_score), and the
+    // recommended payment terms + max exposure capture the policy the
+    // desk should enforce on future deals.
+    // -----------------------------------------------------------------------
+    await db.insert(schema.fuelDealCounterpartyScores).values([
+      {
+        id: SEED_COUNTERPARTY_SCORE_IDS.massy,
+        tenantId,
+        orgId: SEED_ORG_IDS.massy,
+        scoredBy: SEED_ADMIN_USER_ID,
+        countryRisk: 40, // Jamaica — Coface B
+        paymentHistoryRisk: 20,
+        creditRisk: 30,
+        sanctionsExposureRisk: 10,
+        ownershipTransparencyRisk: 15,
+        regulatoryComplexityRisk: 30,
+        operationalRisk: 25,
+        concentrationRisk: 15,
+        compositeScore: 23.125,
+        riskTier: "tier_2",
+        recommendedPaymentTerms: "LC at sight, confirmed by US money-center bank",
+        recommendedMaxExposureUsd: 8_000_000,
+        notes:
+          "Long-standing Caribbean buyer. Payment history clean; LC confirmation required due to sovereign banking risk.",
+      },
+      {
+        id: SEED_COUNTERPARTY_SCORE_IDS.punta,
+        tenantId,
+        orgId: SEED_ORG_IDS.punta,
+        scoredBy: SEED_ADMIN_USER_ID,
+        countryRisk: 55, // Dominican Republic — Coface B
+        paymentHistoryRisk: 30,
+        creditRisk: 40,
+        sanctionsExposureRisk: 15,
+        ownershipTransparencyRisk: 25,
+        regulatoryComplexityRisk: 35,
+        operationalRisk: 30,
+        concentrationRisk: 20,
+        compositeScore: 31.25,
+        riskTier: "tier_2",
+        recommendedPaymentTerms: "LC at sight + political risk insurance",
+        recommendedMaxExposureUsd: 6_000_000,
+        notes:
+          "Moderate exposure. Political risk cover required for any single-shipment value above $3M.",
+      },
+      {
+        id: SEED_COUNTERPARTY_SCORE_IDS.caribAir,
+        tenantId,
+        orgId: SEED_ORG_IDS.caribAir,
+        scoredBy: SEED_ADMIN_USER_ID,
+        countryRisk: 35, // Trinidad & Tobago — Coface A4
+        paymentHistoryRisk: 15,
+        creditRisk: 20,
+        sanctionsExposureRisk: 5,
+        ownershipTransparencyRisk: 10, // state-owned, high transparency
+        regulatoryComplexityRisk: 25,
+        operationalRisk: 20,
+        concentrationRisk: 15,
+        compositeScore: 18.125,
+        riskTier: "tier_1",
+        recommendedPaymentTerms: "Prepayment 80/20 or LC at sight",
+        recommendedMaxExposureUsd: 10_000_000,
+        notes:
+          "State-owned flag carrier. Strong credit profile, preferred counterparty for Jet A-1 volume.",
+      },
+    ]);
+
     // eslint-disable-next-line no-console
     console.log("seed complete");
   } finally {
