@@ -852,3 +852,175 @@ function fmtMoneyPerUsg(n: number): string {
 function fmtMoney(n: number): string {
   return `$${Math.round(n).toLocaleString("en-US")}`;
 }
+
+// ===========================================================================
+// Cashflow timeline
+// ===========================================================================
+
+/**
+ * Cashflow input event. One row per inflow / outflow on the deal's
+ * timeline; `day_relative` is measured against the BL date (negative =
+ * before loading, 0 = loading, positive = after).
+ *
+ * Exactly one of `amount_fixed_usd` / `amount_pct` is set per event.
+ * `amount_pct` is a percentage (e.g. 20 = 20% of the base) and is
+ * applied against the USD total for the named `base_type`:
+ *
+ *   revenue | product_cost | freight | insurance | port_handling |
+ *   compliance | finance | overhead | custom
+ *
+ * When both fields are null the event contributes zero.
+ */
+export interface DealCashflowEvent {
+  day_relative: number;
+  label: string;
+  direction: "inflow" | "outflow";
+  event_type: string;
+  base_type: string;
+  amount_pct: number | null;
+  amount_fixed_usd: number | null;
+  counterparty?: string;
+}
+
+/**
+ * Append-only extension of {@link FuelDealInputs} adding the optional
+ * cashflow timeline. Declaration merging (legal TypeScript) preserves
+ * the existing interface and just adds the new field; callers that don't
+ * supply events continue to typecheck.
+ */
+export interface FuelDealInputs {
+  cashflowEvents?: DealCashflowEvent[];
+}
+
+/** One resolved row in the computed cashflow timeline. */
+export interface CashflowEventResult {
+  day: number;
+  label: string;
+  direction: "inflow" | "outflow";
+  amountUsd: number;
+  cumulativeCash: number;
+  eventType: string;
+  counterparty?: string;
+}
+
+export interface CashflowResults {
+  events: CashflowEventResult[];
+  /** Magnitude of the most-negative cumulative position reached (≥ 0). */
+  peakExposureUsd: number;
+  /** `day_relative` at which `peakExposureUsd` was first reached. */
+  peakExposureDay: number;
+  /** Cumulative position after the final event. */
+  finalPositionUsd: number;
+  /**
+   * First `day_relative` where the cumulative position re-crossed into
+   * non-negative territory after having gone negative. 0 when the
+   * timeline either never went negative or never recovered.
+   */
+  daysToBreakEven: number;
+}
+
+/**
+ * Walk the cashflow timeline and resolve cumulative position, peak
+ * exposure, and days-to-breakeven. The function is pure — no DB calls —
+ * and deterministic. Unit economics / totals are recomputed internally
+ * so the base_type lookup for `amount_pct` events is always consistent
+ * with the rest of {@link calculateFuelDeal}'s output.
+ *
+ * When `inputs.cashflowEvents` is missing or empty the function returns
+ * a zeroed {@link CashflowResults} — callers can treat this as "no
+ * timeline supplied" without branching.
+ */
+export function calculateCashflow(inputs: FuelDealInputs): CashflowResults {
+  const events = inputs.cashflowEvents ?? [];
+  if (events.length === 0) {
+    return {
+      events: [],
+      peakExposureUsd: 0,
+      peakExposureDay: 0,
+      finalPositionUsd: 0,
+      daysToBreakEven: 0,
+    };
+  }
+
+  const perUsg = calculateUnitEconomics(inputs);
+  const totals = calculateTotals(inputs, perUsg);
+
+  // Total-USD base for each `base_type`. Matches the naming in
+  // DealCashflowEvent so callers can reason about what each event
+  // resolves against.
+  const baseTotals: Record<string, number> = {
+    revenue: totals.revenueUsd,
+    product_cost: totals.productCostUsd,
+    freight: totals.freightUsd,
+    insurance: totals.insuranceUsd,
+    port_handling: totals.dischargeHandlingUsd,
+    compliance: totals.complianceUsd,
+    // `finance` rolls trade-finance and intermediary fees together so
+    // callers can book both against a single "finance" base if desired.
+    finance: totals.tradeFinanceUsd + totals.intermediaryFeesUsd,
+    overhead: totals.overheadUsd,
+    custom: 0,
+  };
+
+  const sorted = [...events].sort((a, b) => a.day_relative - b.day_relative);
+
+  const resolved: CashflowEventResult[] = [];
+  let cumulative = 0;
+  let mostNegative = 0;
+  let peakDay = 0;
+  let hasGoneNegative = false;
+  let daysToBreakEven = 0;
+
+  for (const ev of sorted) {
+    const amount = resolveAmount(ev, baseTotals);
+    const signed = ev.direction === "inflow" ? amount : -amount;
+    cumulative += signed;
+
+    if (cumulative < mostNegative) {
+      mostNegative = cumulative;
+      peakDay = ev.day_relative;
+    }
+    if (cumulative < 0) {
+      hasGoneNegative = true;
+    } else if (hasGoneNegative && daysToBreakEven === 0) {
+      daysToBreakEven = ev.day_relative;
+    }
+
+    const row: CashflowEventResult = {
+      day: ev.day_relative,
+      label: ev.label,
+      direction: ev.direction,
+      amountUsd: amount,
+      cumulativeCash: cumulative,
+      eventType: ev.event_type,
+    };
+    if (ev.counterparty !== undefined) row.counterparty = ev.counterparty;
+    resolved.push(row);
+  }
+
+  return {
+    events: resolved,
+    peakExposureUsd: Math.abs(mostNegative),
+    peakExposureDay: peakDay,
+    finalPositionUsd: cumulative,
+    daysToBreakEven,
+  };
+}
+
+function resolveAmount(
+  ev: DealCashflowEvent,
+  baseTotals: Record<string, number>,
+): number {
+  if (ev.amount_fixed_usd !== null && ev.amount_fixed_usd !== undefined) {
+    return ev.amount_fixed_usd;
+  }
+  if (ev.amount_pct !== null && ev.amount_pct !== undefined) {
+    const base = baseTotals[ev.base_type] ?? 0;
+    // `amount_pct` is a percentage (e.g. 20 = 20%). Divide by 100 to get
+    // the proportion. Callers that store amount_pct as a 0-1 fraction
+    // need to multiply by 100 before passing through — the calculator
+    // follows the spec literally.
+    return (ev.amount_pct / 100) * base;
+  }
+  return 0;
+}
