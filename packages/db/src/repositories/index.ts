@@ -27,3 +27,13 @@ export {
   PostgresCostLedgerRepository,
   type CostLedgerRepository,
 } from "./cost-ledger-repository.js";
+export {
+  CounterpartyRiskRepository,
+  FuelDealRepository,
+  FuelDealScenarioRepository,
+  FuelMarketRateRepository,
+  type CounterpartyScoreUpsert,
+  type FuelDealCreate,
+  type FuelDealScenarioCreate,
+  type FuelMarketRateInsert,
+} from "./deals.js";

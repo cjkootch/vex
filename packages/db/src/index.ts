@@ -45,3 +45,41 @@ export type {
   EmbeddingChunk,
   NewEmbeddingChunk,
 } from "./schema/embedding-chunks.js";
+export type { FuelDeal, NewFuelDeal } from "./schema/fuel-deals.js";
+export type {
+  FuelDealScenario,
+  NewFuelDealScenario,
+} from "./schema/fuel-deal-scenarios.js";
+export type {
+  FuelDealCounterpartyScore,
+  NewFuelDealCounterpartyScore,
+} from "./schema/fuel-deal-counterparty-scores.js";
+export type {
+  FuelMarketRate,
+  NewFuelMarketRate,
+} from "./schema/fuel-market-rates.js";
+export {
+  calculateBreakevens,
+  calculateDealScore,
+  calculateFuelDeal,
+  calculateInsuranceCosts,
+  calculateTotals,
+  calculateUnitEconomics,
+  calculateVesselEconomics,
+  calculateWarnings,
+  DealRecommendation,
+  DealWarningSeverity,
+  type BreakevenAnalysis,
+  type DealComplianceState,
+  type DealScorecard,
+  type DealThresholds,
+  type DealTotals,
+  type DealWarning,
+  type FuelDealInputs,
+  type FuelDealResults,
+  type InsuranceCosts,
+  type PerUsgEconomics,
+  type TradeFinanceInputs,
+  type VesselEconomics,
+  type VesselInputs,
+} from "./deals/calculator.js";
