@@ -40,6 +40,19 @@ export default async function AppHome() {
           </Link>
 
           <Link
+            href="/app/voice"
+            className="group rounded-lg border border-line bg-muted/40 p-6 transition hover:border-white/30 hover:bg-muted/60"
+          >
+            <h2 className="text-lg font-semibold">Voice</h2>
+            <p className="mt-1 text-sm text-white/60">
+              Talk to Vex live in the browser. Transcripts summarise and surface action items.
+            </p>
+            <span className="mt-4 inline-block text-sm text-white/40 group-hover:text-white/70">
+              Start a call →
+            </span>
+          </Link>
+
+          <Link
             href="/app/approvals"
             className="group rounded-lg border border-line bg-muted/40 p-6 transition hover:border-white/30 hover:bg-muted/60"
           >

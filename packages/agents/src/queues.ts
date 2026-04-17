@@ -9,6 +9,7 @@ export const QueueName = {
   Dlq: "dlq",
   Agents: "agents",
   ApprovalExecutor: "approval-executor",
+  Transcript: "transcript",
 } as const;
 export type QueueName = (typeof QueueName)[keyof typeof QueueName];
 
@@ -18,12 +19,14 @@ export type QueueName = (typeof QueueName)[keyof typeof QueueName];
  *   - dlq: low-volume audit work, manual review pace → 2
  *   - agents: each job hits Claude → 4 to keep token bursts smooth
  *   - approval-executor: low volume, runs after a human approves → 2
+ *   - transcript: each job hits Claude twice (summary + action items) → 4
  */
 export const QueueConcurrency: Record<QueueName, number> = {
   [QueueName.Normalization]: 10,
   [QueueName.Dlq]: 2,
   [QueueName.Agents]: 4,
   [QueueName.ApprovalExecutor]: 2,
+  [QueueName.Transcript]: 4,
 };
 
 /** Job payload shapes — both queues take `{raw_event_id, tenant_id}`. */
@@ -54,6 +57,32 @@ export interface ApprovalExecutorJobData {
 }
 
 /**
+ * Transcript-processor job — consumed after the user ends a browser voice
+ * session. The job fetches the transcript (from OpenAI Realtime session
+ * state or from `transcript_text` in the payload), uploads it to S3,
+ * writes an activity + touchpoint, and asks Claude to summarise +
+ * extract explicit commitments as T2 approvals.
+ *
+ * The `session_id` is the OpenAI Realtime session id (also used as the
+ * BullMQ jobId so retries don't double-process).
+ */
+export interface TranscriptJobData {
+  session_id: string;
+  tenant_id: string;
+  workspace_id: string;
+  org_id?: string;
+  contact_id?: string;
+  /** Plain-text transcript. Must be provided by the caller. */
+  transcript_text: string;
+  duration_seconds: number;
+  /** Token usage reported by OpenAI for cost accounting (all optional). */
+  input_audio_tokens?: number;
+  output_audio_tokens?: number;
+  input_text_tokens?: number;
+  output_text_tokens?: number;
+}
+
+/**
  * Build a BullMQ Redis connection. We disable `maxRetriesPerRequest` because
  * BullMQ requires it to be `null` for blocking operations.
  */
@@ -71,6 +100,7 @@ export interface QueueHandles {
   dlq: Queue<DlqJobData>;
   agents: Queue<AgentJobData>;
   approvalExecutor: Queue<ApprovalExecutorJobData>;
+  transcript: Queue<TranscriptJobData>;
   close: () => Promise<void>;
 }
 
@@ -108,16 +138,27 @@ export function createQueues(connection: Redis): QueueHandles {
       backoff: { type: "exponential", delay: 2_000 },
     },
   });
+  const transcript = new Queue<TranscriptJobData>(QueueName.Transcript, {
+    connection,
+    defaultJobOptions: {
+      attempts: 3,
+      backoff: { type: "exponential", delay: 3_000 },
+      removeOnComplete: { count: 500, age: 7 * 24 * 3600 },
+      removeOnFail: { count: 1_000, age: 30 * 24 * 3600 },
+    },
+  });
   return {
     normalization,
     dlq,
     agents,
     approvalExecutor,
+    transcript,
     async close() {
       await normalization.close();
       await dlq.close();
       await agents.close();
       await approvalExecutor.close();
+      await transcript.close();
     },
   };
 }
@@ -181,6 +222,18 @@ export async function addApprovalExecutorJob(
   data: ApprovalExecutorJobData,
 ): Promise<void> {
   await queue.add("execute", data, { jobId: data.approval_id });
+}
+
+/**
+ * Enqueue a transcript-processor job. `session_id` is the OpenAI Realtime
+ * session id and is used as the BullMQ jobId, so retries / duplicate
+ * calls to `/voice/sessions/:id/end` can't double-process.
+ */
+export async function addTranscriptJob(
+  queue: Queue<TranscriptJobData>,
+  data: TranscriptJobData,
+): Promise<void> {
+  await queue.add("transcript", data, { jobId: data.session_id });
 }
 
 /**
@@ -257,4 +310,14 @@ export function createApprovalExecutorWorker(
       concurrency: QueueConcurrency[QueueName.ApprovalExecutor],
     },
   );
+}
+
+export function createTranscriptWorker(
+  processor: Processor<TranscriptJobData, unknown>,
+  connection: Redis,
+): Worker<TranscriptJobData> {
+  return new Worker<TranscriptJobData>(QueueName.Transcript, processor, {
+    connection,
+    concurrency: QueueConcurrency[QueueName.Transcript],
+  });
 }

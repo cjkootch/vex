@@ -91,6 +91,16 @@ const CampaignPanel = z.object({
   open_confidence: z.literal("weak"),
 });
 
+const VoiceSessionPanel = z.object({
+  type: z.literal("voice_session"),
+  sessionId: z.string().min(1),
+  durationSeconds: z.number().int().nonnegative(),
+  status: z.enum(["processing", "processed"]),
+  summary: z.string(),
+  actionItemsCount: z.number().int().nonnegative(),
+  activityId: z.string().optional(),
+});
+
 export const ManifestPanel = z.discriminatedUnion("type", [
   ProfilePanel,
   TablePanel,
@@ -99,6 +109,7 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   EvidencePanel,
   GraphPanel,
   CampaignPanel,
+  VoiceSessionPanel,
 ]);
 export type ManifestPanel = z.infer<typeof ManifestPanel>;
 

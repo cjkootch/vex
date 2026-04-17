@@ -10,6 +10,7 @@ import { KpiRailPanel } from "./panels/kpi-rail-panel";
 import { EvidencePanel } from "./panels/evidence-panel";
 import { GraphPanel } from "./panels/graph-panel";
 import { CampaignPanel } from "./panels/campaign-panel";
+import { VoiceSessionPanel } from "./panels/voice-session-panel";
 
 /**
  * `PanelComponent<T>` — a React component for one specific panel type.
@@ -46,6 +47,7 @@ registry.register("kpi_rail", KpiRailPanel);
 registry.register("evidence", EvidencePanel);
 registry.register("graph", GraphPanel);
 registry.register("campaign", CampaignPanel);
+registry.register("voice_session", VoiceSessionPanel);
 
 export function resolvePanel(type: ManifestPanelType): ComponentType<unknown> {
   return registry.resolve(type);

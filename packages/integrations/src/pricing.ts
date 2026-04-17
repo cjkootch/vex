@@ -17,6 +17,19 @@ export const pricing = {
       inputUsdPerMillion: 0.02,
     },
   },
+  /** Realtime audio (gpt-4o-realtime-preview) — metered per audio token. */
+  openaiRealtime: {
+    "gpt-4o-realtime-preview-2024-12-17": {
+      /** USD per 1M audio input tokens. */
+      audioInputUsdPerMillion: 100,
+      /** USD per 1M audio output tokens. */
+      audioOutputUsdPerMillion: 200,
+      /** USD per 1M text input tokens (realtime tool calls / system). */
+      textInputUsdPerMillion: 5,
+      /** USD per 1M text output tokens. */
+      textOutputUsdPerMillion: 20,
+    },
+  },
 } as const;
 
 /**

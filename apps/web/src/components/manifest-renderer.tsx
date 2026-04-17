@@ -162,5 +162,18 @@ function Panel({ panel }: { panel: ManifestPanel }) {
           </table>
         </section>
       );
+    case "voice_session":
+      return (
+        <section data-panel="voice_session">
+          <h2>Voice call</h2>
+          <div style={{ color: "#888", fontSize: 12 }}>
+            {panel.sessionId} · {panel.durationSeconds}s · {panel.status}
+          </div>
+          <p>{panel.summary}</p>
+          <div style={{ fontSize: 12 }}>
+            {panel.actionItemsCount} action item{panel.actionItemsCount === 1 ? "" : "s"}
+          </div>
+        </section>
+      );
   }
 }

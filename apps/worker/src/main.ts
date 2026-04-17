@@ -44,6 +44,13 @@ async function main(): Promise<void> {
     applicationDatabaseUrl: env.APPLICATION_DATABASE_URL,
     anthropicApiKey: env.ANTHROPIC_API_KEY,
     openaiApiKey: env.OPENAI_API_KEY,
+    s3: {
+      region: env.S3_REGION,
+      bucket: env.S3_BUCKET,
+      accessKeyId: env.S3_ACCESS_KEY_ID,
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+      ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
+    },
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
   const temporal = await startTemporalWorker({

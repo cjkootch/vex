@@ -6,16 +6,19 @@ import {
   ResearchAgent,
   buildDlqProcessor,
   buildNormalizationProcessor,
+  buildTranscriptProcessor,
   createAgentWorker,
   createApprovalExecutorWorker,
   createDlqWorker,
   createNormalizationWorker,
   createQueues,
   createRedisConnection,
+  createTranscriptWorker,
   scheduleRecurringAgents,
   type AgentJobData,
   type ApprovalExecutorJobData,
   type QueueHandles,
+  type TranscriptJobData,
 } from "@vex/agents";
 import {
   ActivityRepository,
@@ -35,7 +38,7 @@ import {
   createDb,
   type Db,
 } from "@vex/db";
-import { AnthropicAdapter, OpenAIAdapter } from "@vex/integrations";
+import { AnthropicAdapter, OpenAIAdapter, S3Uploader } from "@vex/integrations";
 import { InMemoryCostLedger } from "@vex/telemetry";
 
 export interface QueueRunnerOptions {
@@ -43,6 +46,13 @@ export interface QueueRunnerOptions {
   applicationDatabaseUrl: string;
   anthropicApiKey: string;
   openaiApiKey: string;
+  s3: {
+    endpoint?: string;
+    region: string;
+    bucket: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+  };
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
   defaultWorkspaceId?: string;
@@ -54,6 +64,7 @@ export interface QueueRunner {
   dlqWorker: Worker;
   agentWorker: Worker<AgentJobData>;
   approvalExecutorWorker: Worker<ApprovalExecutorJobData>;
+  transcriptWorker: Worker<TranscriptJobData>;
   close: () => Promise<void>;
 }
 
@@ -127,6 +138,29 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   );
   await approvalExecutorWorker.waitUntilReady();
 
+  const s3 = new S3Uploader({
+    region: options.s3.region,
+    bucket: options.s3.bucket,
+    accessKeyId: options.s3.accessKeyId,
+    secretAccessKey: options.s3.secretAccessKey,
+    ...(options.s3.endpoint ? { endpoint: options.s3.endpoint } : {}),
+  });
+  const transcriptWorker = createTranscriptWorker(
+    buildTranscriptProcessor({
+      db,
+      s3,
+      anthropic,
+      openai,
+      activities: repos.activities,
+      touchpoints: repos.touchpoints,
+      summaries: repos.summaries,
+      approvals: repos.approvals,
+      events: repos.events,
+    }),
+    connection,
+  );
+  await transcriptWorker.waitUntilReady();
+
   if (options.defaultWorkspaceId) {
     await scheduleRecurringAgents(queues.agents, options.defaultWorkspaceId);
   }
@@ -137,11 +171,13 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     dlqWorker,
     agentWorker,
     approvalExecutorWorker,
+    transcriptWorker,
     async close() {
       await normalizationWorker.close();
       await dlqWorker.close();
       await agentWorker.close();
       await approvalExecutorWorker.close();
+      await transcriptWorker.close();
       await queues.close();
       connection.disconnect();
     },

@@ -5,11 +5,13 @@ import { OrganizationsController } from "./organizations/organizations.controlle
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
+import { VoiceModule } from "./voice/voice.module.js";
 
 export interface AppModuleConfig {
   webhooks: DynamicModule;
   query?: DynamicModule;
   approvals?: DynamicModule;
+  voice?: DynamicModule;
   nextAuthSecret: string;
 }
 
@@ -22,6 +24,7 @@ export class AppModule {
     ];
     if (config.query) imports.push(config.query);
     if (config.approvals) imports.push(config.approvals);
+    if (config.voice) imports.push(config.voice);
     return {
       module: AppModule,
       imports,
@@ -30,4 +33,4 @@ export class AppModule {
   }
 }
 
-export { WebhooksModule, QueryModule, ApprovalsModule };
+export { WebhooksModule, QueryModule, ApprovalsModule, VoiceModule };
