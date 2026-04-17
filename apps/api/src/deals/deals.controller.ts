@@ -3,6 +3,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  ForbiddenException,
   Get,
   HttpCode,
   Inject,
@@ -17,7 +18,11 @@ import {
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createId, type DealStatus } from "@vex/domain";
-import type { EventRepository, FuelDealRepository } from "@vex/db";
+import type {
+  ApprovalRepository,
+  EventRepository,
+  FuelDealRepository,
+} from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
 
@@ -38,6 +43,15 @@ import { schema, withTenant, type Db, type Tx } from "@vex/db";
 export const DEALS_DB_CLIENT = Symbol("DEALS_DB_CLIENT");
 export const DEALS_REPO = Symbol("DEALS_REPO");
 export const DEALS_EVENT_REPO = Symbol("DEALS_EVENT_REPO");
+export const DEALS_APPROVAL_REPO = Symbol("DEALS_APPROVAL_REPO");
+
+/**
+ * Status transitions that require a T2 approval instead of applying
+ * immediately. Promotion to `approved` starts the real-money part of
+ * the deal lifecycle (LC issuance, vessel nomination). `cancelled`
+ * destroys value. Both need a four-eyes check before they fire.
+ */
+const APPROVAL_REQUIRED_STATUSES = new Set<DealStatus>(["approved", "cancelled"]);
 
 const DEAL_STATUSES = [
   "draft",
@@ -48,6 +62,11 @@ const DEAL_STATUSES = [
   "settled",
   "cancelled",
 ] as const satisfies readonly DealStatus[];
+
+const RequestStatusChangeBody = z.object({
+  status: z.enum(DEAL_STATUSES),
+  rationale: z.string().min(1).max(1000),
+});
 
 const CreateDealBody = z.object({
   dealRef: z.string().min(1).max(50),
@@ -160,6 +179,7 @@ export class DealsController {
     @Inject(DEALS_DB_CLIENT) private readonly db: Db,
     @Inject(DEALS_REPO) private readonly deals: FuelDealRepository,
     @Inject(DEALS_EVENT_REPO) private readonly events: EventRepository,
+    @Inject(DEALS_APPROVAL_REPO) private readonly approvals: ApprovalRepository,
   ) {}
 
   @Get()
@@ -298,6 +318,11 @@ export class DealsController {
       throw new BadRequestException(parsed.error.message);
     }
     const { status } = parsed.data;
+    if (APPROVAL_REQUIRED_STATUSES.has(status)) {
+      throw new ForbiddenException(
+        `transition to '${status}' requires an approval — POST /deals/${id}/status/request with a rationale`,
+      );
+    }
     const { tenantId, userId } = this.tenant;
 
     const deal = await withTenant(this.db, tenantId, async (tx) => {
@@ -336,6 +361,69 @@ export class DealsController {
 
     this.log.log(`deal ${id} status → ${status} by ${userId}`);
     return { deal };
+  }
+
+  @Post(":id/status/request")
+  @HttpCode(201)
+  async requestStatusChange(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ approvalId: string; status: "pending" }> {
+    const parsed = RequestStatusChangeBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const { status: targetStatus, rationale } = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    const approvalId = await withTenant(this.db, tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+      if (deal.status === targetStatus) {
+        throw new BadRequestException(
+          `deal is already in status '${targetStatus}'`,
+        );
+      }
+
+      const approval = await this.approvals.create(tx, tenantId, {
+        agentRunId: null,
+        actionType: "deal.status_change",
+        proposedPayload: {
+          tier: "T2",
+          deal_id: id,
+          deal_ref: deal.dealRef,
+          from_status: deal.status,
+          to_status: targetStatus,
+          rationale,
+          requested_by: userId,
+        },
+      });
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.status_change_requested",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "approval",
+        objectId: approval.id,
+        occurredAt: new Date(),
+        idempotencyKey: `deal.status_change_requested:${approval.id}`,
+        metadata: {
+          deal_ref: deal.dealRef,
+          from_status: deal.status,
+          to_status: targetStatus,
+          rationale,
+        },
+      });
+
+      return approval.id;
+    });
+
+    this.log.log(
+      `deal ${id} status→${targetStatus} approval requested (approval=${approvalId}) by ${userId}`,
+    );
+    return { approvalId, status: "pending" };
   }
 
   @Get(":id")

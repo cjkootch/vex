@@ -28,6 +28,7 @@ import {
   ApprovalRepository,
   ContactRepository,
   EventRepository,
+  FuelDealRepository,
   LeadRepository,
   OrganizationRepository,
   PostgresCostLedgerRepository,
@@ -147,7 +148,12 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   await agentWorker.waitUntilReady();
 
   const approvalExecutorWorker = createApprovalExecutorWorker(
-    buildApprovalExecutor({ db, approvals: repos.approvals, events: repos.events }),
+    buildApprovalExecutor({
+      db,
+      approvals: repos.approvals,
+      deals: repos.deals,
+      events: repos.events,
+    }),
     connection,
   );
   await approvalExecutorWorker.waitUntilReady();
@@ -252,13 +258,23 @@ function buildAgentProcessor(runner: AgentRunner) {
 interface ApprovalExecutorDeps {
   db: Db;
   approvals: ApprovalRepository;
+  deals: FuelDealRepository;
   events: EventRepository;
 }
 
 /**
- * Sprint-6 stub. The executor receives an approval id after a human has
- * approved it; it logs an audit event so the timeline is complete. Sprint 7
- * wires the real side effects (Resend send, CRM write, etc.).
+ * Approval executor. Receives an approval id after a human has
+ * approved it; branches on `approval.actionType` and applies the
+ * real side effect. Every branch emits an audit event so the
+ * timeline reflects the executor outcome.
+ *
+ * Known action types:
+ *   - `deal.status_change` — move a fuel deal to the target status
+ *     recorded in the approval's proposed_payload. Sprint 14 Group 3.
+ *
+ * Other historical action types (email.send, crm.note, lead.close,
+ * follow_up.suggestion, voice_followup) remain side-effect-less
+ * logs for now — they'll be wired as their surface UIs land.
  */
 function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
   return async (job: Job<ApprovalExecutorJobData>) => {
@@ -266,6 +282,15 @@ function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
     await withTenant(deps.db, workspace_id, async (tx) => {
       const approval = await deps.approvals.findById(tx, approval_id);
       if (!approval) return;
+
+      if (
+        approval.actionType === "deal.status_change" &&
+        approval.decision === "approved"
+      ) {
+        await applyDealStatusChange(tx, deps, workspace_id, approval);
+        return;
+      }
+
       await deps.events.insertIfNotExists(tx, workspace_id, {
         verb: "approval.executor.received",
         subjectType: "approval",
@@ -279,11 +304,76 @@ function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         metadata: {
           action_type: approval.actionType,
           decision: approval.decision,
-          note: "Sprint 6 stub — Sprint 7 will execute the approved side effect.",
+          note: "no executor wired for this action type yet",
         },
       });
     });
   };
+}
+
+async function applyDealStatusChange(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: { id: string; proposedPayload: unknown; reviewerId: string | null },
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        deal_id?: string;
+        to_status?: string;
+        from_status?: string;
+        rationale?: string;
+        deal_ref?: string;
+      }
+    | null;
+  const dealId = payload?.deal_id;
+  const toStatus = payload?.to_status;
+  if (!dealId || !toStatus) {
+    await deps.events.insertIfNotExists(tx, tenantId, {
+      verb: "approval.executor.failed",
+      subjectType: "approval",
+      subjectId: approval.id,
+      actorType: "system",
+      actorId: "approval_executor",
+      objectType: "approval",
+      objectId: approval.id,
+      occurredAt: new Date(),
+      idempotencyKey: `approval.executor.failed:${approval.id}`,
+      metadata: {
+        action_type: "deal.status_change",
+        reason: "missing deal_id or to_status in proposed_payload",
+      },
+    });
+    return;
+  }
+
+  const actor = approval.reviewerId ?? null;
+  await deps.deals.updateStatus(
+    tx,
+    dealId,
+    toStatus as Parameters<FuelDealRepository["updateStatus"]>[2],
+    actor,
+  );
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "deal.status_changed",
+    subjectType: "fuel_deal",
+    subjectId: dealId,
+    actorType: "user",
+    actorId: actor ?? "approval_executor",
+    objectType: "fuel_deal",
+    objectId: dealId,
+    occurredAt: new Date(),
+    idempotencyKey: `deal.status_changed:via-approval:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      deal_ref: payload?.deal_ref ?? null,
+      from_status: payload?.from_status ?? null,
+      to_status: toStatus,
+      rationale: payload?.rationale ?? null,
+      applied_by: actor,
+    },
+  });
 }
 
 function buildRepos() {
@@ -296,6 +386,7 @@ function buildRepos() {
     workspaces: new WorkspaceRepository(),
     agentRuns: new AgentRunRepository(),
     approvals: new ApprovalRepository(),
+    deals: new FuelDealRepository(),
     organizations: new OrganizationRepository(),
     leads: new LeadRepository(),
     summaries: new SummaryRepository(),

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
 import { NewDealForm } from "@/components/crm/new-deal-form";
+import { DealStatusMenu } from "@/components/crm/deal-status-menu";
 
 interface DealRow {
   id: string;
@@ -48,6 +49,7 @@ export default function DealsPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [creating, setCreating] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -102,7 +104,26 @@ export default function DealsPage() {
       {
         accessorKey: "status",
         header: "Status",
-        cell: ({ getValue }) => <StatusPill status={getValue<string>()} />,
+        cell: ({ row }) => (
+          <div className="flex items-center gap-2">
+            <StatusPill status={row.original.status} />
+            <DealStatusMenu
+              dealId={row.original.id}
+              dealRef={row.original.dealRef}
+              currentStatus={row.original.status}
+              onChanged={() => {
+                setDeals(null);
+                setStatusFilter("");
+                setToast(`Status updated on ${row.original.dealRef}`);
+              }}
+              onApprovalRequested={(approvalId) => {
+                setToast(
+                  `Approval requested for ${row.original.dealRef} — see /app/approvals (${approvalId.slice(-6)})`,
+                );
+              }}
+            />
+          </div>
+        ),
       },
       {
         accessorKey: "volumeUsg",
@@ -198,6 +219,23 @@ export default function DealsPage() {
       {error && (
         <div className="rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
           Couldn&apos;t load deals: {error}
+        </div>
+      )}
+
+      {toast && (
+        <div
+          className="flex items-center justify-between rounded-md border border-good/40 bg-good/10 px-3 py-2 text-sm text-good"
+          role="status"
+        >
+          <span>{toast}</span>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="text-xs text-good/80 hover:text-good"
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
         </div>
       )}
 
