@@ -81,6 +81,20 @@ export const SEED_FUEL_DEAL_SCENARIO_IDS = {
   deal3Base: make("FSC", 3),
 } as const;
 
+/**
+ * Flat aliases for the Sprint 11 fuel-deal seed IDs. Eval fixtures and
+ * unit tests can reference these short names without drilling into the
+ * grouped const objects above. Source of truth remains the grouped
+ * objects — these are just re-exports.
+ */
+export const DEAL_1_ID = SEED_FUEL_DEAL_IDS.deal1;
+export const DEAL_2_ID = SEED_FUEL_DEAL_IDS.deal2;
+export const DEAL_3_ID = SEED_FUEL_DEAL_IDS.deal3;
+
+export const SCENARIO_1_ID = SEED_FUEL_DEAL_SCENARIO_IDS.deal1Base;
+export const SCENARIO_2_ID = SEED_FUEL_DEAL_SCENARIO_IDS.deal2Base;
+export const SCENARIO_3_ID = SEED_FUEL_DEAL_SCENARIO_IDS.deal3Base;
+
 /** 15 IDs = 5 cashflow events per deal × 3 deals. */
 export const SEED_FUEL_DEAL_CASHFLOW_IDS = Array.from(
   { length: 15 },
