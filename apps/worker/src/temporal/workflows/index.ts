@@ -5,3 +5,8 @@
  */
 export { followUpWorkflow } from "./follow-up-workflow.js";
 export { researchWorkflow } from "./research-workflow.js";
+export { outboundCallWorkflow } from "./outbound-call-workflow.js";
+export type {
+  OutboundCallWorkflowInput,
+  OutboundCallOutcome,
+} from "./outbound-call-workflow.js";

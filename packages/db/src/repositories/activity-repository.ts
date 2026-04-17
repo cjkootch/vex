@@ -38,6 +38,36 @@ export class ActivityRepository {
    * metadata JSONB. Used by TranscriptProcessor to make the job
    * idempotent on retry.
    */
+  /**
+   * Attach a transcript_ref + duration to an existing activity, merging
+   * caller-supplied metadata into the JSONB column. Used by the Sprint 12
+   * fetchAndStoreRecording activity to link the `voice_call` activity
+   * row to the recording's S3 key once the recording callback fires.
+   */
+  async updateTranscriptRef(
+    tx: Tx,
+    id: string,
+    transcriptRef: string,
+    metadataPatch: Record<string, unknown>,
+  ): Promise<Activity> {
+    const duration =
+      typeof metadataPatch["duration_seconds"] === "number"
+        ? (metadataPatch["duration_seconds"] as number)
+        : null;
+    const [row] = await tx
+      .update(activities)
+      .set({
+        transcriptRef,
+        ...(duration !== null ? { durationSeconds: duration } : {}),
+        result: "recorded",
+        metadata: sql`${activities.metadata} || ${JSON.stringify(metadataPatch)}::jsonb`,
+      })
+      .where(eq(activities.id, id))
+      .returning();
+    if (!row) throw new Error(`activity ${id} not found`);
+    return row;
+  }
+
   async findByTypeAndSessionId(
     tx: Tx,
     type: string,

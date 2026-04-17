@@ -22,7 +22,13 @@ export {
   transcriptObjectKey,
   type S3UploaderDeps,
 } from "./s3.js";
-export { createTwilioClient } from "./twilio.js";
+export {
+  createTwilioClient,
+  type CreateOutboundCallParams,
+  type CreateOutboundCallResult,
+  type TwilioClient,
+  type TwilioDeps,
+} from "./twilio.js";
 export { createResendClient } from "./resend.js";
 export { pricing } from "./pricing.js";
 export {

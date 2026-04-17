@@ -12,3 +12,8 @@ export {
   type OrgData,
   type ResearchResults,
 } from "./research-activities.js";
+export {
+  buildCallActivities,
+  type CallActivities,
+  type CallActivitiesDeps,
+} from "./call-activities.js";

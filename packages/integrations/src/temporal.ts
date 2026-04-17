@@ -44,4 +44,6 @@ export const WorkflowId = {
   approval: (approvalId: string): string => `approval-${approvalId}`,
   research: (orgId: string): string => `research-${orgId}`,
   followUp: (agentRunId: string): string => `follow-up-${agentRunId}`,
+  /** Sprint 12 — one workflow per outbound PSTN call attempt. */
+  outboundCall: (agentRunId: string): string => `outbound-call-${agentRunId}`,
 } as const;
