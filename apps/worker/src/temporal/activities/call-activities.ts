@@ -659,7 +659,7 @@ function withWorkflowId(baseUrl: string, workflowId: string): string {
 function transcriptEvidence(
   callSid: string,
   text: string,
-  durationSeconds: number,
+  _durationSeconds: number,
 ): EvidencePack {
   const item: EvidenceItem = {
     chunk_id: callSid,
