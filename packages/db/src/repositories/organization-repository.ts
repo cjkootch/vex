@@ -30,6 +30,38 @@ export class OrganizationRepository {
     return row ?? null;
   }
 
+  /**
+   * Plain create — used by the UI-driven `POST /organizations` endpoint.
+   * Distinct from `upsertByExternalKey` because hand-entered companies
+   * don't have a source-system key to dedupe against.
+   */
+  async create(
+    tx: Tx,
+    tenantId: string,
+    input: {
+      id: string;
+      legalName: string;
+      domain?: string | null;
+      industry?: string | null;
+    },
+  ): Promise<Organization> {
+    const [row] = await tx
+      .insert(organizations)
+      .values({
+        id: input.id,
+        tenantId,
+        legalName: input.legalName,
+        domain: input.domain ?? null,
+        industry: input.industry ?? null,
+        externalKeys: {},
+        fieldConfidence: {},
+        status: "active",
+      })
+      .returning();
+    if (!row) throw new Error("organization insert returned no row");
+    return row;
+  }
+
   async findByExternalKey(
     tx: Tx,
     system: string,

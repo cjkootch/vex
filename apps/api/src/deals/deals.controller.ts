@@ -1,6 +1,23 @@
-import { Controller, Get, Inject, NotFoundException, Param, Query, UseGuards } from "@nestjs/common";
+import {
+  BadRequestException,
+  Body,
+  ConflictException,
+  Controller,
+  Get,
+  HttpCode,
+  Inject,
+  Logger,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { DealStatus } from "@vex/domain";
+import { z } from "zod";
+import { createId, type DealStatus } from "@vex/domain";
+import type { EventRepository, FuelDealRepository } from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
 
@@ -19,6 +36,73 @@ import { schema, withTenant, type Db, type Tx } from "@vex/db";
  */
 
 export const DEALS_DB_CLIENT = Symbol("DEALS_DB_CLIENT");
+export const DEALS_REPO = Symbol("DEALS_REPO");
+export const DEALS_EVENT_REPO = Symbol("DEALS_EVENT_REPO");
+
+const DEAL_STATUSES = [
+  "draft",
+  "negotiating",
+  "approved",
+  "in_transit",
+  "delivered",
+  "settled",
+  "cancelled",
+] as const satisfies readonly DealStatus[];
+
+const CreateDealBody = z.object({
+  dealRef: z.string().min(1).max(50),
+  product: z.enum([
+    "ulsd",
+    "gasoline_87",
+    "gasoline_91",
+    "jet_a",
+    "jet_a1",
+    "avgas",
+    "lfo",
+    "hfo",
+    "lng",
+    "lpg",
+    "biodiesel_b20",
+  ]),
+  incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]),
+  pricingBasis: z.enum([
+    "platts",
+    "argus",
+    "opis",
+    "nymex_wti",
+    "nymex_rbob",
+    "ice_brent",
+    "fixed",
+    "negotiated",
+  ]),
+  paymentTerms: z.enum([
+    "prepayment_100",
+    "prepayment_80_20",
+    "lc_sight",
+    "lc_60d",
+    "lc_90d",
+    "lc_120d",
+    "sblc",
+    "open_account",
+    "telegraphic_transfer",
+    "mixed",
+  ]),
+  volumeUsg: z.number().positive(),
+  densityKgL: z.number().positive().max(2),
+  buyerOrgId: z.string().min(1),
+  sellerOrgId: z.string().optional(),
+  productGrade: z.string().optional(),
+  originPort: z.string().optional(),
+  destinationPort: z.string().optional(),
+  laycanStart: z.string().optional(),
+  laycanEnd: z.string().optional(),
+  notes: z.string().optional(),
+  dealType: z.enum(["spot", "program", "tender", "spot_with_option"]).optional(),
+});
+
+const UpdateStatusBody = z.object({
+  status: z.enum(DEAL_STATUSES),
+});
 
 export interface DealListRow {
   id: string;
@@ -69,9 +153,13 @@ const STATUS_VALUES = new Set([
 @Controller("deals")
 @UseGuards(JwtAuthGuard)
 export class DealsController {
+  private readonly log = new Logger(DealsController.name);
+
   constructor(
     @Inject(TenantContext) private readonly tenant: TenantContext,
     @Inject(DEALS_DB_CLIENT) private readonly db: Db,
+    @Inject(DEALS_REPO) private readonly deals: FuelDealRepository,
+    @Inject(DEALS_EVENT_REPO) private readonly events: EventRepository,
   ) {}
 
   @Get()
@@ -113,6 +201,141 @@ export class DealsController {
     });
 
     return { deals };
+  }
+
+  @Post()
+  @HttpCode(201)
+  async create(@Body() raw: unknown): Promise<{ deal: DealDetail }> {
+    const parsed = CreateDealBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const input = parsed.data;
+    const id = createId();
+    const { tenantId, userId } = this.tenant;
+
+    const deal = await withTenant(this.db, tenantId, async (tx) => {
+      // Verify buyer org exists under this tenant — RLS will already
+      // filter an impossible id, so an empty result here means the
+      // caller passed a bogus id or one from another tenant.
+      const [buyer] = await tx
+        .select({ id: schema.organizations.id })
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, input.buyerOrgId))
+        .limit(1);
+      if (!buyer) {
+        throw new BadRequestException(
+          `buyerOrgId ${input.buyerOrgId} does not exist in this workspace`,
+        );
+      }
+
+      try {
+        await this.deals.create(tx, tenantId, {
+          id,
+          dealRef: input.dealRef,
+          product: input.product,
+          incoterm: input.incoterm,
+          pricingBasis: input.pricingBasis,
+          paymentTerms: input.paymentTerms,
+          volumeUsg: input.volumeUsg,
+          densityKgL: input.densityKgL,
+          buyerOrgId: input.buyerOrgId,
+          ...(input.sellerOrgId ? { sellerOrgId: input.sellerOrgId } : {}),
+          ...(input.productGrade ? { productGrade: input.productGrade } : {}),
+          ...(input.originPort ? { originPort: input.originPort } : {}),
+          ...(input.destinationPort ? { destinationPort: input.destinationPort } : {}),
+          ...(input.laycanStart ? { laycanStart: input.laycanStart } : {}),
+          ...(input.laycanEnd ? { laycanEnd: input.laycanEnd } : {}),
+          ...(input.notes ? { notes: input.notes } : {}),
+          ...(input.dealType ? { dealType: input.dealType } : {}),
+          createdBy: userId,
+        });
+      } catch (err) {
+        const message = (err as Error).message;
+        if (message.includes("duplicate") || message.includes("unique")) {
+          throw new ConflictException(
+            `a deal with ref ${input.dealRef} already exists`,
+          );
+        }
+        throw err;
+      }
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.created",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "fuel_deal",
+        objectId: id,
+        occurredAt: new Date(),
+        idempotencyKey: `deal.created:${id}`,
+        metadata: {
+          deal_ref: input.dealRef,
+          product: input.product,
+          buyer_org_id: input.buyerOrgId,
+          volume_usg: input.volumeUsg,
+          created_by: userId,
+        },
+      });
+
+      const detail = await loadDealDetail(tx, id);
+      if (!detail) throw new Error(`created deal ${id} not readable`);
+      return detail;
+    });
+
+    this.log.log(`deal ${input.dealRef} (${id}) created by ${userId}`);
+    return { deal };
+  }
+
+  @Patch(":id/status")
+  async updateStatus(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ deal: DealDetail }> {
+    const parsed = UpdateStatusBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const { status } = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    const deal = await withTenant(this.db, tenantId, async (tx) => {
+      const before = await this.deals.findById(tx, id);
+      if (!before) throw new NotFoundException(`deal ${id} not found`);
+      if (before.status === status) {
+        const detail = await loadDealDetail(tx, id);
+        if (!detail) throw new Error(`deal ${id} not readable`);
+        return detail;
+      }
+
+      await this.deals.updateStatus(tx, id, status, userId);
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.status_changed",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "fuel_deal",
+        objectId: id,
+        occurredAt: new Date(),
+        idempotencyKey: `deal.status_changed:${id}:${before.status}->${status}:${Date.now()}`,
+        metadata: {
+          deal_ref: before.dealRef,
+          from_status: before.status,
+          to_status: status,
+          actor_user_id: userId,
+        },
+      });
+
+      const detail = await loadDealDetail(tx, id);
+      if (!detail) throw new Error(`deal ${id} not readable`);
+      return detail;
+    });
+
+    this.log.log(`deal ${id} status → ${status} by ${userId}`);
+    return { deal };
   }
 
   @Get(":id")

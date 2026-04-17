@@ -2,11 +2,47 @@ import { asc, desc, eq, isNotNull } from "drizzle-orm";
 import type { Tx } from "../client.js";
 import { contacts, type Contact } from "../schema/contacts.js";
 
+export interface ContactCreateInput {
+  id: string;
+  orgId: string;
+  fullName: string;
+  title?: string | null;
+  emails?: string[];
+  phones?: string[];
+  timezone?: string | null;
+}
+
 /** Stateless. Caller must wrap in `withTenant` so RLS scopes the queries. */
 export class ContactRepository {
   async findById(tx: Tx, id: string): Promise<Contact | null> {
     const [row] = await tx.select().from(contacts).where(eq(contacts.id, id)).limit(1);
     return row ?? null;
+  }
+
+  /**
+   * Plain create — used by the UI-driven `POST /contacts` endpoint.
+   * The ingestion path continues to use `upsertByExternalKey` equivalents
+   * so dedupe logic stays out of the hand-entry path.
+   */
+  async create(tx: Tx, tenantId: string, input: ContactCreateInput): Promise<Contact> {
+    const [row] = await tx
+      .insert(contacts)
+      .values({
+        id: input.id,
+        tenantId,
+        orgId: input.orgId,
+        fullName: input.fullName,
+        title: input.title ?? null,
+        emails: input.emails ?? [],
+        phones: input.phones ?? [],
+        externalKeys: {},
+        fieldConfidence: {},
+        status: "active",
+        timezone: input.timezone ?? null,
+      })
+      .returning();
+    if (!row) throw new Error("contact insert returned no row");
+    return row;
   }
 
   async findByEmail(tx: Tx, email: string): Promise<Contact | null> {

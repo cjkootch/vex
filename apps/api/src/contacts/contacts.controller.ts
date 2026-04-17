@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Inject,
   Param,
   Post,
@@ -15,6 +16,15 @@ import { ContactsService } from "./contacts.service.js";
 
 const OptOutBody = z.object({
   reason: z.string().min(1).max(500),
+});
+
+const CreateContactBody = z.object({
+  orgId: z.string().min(1),
+  fullName: z.string().min(1).max(200),
+  title: z.string().max(200).optional(),
+  emails: z.array(z.string().email()).max(10).optional(),
+  phones: z.array(z.string().max(40)).max(10).optional(),
+  timezone: z.string().max(100).optional(),
 });
 
 /**
@@ -45,6 +55,26 @@ export class ContactsController {
         ? await this.service.listSuppressed(this.tenant.tenantId, limit)
         : await this.service.listActive(this.tenant.tenantId, limit);
     return { contacts };
+  }
+
+  @Post()
+  @HttpCode(201)
+  async create(@Body() raw: unknown) {
+    const parsed = CreateContactBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const contact = await this.service.create({
+      tenantId: this.tenant.tenantId,
+      actorUserId: this.tenant.userId,
+      orgId: parsed.data.orgId,
+      fullName: parsed.data.fullName,
+      ...(parsed.data.title ? { title: parsed.data.title } : {}),
+      ...(parsed.data.emails ? { emails: parsed.data.emails } : {}),
+      ...(parsed.data.phones ? { phones: parsed.data.phones } : {}),
+      ...(parsed.data.timezone ? { timezone: parsed.data.timezone } : {}),
+    });
+    return { contact };
   }
 
   @Get("suppressed")

@@ -1,13 +1,22 @@
 import {
+  BadRequestException,
+  Body,
+  ConflictException,
   Controller,
   Get,
+  HttpCode,
   Inject,
+  Logger,
   NotFoundException,
   Param,
+  Post,
   Query,
   UseGuards,
 } from "@nestjs/common";
 import { count, desc, eq } from "drizzle-orm";
+import { z } from "zod";
+import { createId } from "@vex/domain";
+import type { EventRepository, OrganizationRepository } from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
 
@@ -24,6 +33,14 @@ import { schema, withTenant, type Db, type Tx } from "@vex/db";
  */
 
 export const ORGANIZATIONS_DB_CLIENT = Symbol("ORGANIZATIONS_DB_CLIENT");
+export const ORGANIZATIONS_REPO = Symbol("ORGANIZATIONS_REPO");
+export const ORGANIZATIONS_EVENT_REPO = Symbol("ORGANIZATIONS_EVENT_REPO");
+
+const CreateOrganizationBody = z.object({
+  legalName: z.string().min(1).max(200),
+  domain: z.string().max(255).optional(),
+  industry: z.string().max(120).optional(),
+});
 
 type RecordStatus = "active" | "archived" | "inactive";
 
@@ -63,9 +80,13 @@ const STATUS_VALUES = new Set<RecordStatus>([
 @Controller("organizations")
 @UseGuards(JwtAuthGuard)
 export class OrganizationsController {
+  private readonly log = new Logger(OrganizationsController.name);
+
   constructor(
     @Inject(TenantContext) private readonly tenant: TenantContext,
     @Inject(ORGANIZATIONS_DB_CLIENT) private readonly db: Db,
+    @Inject(ORGANIZATIONS_REPO) private readonly organizations: OrganizationRepository,
+    @Inject(ORGANIZATIONS_EVENT_REPO) private readonly events: EventRepository,
   ) {}
 
   @Get()
@@ -109,6 +130,69 @@ export class OrganizationsController {
     );
 
     return { organizations };
+  }
+
+  @Post()
+  @HttpCode(201)
+  async create(
+    @Body() raw: unknown,
+  ): Promise<{ organization: OrganizationListRow }> {
+    const parsed = CreateOrganizationBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const input = parsed.data;
+    const id = createId();
+    const { tenantId, userId } = this.tenant;
+
+    const organization = await withTenant(this.db, tenantId, async (tx) => {
+      try {
+        const row = await this.organizations.create(tx, tenantId, {
+          id,
+          legalName: input.legalName,
+          ...(input.domain ? { domain: input.domain } : {}),
+          ...(input.industry ? { industry: input.industry } : {}),
+        });
+        await this.events.insertIfNotExists(tx, tenantId, {
+          verb: "organization.created",
+          subjectType: "organization",
+          subjectId: id,
+          actorType: "user",
+          actorId: userId,
+          objectType: "organization",
+          objectId: id,
+          occurredAt: new Date(),
+          idempotencyKey: `organization.created:${id}`,
+          metadata: {
+            legal_name: input.legalName,
+            domain: input.domain ?? null,
+            created_by: userId,
+          },
+        });
+        return row;
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (msg.includes("duplicate") || msg.includes("unique")) {
+          throw new ConflictException(`organization ${input.legalName} exists`);
+        }
+        throw err;
+      }
+    });
+
+    this.log.log(`organization ${input.legalName} (${id}) created by ${userId}`);
+    return {
+      organization: {
+        id: organization.id,
+        legalName: organization.legalName,
+        domain: organization.domain,
+        industry: organization.industry,
+        fitScore: organization.fitScore,
+        status: organization.status,
+        contactCount: 0,
+        createdAt: organization.createdAt.toISOString(),
+        updatedAt: organization.updatedAt.toISOString(),
+      },
+    };
   }
 
   @Get(":id")

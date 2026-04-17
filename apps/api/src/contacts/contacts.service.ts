@@ -25,6 +25,17 @@ export interface OptOutArgs {
   reason: string;
 }
 
+export interface CreateContactArgs {
+  tenantId: string;
+  actorUserId: string;
+  orgId: string;
+  fullName: string;
+  title?: string;
+  emails?: string[];
+  phones?: string[];
+  timezone?: string;
+}
+
 /**
  * Service for contact suppression. Sprint 12 surfaces this because the
  * outbound-call workflow's checkSuppression activity reads the same
@@ -79,6 +90,40 @@ export class ContactsService {
     return withTenant(this.db, tenantId, async (tx) =>
       this.contacts.listActive(tx, limit),
     );
+  }
+
+  async create(args: CreateContactArgs): Promise<Contact> {
+    const id = createId();
+    const contact = await withTenant(this.db, args.tenantId, async (tx) => {
+      const row = await this.contacts.create(tx, args.tenantId, {
+        id,
+        orgId: args.orgId,
+        fullName: args.fullName,
+        ...(args.title !== undefined ? { title: args.title } : {}),
+        ...(args.emails !== undefined ? { emails: args.emails } : {}),
+        ...(args.phones !== undefined ? { phones: args.phones } : {}),
+        ...(args.timezone !== undefined ? { timezone: args.timezone } : {}),
+      });
+      await this.events.insertIfNotExists(tx, args.tenantId, {
+        verb: "contact.created",
+        subjectType: "contact",
+        subjectId: id,
+        actorType: "user",
+        actorId: args.actorUserId,
+        objectType: "contact",
+        objectId: id,
+        occurredAt: new Date(),
+        idempotencyKey: `contact.created:${id}`,
+        metadata: {
+          full_name: args.fullName,
+          org_id: args.orgId,
+          created_by: args.actorUserId,
+        },
+      });
+      return row;
+    });
+    this.log.log(`contact ${args.fullName} (${id}) created by ${args.actorUserId}`);
+    return contact;
   }
 
   async findById(tenantId: string, id: string): Promise<Contact> {
