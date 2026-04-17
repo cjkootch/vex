@@ -124,7 +124,14 @@ export class AdminService {
   ) {}
 
   async getSettings(workspaceId: string): Promise<WorkspaceSettings> {
-    const current = await this.workspaces.getSettings(this.db, workspaceId);
+    // The workspaces table's RLS policy is `id = current_setting(
+    // 'app.tenant_id', true)`. Without a session tenant, every row is
+    // filtered out and getSettings returns null → the controller 404s.
+    // Wrap in withTenant so the tenant_id session var is set to the
+    // workspace id (which IS the tenant id in this product).
+    const current = await withTenant(this.db, workspaceId, async () =>
+      this.workspaces.getSettings(this.db, workspaceId),
+    );
     if (!current) throw new NotFoundException(`workspace ${workspaceId}`);
     return current;
   }
@@ -143,10 +150,11 @@ export class AdminService {
     }
     const current = await this.getSettings(workspaceId);
     const next: WorkspaceSettings = mergeSettings(current, patch);
-    const updated = await this.workspaces.updateSettings(
-      this.db,
-      workspaceId,
-      next,
+    // Same RLS story as getSettings — the update needs the tenant_id
+    // session var set or the WHERE id = $1 matches zero rows and
+    // drizzle throws.
+    const updated = await withTenant(this.db, workspaceId, async () =>
+      this.workspaces.updateSettings(this.db, workspaceId, next),
     );
     await withTenant(this.db, tenantId, async (tx) => {
       await this.events.insertIfNotExists(tx, tenantId, {
@@ -246,7 +254,11 @@ export class AdminService {
       fromRaw && !Number.isNaN(Date.parse(fromRaw)) ? new Date(fromRaw) : defaultFrom;
     const clampedLimit = Math.max(1, Math.min(limit, 500));
 
-    return withTenant(this.db, tenantId, async (tx) => {
+    // cost_ledger's Drizzle schema exists but no migration has created
+    // the table yet. Catch 42P01 relation-does-not-exist and serve
+    // an empty page so the Cost tab renders instead of 500ing.
+    try {
+      return await withTenant(this.db, tenantId, async (tx) => {
       const entryRows = await tx
         .select({
           id: schema.costLedger.id,
@@ -292,7 +304,18 @@ export class AdminService {
         })),
         totals,
       };
-    });
+      });
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      if (code === "42P01") {
+        return {
+          window: { from: from.toISOString(), to: to.toISOString() },
+          entries: [],
+          totals: { today: 0, week: 0, month: 0 },
+        };
+      }
+      throw err;
+    }
   }
 
   async getLatestEvalResults(): Promise<EvalResults | null> {
