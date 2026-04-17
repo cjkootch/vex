@@ -8,6 +8,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
+import { BriefModule } from "./brief/brief.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { TenantThrottlerGuard } from "./throttler/tenant-throttler.guard.js";
 
@@ -16,6 +17,7 @@ export interface AppModuleConfig {
   query?: DynamicModule;
   approvals?: DynamicModule;
   agentRuns?: DynamicModule;
+  brief?: DynamicModule;
   voice?: DynamicModule;
   health?: DynamicModule;
   nextAuthSecret: string;
@@ -55,6 +57,7 @@ export class AppModule {
     if (config.query) imports.push(config.query);
     if (config.approvals) imports.push(config.approvals);
     if (config.agentRuns) imports.push(config.agentRuns);
+    if (config.brief) imports.push(config.brief);
     if (config.voice) imports.push(config.voice);
     if (config.health) imports.push(config.health);
     return {
@@ -73,6 +76,7 @@ export {
   QueryModule,
   ApprovalsModule,
   AgentRunsModule,
+  BriefModule,
   VoiceModule,
   HealthModule,
 };

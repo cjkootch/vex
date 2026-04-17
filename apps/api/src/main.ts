@@ -33,6 +33,7 @@ import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
+import { BriefModule } from "./brief/brief.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { VoiceSessionStore } from "./voice/voice-session-store.js";
 import { HealthModule } from "./health/health.module.js";
@@ -122,6 +123,11 @@ async function bootstrap(): Promise<void> {
       agentRuns: AgentRunsModule.register({
         db,
         agentRuns: agentRunRepository,
+        approvals: approvalRepository,
+      }),
+      brief: BriefModule.register({
+        db,
+        summaries: summaryRepository,
         approvals: approvalRepository,
       }),
       voice: VoiceModule.register({
