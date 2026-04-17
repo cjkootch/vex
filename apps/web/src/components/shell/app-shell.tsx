@@ -166,3 +166,148 @@ function TopBar({ pending }: { pending: number }) {
       >
         VEX
       </Link>
+      <div className="flex flex-1 justify-center px-6">
+        {/* exactOptionalPropertyTypes: spread onClear only when set. */}
+        <ContextChip
+          type={chipType}
+          label={contextLabel ?? config.label}
+          sublabel={contextSublabel ?? config.description}
+          status={config.chipStatus}
+          {...(onClear ? { onClear } : {})}
+        />
+      </div>
+      <div className="flex items-center gap-3">
+        <ApprovalBadge count={pending} />
+        <div
+          aria-label={vexCopy.navigation.exit_workspace}
+          className="h-8 w-8 rounded-full bg-white/10"
+        />
+      </div>
+    </header>
+  );
+}
+
+function ApprovalBadge({ count }: { count: number }) {
+  const label =
+    count === 1 ? "1 approval pending" : `${count} approvals pending`;
+  return (
+    <Link
+      href="/app/approvals"
+      aria-label={label}
+      className="relative inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-muted/40 px-2.5 text-xs text-white/70 transition hover:border-white/30 hover:text-white"
+    >
+      <Icon path="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z" size={4} />
+      <span>{count}</span>
+      {count > 0 ? (
+        <span
+          aria-hidden="true"
+          className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-amber-400"
+        />
+      ) : null}
+    </Link>
+  );
+}
+
+interface SideRailProps {
+  collapsed: boolean;
+  onToggle: () => void;
+  pathname: string;
+  pending: number;
+}
+
+function SideRail({ collapsed, onToggle, pathname, pending }: SideRailProps) {
+  return (
+    <aside
+      className={`${collapsed ? "w-14" : "w-60"} hidden flex-shrink-0 flex-col border-r border-line bg-muted/20 transition-[width] md:flex`}
+    >
+      <nav className="flex-1 p-2" aria-label="Primary">
+        {NAV_ITEMS.map((item) => {
+          // Brief matches only exactly; other items match their prefix
+          // so nested routes (e.g. /app/deals/:id) keep the parent active.
+          const active =
+            item.matchKey === "/app"
+              ? pathname === "/app"
+              : pathname === item.matchKey ||
+                pathname.startsWith(`${item.matchKey}/`);
+          const badge =
+            item.href === "/app/approvals" && pending > 0 ? pending : null;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? "page" : undefined}
+              className={`mb-1 flex items-center gap-3 rounded-md px-2 py-2 text-sm transition ${
+                active
+                  ? "bg-white/10 text-white"
+                  : "text-white/60 hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              <Icon path={item.iconPath} />
+              {collapsed ? null : <span>{item.label}</span>}
+              {!collapsed && badge !== null ? (
+                <span className="ml-auto rounded-full bg-amber-400/20 px-1.5 py-0.5 text-xs text-amber-300">
+                  {badge}
+                </span>
+              ) : null}
+            </Link>
+          );
+        })}
+      </nav>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={collapsed ? "Expand side rail" : "Collapse side rail"}
+        className="border-t border-line py-2 text-center text-xs text-white/40 transition hover:bg-white/5 hover:text-white"
+      >
+        {collapsed ? "›" : "‹"}
+      </button>
+    </aside>
+  );
+}
+
+function AutonomyRail({
+  open,
+  onToggle,
+}: {
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <aside
+      className={`${open ? "w-80" : "w-9"} hidden flex-shrink-0 flex-col border-l border-line bg-muted/20 transition-[width] lg:flex`}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        aria-label={open ? "Close activity rail" : "Open activity rail"}
+        className="flex h-9 items-center justify-center gap-1 border-b border-line text-xs text-white/60 transition hover:text-white"
+      >
+        {open ? "Activity ›" : "‹"}
+      </button>
+      {open ? (
+        <div className="flex-1 overflow-auto p-3 text-sm text-white/60">
+          {vexCopy.agents.working}
+        </div>
+      ) : null}
+    </aside>
+  );
+}
+
+function Icon({ path, size = 5 }: { path: string; size?: 4 | 5 }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.75}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`${size === 4 ? "h-4 w-4" : "h-5 w-5"} flex-shrink-0`}
+      aria-hidden="true"
+    >
+      <path d={path} />
+    </svg>
+  );
+}
