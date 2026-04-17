@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { useVexQuery, type ManifestEvent } from "@/lib/use-vex-query";
+import {
+  useVexQuery,
+  type HistoryTurn,
+  type ManifestEvent,
+} from "@/lib/use-vex-query";
 import { renderProse } from "@/lib/render-prose";
 import { ManifestCanvas } from "@/components/canvas/manifest-canvas";
 import { AgentTrace } from "@/components/chat/agent-trace";
@@ -71,7 +75,14 @@ export function ConversationThread({ turns, onTurns }: Props) {
       },
     ]);
     setInput("");
-    void send(message);
+    // Pass the last 6 turns (user + assistant interleaved) so Claude
+    // and the retrieval layer can disambiguate follow-ups like
+    // "change this status to won" against the deal mentioned earlier.
+    const history: HistoryTurn[] = turns.slice(-6).map((t) => ({
+      role: t.role,
+      text: t.text,
+    }));
+    void send(message, history);
   }
 
   return (
@@ -103,8 +114,9 @@ export function ConversationThread({ turns, onTurns }: Props) {
                 )}
               </div>
               {manifest && (
-                <div className="mt-3">
-                  <ManifestCanvas manifest={manifest.manifest} rawAnswer={text} />
+                <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-line bg-canvas/60 px-2.5 py-1 text-[10px] uppercase tracking-wider text-white/50">
+                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                  preparing canvas…
                 </div>
               )}
             </div>

@@ -11,12 +11,24 @@ import {
   RETRIEVAL_SERVICE,
 } from "./tokens.js";
 
+export interface HistoryTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
 export interface RunQueryInput {
   tenantId: string;
   agentRunId?: AgentRunId;
   /** Idempotency key for the CostLedger entries; default = ULID at call site. */
   idempotencyKey: string;
   message: string;
+  /**
+   * Prior turns from the same chat thread (oldest → newest). Used to
+   * (a) seed the retrieval query so name-match fallbacks find entities
+   * referenced earlier, and (b) give Claude a short window of context
+   * for follow-up questions like "change this status to won".
+   */
+  history?: HistoryTurn[];
 }
 
 export interface RunQueryOutput {
@@ -54,14 +66,19 @@ export class QueryService {
   async run(input: RunQueryInput): Promise<RunQueryOutput> {
     const tenantId = TenantId(input.tenantId);
 
+    // Build a context-aware retrieval query so follow-ups like
+    // "change this status to won" — which on their own contain no
+    // entity reference — still surface the deal mentioned a turn ago.
+    const retrievalQuery = buildRetrievalQuery(input.message, input.history);
+
     const embedding = await this.openai.embed(
       tenantId,
       `${input.idempotencyKey}:embed`,
-      input.message,
+      retrievalQuery,
     );
 
     const pack = await withTenant(this.db, input.tenantId, async (tx) =>
-      this.retrieval.buildEvidencePack(tx, input.message, embedding),
+      this.retrieval.buildEvidencePack(tx, retrievalQuery, embedding),
     );
 
     // Short-circuit ONLY for plainly conversational openers (hello,
@@ -84,7 +101,7 @@ export class QueryService {
       idempotencyKey: input.idempotencyKey,
       systemPrompt: QUERY_SYSTEM_PROMPT,
       evidencePack: pack,
-      userMessage: input.message,
+      userMessage: composeUserMessage(input.message, input.history),
     });
 
     const validated = validateManifest(queryResult.viewManifest);
@@ -179,6 +196,52 @@ function emptyWorkspaceResponse(): RunQueryOutput {
     cacheHit: false,
     manifestValid: true,
   };
+}
+
+/**
+ * Combine the current message with prior user-turn tokens for the
+ * retrieval layer. Assistant turns are deliberately excluded — Claude's
+ * answers can mention dozens of unrelated entities and would pollute
+ * the FTS/embedding query. We keep just the last 4 user turns so name-
+ * match fallback can pick up entity refs (deal IDs, org names).
+ */
+function buildRetrievalQuery(
+  message: string,
+  history?: HistoryTurn[],
+): string {
+  if (!history || history.length === 0) return message;
+  const recentUser = history
+    .slice(-8)
+    .filter((t) => t.role === "user")
+    .slice(-4)
+    .map((t) => t.text);
+  if (recentUser.length === 0) return message;
+  return [...recentUser, message].join("\n");
+}
+
+/**
+ * Render prior turns inline so Claude can resolve references in the
+ * current message ("change this status", "show me that one"). Last 6
+ * turns is plenty — the system prompt + evidence pack already carry
+ * the heavy context, and bigger windows hurt the prompt cache hit
+ * rate (the message block is the only uncached part).
+ */
+function composeUserMessage(
+  message: string,
+  history?: HistoryTurn[],
+): string {
+  if (!history || history.length === 0) return message;
+  const recent = history.slice(-6);
+  if (recent.length === 0) return message;
+  const lines = recent.map(
+    (t) => `${t.role === "user" ? "user" : "vex"}: ${t.text.trim()}`,
+  );
+  return [
+    "Prior conversation (oldest → newest):",
+    ...lines,
+    "",
+    `Current user message: ${message}`,
+  ].join("\n");
 }
 
 function manifestFallbackText(): string {
