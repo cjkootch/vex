@@ -80,18 +80,40 @@ jobs:
           set -euo pipefail
           BRANCH_NAME="pr-${PR_NUMBER}"
 
-          # Curl exit 5 = COULDNT_RESOLVE_PROXY. This has been failing
-          # identically across PRs; print any proxy-ish env vars so the
-          # cause is visible in the log, and pass --noproxy '*' on every
-          # call so a leaky HTTP(S)_PROXY from the runner env can't take
-          # curl down again.
+          # Diagnostics for a persistent CI failure where curl seemed
+          # to exit 5 but was actually jq tripping on a non-JSON body.
+          # Print any proxy env vars (they've been empty so far; kept
+          # for belt-and-suspenders) and assert the project id is
+          # populated — an empty id would send us to a /projects//...
+          # URL that returns HTML, exactly the "Invalid numeric literal"
+          # jq signature we saw.
           echo "proxy env snapshot:"
           env | grep -iE '^(http|https|no)_proxy=' || echo "  (none set)"
+          if [ -z "${NEON_PROJECT_ID:-}" ]; then
+            echo "::error::NEON_PROJECT_ID secret is empty or unset"
+            exit 1
+          fi
+          echo "NEON_PROJECT_ID length: ${#NEON_PROJECT_ID}"
 
-          existing=$(
-            curl -fsS --noproxy '*' \
+          # Fetch once, print a short prefix of the body, THEN pipe
+          # into jq — otherwise a non-JSON body like an HTML error
+          # page or Neon's "branch not found" text blows up with an
+          # opaque "parse error" and we can't tell why.
+          http_status=0
+          branches_body=$(
+            curl -sS --noproxy '*' -w '\n%{http_code}' \
               -H "Authorization: Bearer $NEON_API_KEY" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches"
+          ) || true
+          http_status=$(echo "$branches_body" | tail -n1)
+          branches_json=$(echo "$branches_body" | sed '$d')
+          echo "GET /branches http_status=$http_status body_prefix=$(echo "$branches_json" | head -c 200)"
+          if [ "$http_status" != "200" ]; then
+            echo "::error::Neon /branches returned HTTP $http_status"
+            exit 1
+          fi
+          existing=$(
+            echo "$branches_json" \
               | jq -r --arg n "$BRANCH_NAME" '.branches[] | select(.name == $n) | .id' \
               | head -n1
           )
