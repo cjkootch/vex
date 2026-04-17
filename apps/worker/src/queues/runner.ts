@@ -260,7 +260,7 @@ function buildAgentProcessor(runner: AgentRunner) {
   };
 }
 
-interface ApprovalExecutorDeps {
+export interface ApprovalExecutorDeps {
   db: Db;
   approvals: ApprovalRepository;
   deals: FuelDealRepository;
@@ -284,7 +284,7 @@ interface ApprovalExecutorDeps {
  * follow_up.suggestion, voice_followup) remain side-effect-less
  * logs for now — they'll be wired as their surface UIs land.
  */
-function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
+export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
   return async (job: Job<ApprovalExecutorJobData>) => {
     const { approval_id, workspace_id } = job.data;
     await withTenant(deps.db, workspace_id, async (tx) => {
