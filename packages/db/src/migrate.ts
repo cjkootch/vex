@@ -61,6 +61,34 @@ async function main(): Promise<void> {
         );
       }
 
+      // Drizzle stores its bookkeeping in a private `drizzle` schema.
+      // When that schema already exists (created by a prior run under
+      // neondb_owner), vex_migrator needs USAGE / CREATE plus full
+      // privileges on its tables to record new migration entries.
+      // The block is wrapped in its own catch because the schema may
+      // not exist yet on a fresh database — drizzle will create it
+      // itself in that case, and vex_migrator will own it.
+      try {
+        await client.query(`
+          DO $drizzle_grants$ BEGIN
+            IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'drizzle') THEN
+              GRANT USAGE, CREATE ON SCHEMA drizzle TO vex_migrator;
+              GRANT ALL ON ALL TABLES    IN SCHEMA drizzle TO vex_migrator;
+              GRANT ALL ON ALL SEQUENCES IN SCHEMA drizzle TO vex_migrator;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA drizzle
+                GRANT ALL ON TABLES    TO vex_migrator;
+              ALTER DEFAULT PRIVILEGES IN SCHEMA drizzle
+                GRANT ALL ON SEQUENCES TO vex_migrator;
+            END IF;
+          END $drizzle_grants$;
+        `);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `migrate: drizzle-schema grants skipped (${(err as Error).message})`,
+        );
+      }
+
       try {
         await client.query("SET ROLE vex_migrator");
         // eslint-disable-next-line no-console
