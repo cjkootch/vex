@@ -30,11 +30,26 @@ export default function CompaniesPage() {
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return res.json();
       })
-      .then((body: { organizations: OrganizationRow[] }) => {
-        if (!cancelled) {
-          setOrganizations(body.organizations);
-          setError(null);
+      .then((body: unknown) => {
+        if (cancelled) return;
+        // Defensive: if the upstream API is stale (e.g. Fly hasn't
+        // redeployed yet and still has the Sprint-4 echo stub), the
+        // body won't have an `organizations` array. Treat that as
+        // empty + surface a warning instead of crashing the page.
+        const rows =
+          typeof body === "object" && body !== null &&
+          Array.isArray((body as { organizations?: unknown }).organizations)
+            ? ((body as { organizations: OrganizationRow[] }).organizations)
+            : null;
+        if (rows === null) {
+          setOrganizations([]);
+          setError(
+            "apps/api returned an unexpected payload — redeploy it or wait for Fly to sync.",
+          );
+          return;
         }
+        setOrganizations(rows);
+        setError(null);
       })
       .catch((err: Error) => {
         if (!cancelled) {
