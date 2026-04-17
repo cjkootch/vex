@@ -47,6 +47,7 @@ export function TextArea(
 export interface SelectOption {
   value: string;
   label: string;
+  disabled?: boolean;
 }
 
 export function Select({
@@ -58,7 +59,7 @@ export function Select({
   return (
     <select {...rest} className={INPUT_CLASSES}>
       {options.map((opt) => (
-        <option key={opt.value} value={opt.value}>
+        <option key={opt.value} value={opt.value} disabled={opt.disabled}>
           {opt.label}
         </option>
       ))}

@@ -1,5 +1,6 @@
 import { Module, type DynamicModule } from "@nestjs/common";
 import type {
+  ContactOrgMembershipRepository,
   ContactRepository,
   Db,
   EventRepository,
@@ -9,12 +10,14 @@ import { ContactsService } from "./contacts.service.js";
 import {
   CONTACTS_DB_CLIENT,
   CONTACTS_EVENTS_REPO,
+  CONTACTS_MEMBERSHIPS_REPO,
   CONTACTS_REPO,
 } from "./tokens.js";
 
 export interface ContactsModuleConfig {
   db: Db;
   contacts: ContactRepository;
+  memberships: ContactOrgMembershipRepository;
   events: EventRepository;
 }
 
@@ -27,6 +30,7 @@ export class ContactsModule {
       providers: [
         { provide: CONTACTS_DB_CLIENT, useValue: config.db },
         { provide: CONTACTS_REPO, useValue: config.contacts },
+        { provide: CONTACTS_MEMBERSHIPS_REPO, useValue: config.memberships },
         { provide: CONTACTS_EVENTS_REPO, useValue: config.events },
         ContactsService,
       ],

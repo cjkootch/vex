@@ -10,6 +10,7 @@ import {
   ActivityRepository,
   AgentRunRepository,
   ApprovalRepository,
+  ContactOrgMembershipRepository,
   ContactRepository,
   EventRepository,
   FuelDealRepository,
@@ -84,6 +85,7 @@ async function bootstrap(): Promise<void> {
   const touchpointRepository = new TouchpointRepository();
   const workspaceRepository = new WorkspaceRepository();
   const fuelDealRepository = new FuelDealRepository();
+  const contactMembershipRepository = new ContactOrgMembershipRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
 
@@ -173,6 +175,7 @@ async function bootstrap(): Promise<void> {
       contacts: ContactsModule.register({
         db,
         contacts: contactRepository,
+        memberships: contactMembershipRepository,
         events: eventRepository,
       }),
       deals: DealsModule.register({

@@ -208,12 +208,25 @@ export class OrganizationsController {
           .limit(1);
         if (!row) return null;
 
-        const contacts = await tx
-          .select()
-          .from(schema.contacts)
-          .where(eq(schema.contacts.orgId, id))
+        // Read through the m:n memberships table so a contact that
+        // represents multiple orgs shows up on every one of its orgs'
+        // detail pages — not only the single org stored in
+        // `contacts.org_id`.
+        const contactRows = await tx
+          .select({
+            contact: schema.contacts,
+            role: schema.contactOrgMemberships.role,
+            isPrimary: schema.contactOrgMemberships.isPrimary,
+          })
+          .from(schema.contactOrgMemberships)
+          .innerJoin(
+            schema.contacts,
+            eq(schema.contactOrgMemberships.contactId, schema.contacts.id),
+          )
+          .where(eq(schema.contactOrgMemberships.orgId, id))
           .orderBy(desc(schema.contacts.updatedAt))
           .limit(200);
+        const contacts = contactRows.map((r) => r.contact);
 
         const detail: OrganizationDetail = {
           id: row.id,
@@ -252,10 +265,15 @@ function clampLimit(raw: string | undefined, fallback: number, max: number): num
 }
 
 async function loadContactCounts(tx: Tx): Promise<Map<string, number>> {
+  // Count via the m:n memberships table so a contact shared across
+  // multiple orgs counts once per org it belongs to.
   const rows = await tx
-    .select({ orgId: schema.contacts.orgId, count: count() })
-    .from(schema.contacts)
-    .groupBy(schema.contacts.orgId);
+    .select({
+      orgId: schema.contactOrgMemberships.orgId,
+      count: count(),
+    })
+    .from(schema.contactOrgMemberships)
+    .groupBy(schema.contactOrgMemberships.orgId);
   const out = new Map<string, number>();
   for (const r of rows) out.set(r.orgId, Number(r.count));
   return out;

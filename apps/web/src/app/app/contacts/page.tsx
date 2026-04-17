@@ -6,6 +6,12 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
 import { NewContactForm } from "@/components/crm/new-contact-form";
 
+interface ContactOrgLink {
+  orgId: string;
+  role: string | null;
+  isPrimary: boolean;
+}
+
 interface ContactRow {
   id: string;
   tenantId: string;
@@ -18,6 +24,11 @@ interface ContactRow {
   optOutAt: string | null;
   optOutReason: string | null;
   updatedAt: string;
+  orgs: ContactOrgLink[];
+}
+
+interface OrgLookup {
+  [id: string]: string;
 }
 
 const FILTER_TABS = [
@@ -27,6 +38,7 @@ const FILTER_TABS = [
 
 export default function ContactsPage() {
   const [contacts, setContacts] = useState<ContactRow[] | null>(null);
+  const [orgLookup, setOrgLookup] = useState<OrgLookup>({});
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "suppressed">("active");
   const [creating, setCreating] = useState(false);
@@ -56,6 +68,29 @@ export default function ContactsPage() {
     };
   }, [tab]);
 
+  // Separate fetch so the chip renderer can show "Acme" rather than
+  // the raw ULID when no memberships table join is available yet.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/organizations")
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status}`);
+        return res.json();
+      })
+      .then((body: { organizations: Array<{ id: string; legalName: string }> }) => {
+        if (cancelled) return;
+        const map: OrgLookup = {};
+        for (const o of body.organizations) map[o.id] = o.legalName;
+        setOrgLookup(map);
+      })
+      .catch(() => {
+        /* chips fall back to ids */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const columns = useMemo<ColumnDef<ContactRow, unknown>[]>(
     () => [
       {
@@ -77,6 +112,36 @@ export default function ContactsPage() {
         accessorKey: "title",
         header: "Title",
         cell: ({ getValue }) => getValue<string | null>() ?? "—",
+      },
+      {
+        id: "companies",
+        header: "Companies",
+        cell: ({ row }) => {
+          const orgs = row.original.orgs ?? [];
+          if (orgs.length === 0) return <span className="text-white/40">—</span>;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {orgs.map((o) => (
+                <span
+                  key={o.orgId}
+                  title={o.role ?? undefined}
+                  className={`rounded px-1.5 py-0.5 text-xs ${
+                    o.isPrimary
+                      ? "bg-accent/25 text-accent"
+                      : "bg-muted/60 text-white/70"
+                  }`}
+                >
+                  {orgLookup[o.orgId] ?? o.orgId.slice(-6)}
+                  {o.isPrimary && (
+                    <span className="ml-1 text-[10px] uppercase tracking-wider text-accent/80">
+                      ★
+                    </span>
+                  )}
+                </span>
+              ))}
+            </div>
+          );
+        },
       },
       {
         id: "email",
@@ -115,7 +180,7 @@ export default function ContactsPage() {
         cell: ({ getValue }) => formatRelative(getValue<string>()),
       },
     ],
-    [],
+    [orgLookup],
   );
 
   return (

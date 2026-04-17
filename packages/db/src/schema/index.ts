@@ -2,6 +2,7 @@ export * from "./workspaces.js";
 export * from "./users.js";
 export * from "./organizations.js";
 export * from "./contacts.js";
+export * from "./contact-org-memberships.js";
 export * from "./leads.js";
 export * from "./campaigns.js";
 export * from "./touchpoints.js";

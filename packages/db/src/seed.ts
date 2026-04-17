@@ -202,6 +202,36 @@ async function main(): Promise<void> {
       })),
     );
 
+    // Sprint 14 — seed a primary membership for every contact so the
+    // m:n model agrees with the legacy `contacts.org_id`. Then add
+    // secondary memberships for the first two contacts so the demo
+    // shows a person represented at more than one org.
+    await db.insert(schema.contactOrgMemberships).values(
+      SEED_CONTACT_IDS.map((id, i) => ({
+        tenantId,
+        contactId: id,
+        orgId: orgIds[i % orgIds.length]!,
+        role: ["VP Sales", "CFO", "CTO", "Director", "Manager"][i % 5]!,
+        isPrimary: true,
+      })),
+    );
+    await db.insert(schema.contactOrgMemberships).values([
+      {
+        tenantId,
+        contactId: SEED_CONTACT_IDS[0]!,
+        orgId: orgIds[1]!,
+        role: "Advisor",
+        isPrimary: false,
+      },
+      {
+        tenantId,
+        contactId: SEED_CONTACT_IDS[1]!,
+        orgId: orgIds[2]!,
+        role: "Board Observer",
+        isPrimary: false,
+      },
+    ]);
+
     await db.insert(schema.campaigns).values([
       {
         id: SEED_CAMPAIGN_IDS.emailNurture,
