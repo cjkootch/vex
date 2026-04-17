@@ -132,12 +132,23 @@ async function bootstrap(): Promise<void> {
   // Temporal client — best-effort. If the Temporal cluster isn't reachable
   // at boot the API still starts; ApprovalsService will log signal failures
   // but won't fail the request.
+  // Race against a short deadline so a missing Temporal Cloud
+  // endpoint can't stall startup for 60s (Fly healthcheck window).
+  const TEMPORAL_BOOT_TIMEOUT_MS = 5_000;
   let temporal: Awaited<ReturnType<typeof createTemporalClient>> | null = null;
   try {
-    temporal = await createTemporalClient({
-      address: env.TEMPORAL_ADDRESS,
-      namespace: env.TEMPORAL_NAMESPACE,
-    });
+    temporal = await Promise.race([
+      createTemporalClient({
+        address: env.TEMPORAL_ADDRESS,
+        namespace: env.TEMPORAL_NAMESPACE,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`timeout ${TEMPORAL_BOOT_TIMEOUT_MS}ms`)),
+          TEMPORAL_BOOT_TIMEOUT_MS,
+        ),
+      ),
+    ]);
   } catch (err) {
     // eslint-disable-next-line no-console
     console.warn(

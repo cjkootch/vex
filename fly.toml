@@ -15,6 +15,9 @@ primary_region = "iad"
   OTEL_SERVICE_NAME = "vex-api"
   OTEL_SERVICE_NAMESPACE = "vex"
   LOG_LEVEL = "info"
+  # Keep V8's heap below the VM ceiling so an OOM surfaces as a
+  # graceful Node error instead of a SIGKILL from the kernel.
+  NODE_OPTIONS = "--max-old-space-size=1800"
   # Sprint 7 defaults — override via fly secrets once Temporal Cloud is wired.
   TEMPORAL_ADDRESS = "localhost:7233"
   TEMPORAL_NAMESPACE = "default"
@@ -32,13 +35,13 @@ primary_region = "iad"
   min_machines_running = 1
 
   [[http_service.checks]]
-    grace_period = "15s"
+    grace_period = "90s"
     interval = "30s"
     method = "GET"
     path = "/health"
     timeout = "5s"
 
 [[vm]]
-  memory = "1gb"
+  memory = "2gb"
   cpu_kind = "shared"
   cpus = 1
