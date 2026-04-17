@@ -15,6 +15,13 @@
       "when": 1748131200000,
       "tag": "0001_enable_rls",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1776412800000,
+      "tag": "0002_fuel_deals",
+      "breakpoints": true
     }
   ]
 }
