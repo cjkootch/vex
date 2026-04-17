@@ -7,6 +7,7 @@ import {
   Res,
   UseGuards,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { createId } from "@vex/domain";
@@ -26,6 +27,7 @@ type QueryBody = z.infer<typeof QueryBody>;
 
 @Controller("query")
 @UseGuards(JwtAuthGuard)
+@Throttle({ query: { limit: 10, ttl: 60_000 } })
 export class QueryController {
   constructor(
     @Inject(TenantContext) private readonly tenant: TenantContext,

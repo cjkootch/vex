@@ -30,6 +30,8 @@ export {
 export {
   QueueName,
   QueueConcurrency,
+  QueueRateLimits,
+  QueueBackpressureThreshold,
   createRedisConnection,
   createQueues,
   addNormalizationJob,
@@ -42,6 +44,8 @@ export {
   createAgentWorker,
   createApprovalExecutorWorker,
   createTranscriptWorker,
+  getQueueDepths,
+  backpressureEngaged,
   type QueueHandles,
   type NormalizationJobData,
   type DlqJobData,
@@ -76,6 +80,7 @@ export {
 } from "./voice/index.js";
 export {
   AgentRunner,
+  DEFAULT_DAILY_COST_LIMIT_USD,
   type AgentRunRecord,
   type AgentRunRequest,
   type AgentRunnerDeps,

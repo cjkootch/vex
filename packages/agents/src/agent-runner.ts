@@ -5,6 +5,7 @@ import {
   type AgentRunRepository,
   type ApprovalRepository,
   type ContactRepository,
+  type CostLedgerRepository,
   type Db,
   type EventRepository,
   type LeadRepository,
@@ -13,10 +14,12 @@ import {
   type SummaryRepository,
   type ThreadRepository,
   type TouchpointRepository,
+  type Tx,
   type WorkspaceRepository,
 } from "@vex/db";
 import type { AnthropicAdapter, OpenAIAdapter } from "@vex/integrations";
 import type { CostLedger } from "@vex/telemetry";
+import { recordAgentSkipped } from "@vex/telemetry";
 import { ApprovalGate } from "./approval-gate.js";
 import type { AgentContext, AgentOutput, IAgent } from "./agents/types.js";
 
@@ -27,13 +30,24 @@ import type { AgentContext, AgentOutput, IAgent } from "./agents/types.js";
  */
 export interface AgentRunRecord {
   agentRunId: string | null;
-  status: "skipped_disabled" | "skipped_kill_switch" | "completed" | "failed";
+  status:
+    | "skipped_disabled"
+    | "skipped_kill_switch"
+    | "skipped_cost_limit"
+    | "completed"
+    | "failed";
   costUsd: number;
   approvalsCreated: number;
   internalWrites: number;
   rationale?: string;
   error?: string;
 }
+
+/**
+ * Fallback daily cost ceiling when a workspace's settings row doesn't
+ * specify one. $5/day matches the Sprint 9 spec.
+ */
+export const DEFAULT_DAILY_COST_LIMIT_USD = 5;
 
 export interface AgentRunnerDeps {
   db: Db;
@@ -51,6 +65,12 @@ export interface AgentRunnerDeps {
   anthropic: AnthropicAdapter;
   openai: OpenAIAdapter;
   costLedger: CostLedger;
+  /**
+   * Optional ledger repository used by the pre-run cost-budget gate. If
+   * omitted the runner skips the check — useful for unit tests that don't
+   * bring up a DB-backed ledger.
+   */
+  costLedgerRepo?: CostLedgerRepository;
   retrieval: RetrievalService;
 }
 
@@ -104,6 +124,11 @@ export class AgentRunner {
     }
 
     if (workspace.settings.kill_all_agents && agent.tier !== "T0") {
+      recordAgentSkipped({
+        agent: agent.name,
+        tenant_id: tenantId,
+        reason: "kill_switch",
+      });
       return {
         agentRunId: null,
         status: "skipped_kill_switch",
@@ -112,6 +137,28 @@ export class AgentRunner {
         internalWrites: 0,
         rationale: `kill_all_agents is on; ${agent.name} is ${agent.tier}`,
       };
+    }
+
+    // T0 agents are read-only and cheap — exempt from the cost gate. T1+
+    // agents trip the gate so a runaway agent can't keep spending.
+    if (agent.tier !== "T0") {
+      const gateResult = await this.checkCostGate(tenantId, workspace.settings.daily_cost_limit);
+      if (gateResult.skipped) {
+        recordAgentSkipped({
+          agent: agent.name,
+          tenant_id: tenantId,
+          reason: "cost_limit",
+        });
+        const record: AgentRunRecord = {
+          agentRunId: null,
+          status: "skipped_cost_limit",
+          costUsd: 0,
+          approvalsCreated: 0,
+          internalWrites: 0,
+        };
+        if (gateResult.reason) record.rationale = gateResult.reason;
+        return record;
+      }
     }
 
     return withTenant(this.deps.db, tenantId, async (tx) => {
@@ -203,6 +250,33 @@ export class AgentRunner {
       if (output.rationale !== undefined) record.rationale = output.rationale;
       return record;
     });
+  }
+
+  /**
+   * Pre-run cost-budget gate. Reads today's cost for the tenant from the
+   * CostLedger. If today's spend is already at or above the workspace's
+   * `daily_cost_limit`, the run is skipped. Returns `{ skipped: false }`
+   * when the ledger repository isn't wired (unit-test path).
+   */
+  private async checkCostGate(
+    tenantId: string,
+    limitUsd: number | undefined,
+  ): Promise<{ skipped: boolean; reason?: string }> {
+    if (!this.deps.costLedgerRepo) return { skipped: false };
+    const cap = typeof limitUsd === "number" && limitUsd > 0
+      ? limitUsd
+      : DEFAULT_DAILY_COST_LIMIT_USD;
+    const micros = await withTenant(this.deps.db, tenantId, async (tx: Tx) =>
+      this.deps.costLedgerRepo!.sumForTenantToday(tx, tenantId),
+    );
+    const spentUsd = micros / 1_000_000;
+    if (spentUsd >= cap) {
+      return {
+        skipped: true,
+        reason: `daily cost limit reached: $${spentUsd.toFixed(2)} spent, cap $${cap.toFixed(2)}`,
+      };
+    }
+    return { skipped: false };
   }
 
   private async emitAudit(

@@ -33,6 +33,7 @@ import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { VoiceSessionStore } from "./voice/voice-session-store.js";
+import { HealthModule } from "./health/health.module.js";
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
@@ -121,6 +122,12 @@ async function bootstrap(): Promise<void> {
         sessionStore: voiceSessionStore,
         contextBuilder: voiceContextBuilder,
         transcriptQueue: queues.transcript,
+      }),
+      health: HealthModule.register({
+        db,
+        redis,
+        temporal: temporal?.client ?? null,
+        queues,
       }),
     }),
     new FastifyAdapter({ logger: { level: env.LOG_LEVEL } }),

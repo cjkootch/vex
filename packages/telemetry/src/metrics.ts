@@ -38,6 +38,19 @@ const neonLatencyHistogram = meter.createHistogram("vex.neon.query_latency_ms", 
   description: "Latency of Postgres queries through the application client.",
   unit: "ms",
 });
+const agentSkippedCounter = meter.createCounter("vex.agent.skipped", {
+  description: "Agent runs skipped before execution, grouped by reason.",
+  unit: "{skip}",
+});
+const queueDepthGauge = meter.createUpDownCounter("vex.queue.depth", {
+  description: "BullMQ queue depth (waiting + active) sampled by the worker.",
+  unit: "{job}",
+});
+const queueBackpressureGauge = meter.createUpDownCounter("vex.queue.backpressure", {
+  description:
+    "1 when a queue is at/over its backpressure threshold, 0 otherwise. One sample per queue.",
+  unit: "{state}",
+});
 
 // `vex.dlq.depth` (gauge) lives in @vex/agents/src/processors/dlq-processor
 // because it observes BullMQ Queue counts. The telemetry package owns the
@@ -46,7 +59,12 @@ const neonLatencyHistogram = meter.createHistogram("vex.neon.query_latency_ms", 
 export interface AgentRunLabels {
   agent_name: string;
   tenant_id: string;
-  status: "completed" | "failed" | "skipped_disabled" | "skipped_kill_switch";
+  status:
+    | "completed"
+    | "failed"
+    | "skipped_disabled"
+    | "skipped_kill_switch"
+    | "skipped_cost_limit";
 }
 
 export function recordAgentRun(labels: AgentRunLabels, costUsd: number): void {
@@ -95,4 +113,31 @@ export async function measureNeonLatency<T>(
   } finally {
     recordNeonLatency(operation, Date.now() - start);
   }
+}
+
+export type AgentSkipReason =
+  | "kill_switch"
+  | "cost_limit"
+  | "disabled"
+  | "backpressure";
+
+export function recordAgentSkipped(labels: {
+  agent: string;
+  tenant_id: string;
+  reason: AgentSkipReason;
+}): void {
+  agentSkippedCounter.add(1, labels as unknown as Record<string, string>);
+}
+
+/**
+ * Emit a sample of a queue's current depth. Meant to be called by the
+ * worker on a short interval so the `vex.queue.depth` time series can be
+ * alerted on.
+ */
+export function recordQueueDepth(queue: string, depth: number): void {
+  queueDepthGauge.add(depth, { queue });
+}
+
+export function recordQueueBackpressure(queue: string, engaged: boolean): void {
+  queueBackpressureGauge.add(engaged ? 1 : 0, { queue });
 }
