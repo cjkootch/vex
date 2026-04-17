@@ -43,6 +43,13 @@ export class QueryService {
    * → validate manifest. Always returns a renderable manifest (uses
    * `manifestFallback` on validation failure). Always tenant-scoped via
    * `withTenant` so RLS isolates DB reads.
+   *
+   * Empty-workspace short-circuit: if the retrieved pack has zero
+   * summaries AND zero items, we do NOT call Claude. We've seen Claude
+   * produce a forbidden fallback phrase here regardless of the system
+   * prompt's instructions, and a capabilities answer is deterministic
+   * without the model. The answer is a fixed capabilities + onboarding
+   * prose block; cost is zero.
    */
   async run(input: RunQueryInput): Promise<RunQueryOutput> {
     const tenantId = TenantId(input.tenantId);
@@ -56,6 +63,10 @@ export class QueryService {
     const pack = await withTenant(this.db, input.tenantId, async (tx) =>
       this.retrieval.buildEvidencePack(tx, input.message, embedding),
     );
+
+    if (pack.summaries.length === 0 && pack.items.length === 0) {
+      return emptyWorkspaceResponse();
+    }
 
     const queryResult = await this.anthropic.query({
       tenantId,
@@ -84,6 +95,28 @@ export class QueryService {
       manifestValid: validated.success,
     };
   }
+}
+
+const EMPTY_WORKSPACE_ANSWER = [
+  "I'm Vex — your revenue-intelligence analyst. I can analyze organizations, contacts, deals, and campaigns; assemble timelines; compute KPIs; and propose tiered actions (higher-risk actions wait for your approval).",
+  "",
+  "Your workspace doesn't have any records loaded yet. Once you create a few (via the + New buttons on the Companies, Contacts, and Deals pages — or the ingestion API), ask me things like:",
+  "",
+  "- Show me all deals with compliance holds",
+  "- Summarise the last 30 days of activity for Acme",
+  "- Which contacts at Initech are likely decision-makers?",
+].join("\n");
+
+function emptyWorkspaceResponse(): RunQueryOutput {
+  return {
+    answer: EMPTY_WORKSPACE_ANSWER,
+    manifest: { panels: [] },
+    proposedActions: [],
+    evidenceRefs: [],
+    costUsd: 0,
+    cacheHit: false,
+    manifestValid: true,
+  };
 }
 
 function manifestFallbackText(): string {
