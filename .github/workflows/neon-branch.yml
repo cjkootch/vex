@@ -19,9 +19,39 @@ concurrency:
 # when idle, but we still clean up on close to keep the UI tidy.
 
 jobs:
+  # GitHub Actions blocks `secrets.*` in `if:` expressions to prevent secret
+  # leakage into evaluation logs. This preflight job materialises the
+  # presence of each secret as a plain boolean output; downstream jobs
+  # gate on `needs.preflight.outputs.*` instead.
+  preflight:
+    name: preflight-secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      has_neon: ${{ steps.check.outputs.has_neon }}
+      has_anthropic: ${{ steps.check.outputs.has_anthropic }}
+    steps:
+      - id: check
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NEON_API_KEY:-}" ]; then
+            echo "has_neon=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_neon=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "has_anthropic=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_anthropic=false" >> "$GITHUB_OUTPUT"
+          fi
+
   create:
     name: create-and-migrate
-    if: ${{ github.event.action != 'closed' && secrets.NEON_API_KEY != '' }}
+    needs: preflight
+    if: ${{ github.event.action != 'closed' && needs.preflight.outputs.has_neon == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -99,7 +129,7 @@ jobs:
           MIGRATION_DATABASE_URL: ${{ env.MIGRATION_DATABASE_URL }}
 
       - name: Run eval suite against the PR branch
-        if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+        if: ${{ needs.preflight.outputs.has_anthropic == 'true' }}
         env:
           APPLICATION_DATABASE_URL: ${{ env.APPLICATION_DATABASE_URL }}
           MIGRATION_DATABASE_URL: ${{ env.MIGRATION_DATABASE_URL }}
@@ -143,7 +173,8 @@ jobs:
 
   delete:
     name: delete-branch
-    if: ${{ github.event.action == 'closed' && secrets.NEON_API_KEY != '' }}
+    needs: preflight
+    if: ${{ github.event.action == 'closed' && needs.preflight.outputs.has_neon == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
