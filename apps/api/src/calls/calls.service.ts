@@ -1,0 +1,362 @@
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from "@nestjs/common";
+import type { Client as TemporalClient } from "@temporalio/client";
+import {
+  withTenant,
+  type ActivityRepository,
+  type AgentRunRepository,
+  type ApprovalRepository,
+  type ContactRepository,
+  type Db,
+  type EventRepository,
+  type SummaryRepository,
+  type WorkspaceRepository,
+} from "@vex/db";
+import { WorkflowId, type S3Uploader, type TwilioClient } from "@vex/integrations";
+import {
+  CALLS_ACTIVITIES_REPO,
+  CALLS_AGENT_RUNS_REPO,
+  CALLS_APPROVALS_REPO,
+  CALLS_CONTACTS_REPO,
+  CALLS_DB_CLIENT,
+  CALLS_EVENTS_REPO,
+  CALLS_S3_UPLOADER,
+  CALLS_SUMMARIES_REPO,
+  CALLS_TASK_QUEUE,
+  CALLS_TEMPORAL_CLIENT,
+  CALLS_TWILIO_CLIENT,
+  CALLS_WORKSPACES_REPO,
+} from "./tokens.js";
+
+/**
+ * The workspace setting `enabled_agents` must contain this string for
+ * any outbound call to be permitted. T3 is off by default — operators
+ * opt in explicitly.
+ */
+export const OUTBOUND_CALL_AGENT_NAME = "outbound_call";
+
+export interface InitiateCallArgs {
+  tenantId: string;
+  workspaceId: string;
+  contactId: string;
+  initiatedByUserId: string;
+}
+
+export interface InitiateCallResult {
+  workflowId: string;
+  approvalId: string;
+  status: "pending_approval";
+}
+
+export interface CallStatusResult {
+  workflowId: string;
+  approval: {
+    id: string;
+    decision: string;
+  };
+  activity: {
+    id: string;
+    callSid: string;
+    status: string;
+    durationSeconds: number | null;
+    transcriptRef: string | null;
+  } | null;
+  /** Temporal's view, when the workflow hasn't finished. */
+  workflow?: { status: string };
+}
+
+@Injectable()
+export class CallsService {
+  private readonly log = new Logger(CallsService.name);
+
+  constructor(
+    @Inject(CALLS_DB_CLIENT) private readonly db: Db,
+    @Inject(CALLS_WORKSPACES_REPO) private readonly workspaces: WorkspaceRepository,
+    @Inject(CALLS_CONTACTS_REPO) private readonly contacts: ContactRepository,
+    @Inject(CALLS_AGENT_RUNS_REPO) private readonly agentRuns: AgentRunRepository,
+    @Inject(CALLS_APPROVALS_REPO) private readonly approvals: ApprovalRepository,
+    @Inject(CALLS_ACTIVITIES_REPO) private readonly activities: ActivityRepository,
+    @Inject(CALLS_SUMMARIES_REPO) private readonly summaries: SummaryRepository,
+    @Inject(CALLS_EVENTS_REPO) private readonly events: EventRepository,
+    @Inject(CALLS_TEMPORAL_CLIENT) private readonly temporal: TemporalClient,
+    @Inject(CALLS_TWILIO_CLIENT) private readonly twilio: TwilioClient,
+    @Inject(CALLS_S3_UPLOADER) private readonly s3: S3Uploader,
+    @Inject(CALLS_TASK_QUEUE) private readonly taskQueue: string,
+  ) {}
+
+  /**
+   * Start an outbound-call workflow. Does synchronous pre-flight gates
+   * (T3 enabled, contact exists with a phone, enabled_agents membership)
+   * so the caller gets early HTTP rejections. The workflow re-runs the
+   * window + suppression checks as defense in depth.
+   *
+   * Creates the approval row here (not inside the workflow) so the HTTP
+   * response can carry approval_id. The workflow's createApprovalRow
+   * activity is idempotent — it resolves the row by workflow_id and
+   * returns its existing id.
+   */
+  async initiateCall(args: InitiateCallArgs): Promise<InitiateCallResult> {
+    const workspace = await this.workspaces.findById(this.db, args.workspaceId);
+    if (!workspace) throw new NotFoundException(`workspace not found`);
+    if (!workspace.settings.enabled_agents.includes(OUTBOUND_CALL_AGENT_NAME)) {
+      throw new ForbiddenException(
+        `outbound_call is disabled for this workspace; enable it in settings.enabled_agents`,
+      );
+    }
+
+    return withTenant(this.db, args.tenantId, async (tx) => {
+      const contact = await this.contacts.findById(tx, args.contactId);
+      if (!contact) throw new NotFoundException(`contact ${args.contactId} not found`);
+      const phone = (contact.phones ?? []).find((p) => typeof p === "string" && p.length > 0);
+      if (!phone) {
+        throw new BadRequestException(`contact ${args.contactId} has no phone number on file`);
+      }
+
+      const agentRun = await this.agentRuns.create(tx, args.tenantId, {
+        agentName: OUTBOUND_CALL_AGENT_NAME,
+        inputRefs: {
+          contact_id: args.contactId,
+          org_id: contact.orgId,
+          initiated_by: args.initiatedByUserId,
+          to_number: phone,
+        },
+      });
+      const workflowId = WorkflowId.outboundCall(agentRun.id);
+
+      const approval = await this.approvals.create(tx, args.tenantId, {
+        agentRunId: agentRun.id,
+        actionType: "outbound_call",
+        proposedPayload: {
+          tier: "T3",
+          workflow_id: workflowId,
+          contact_id: args.contactId,
+          org_id: contact.orgId,
+          to_number: phone,
+          initiated_by: args.initiatedByUserId,
+        },
+      });
+
+      await this.temporal.workflow.start("outboundCallWorkflow", {
+        taskQueue: this.taskQueue,
+        workflowId,
+        args: [
+          {
+            tenantId: args.tenantId,
+            workspaceId: args.workspaceId,
+            contactId: args.contactId,
+            orgId: contact.orgId,
+            toNumber: phone,
+            agentRunId: agentRun.id,
+            initiatedByUserId: args.initiatedByUserId,
+          },
+        ],
+      });
+
+      await this.events.insertIfNotExists(tx, args.tenantId, {
+        verb: "call.initiated",
+        subjectType: "agent_run",
+        subjectId: agentRun.id,
+        actorType: "user",
+        actorId: args.initiatedByUserId,
+        objectType: "contact",
+        objectId: args.contactId,
+        occurredAt: new Date(),
+        idempotencyKey: `call.initiated:${workflowId}`,
+        metadata: {
+          workflow_id: workflowId,
+          approval_id: approval.id,
+          to_number: phone,
+        },
+      });
+
+      this.log.log(`call initiated: workflow=${workflowId} approval=${approval.id}`);
+      return {
+        workflowId,
+        approvalId: approval.id,
+        status: "pending_approval",
+      };
+    });
+  }
+
+  async getStatus(tenantId: string, workflowId: string): Promise<CallStatusResult> {
+    return withTenant(this.db, tenantId, async (tx) => {
+      const approval = await this.approvals.findByWorkflowId(tx, workflowId);
+      if (!approval) throw new NotFoundException(`call ${workflowId} not found`);
+      const activity = await this.activities.findByTypeAndSessionId(
+        tx,
+        "voice_call",
+        workflowId,
+      );
+      const activityOut = activity
+        ? {
+            id: activity.id,
+            callSid:
+              typeof activity.metadata["call_sid"] === "string"
+                ? (activity.metadata["call_sid"] as string)
+                : "",
+            status:
+              typeof activity.metadata["status"] === "string"
+                ? (activity.metadata["status"] as string)
+                : activity.result ?? "unknown",
+            durationSeconds: activity.durationSeconds,
+            transcriptRef: activity.transcriptRef,
+          }
+        : null;
+
+      // Best-effort Temporal describe — surfaces "RUNNING" until the
+      // workflow terminates. Not fatal when Temporal is unreachable;
+      // the DB view is still returned.
+      let workflowStatus: string | null = null;
+      try {
+        const handle = this.temporal.workflow.getHandle(workflowId);
+        const desc = await handle.describe();
+        workflowStatus = desc.status.name;
+      } catch {
+        workflowStatus = null;
+      }
+
+      return {
+        workflowId,
+        approval: { id: approval.id, decision: approval.decision },
+        activity: activityOut,
+        ...(workflowStatus ? { workflow: { status: workflowStatus } } : {}),
+      };
+    });
+  }
+
+  async getTranscript(
+    tenantId: string,
+    workflowId: string,
+  ): Promise<{ transcript: string; summary: string | null }> {
+    return withTenant(this.db, tenantId, async (tx) => {
+      const activity = await this.activities.findByTypeAndSessionId(
+        tx,
+        "voice_call",
+        workflowId,
+      );
+      if (!activity) throw new NotFoundException(`call ${workflowId} not found`);
+      if (!activity.transcriptRef) {
+        return { transcript: "", summary: null };
+      }
+      const transcript = await this.s3.getText(activity.transcriptRef);
+      const summary = await this.summaries.getLatest(
+        tx,
+        "activity",
+        activity.id,
+        "call_summary",
+      );
+      return { transcript, summary: summary?.content ?? null };
+    });
+  }
+
+  // -------------------------------------------------------------------
+  // Twilio webhook handlers — called with workflowId + form params.
+  // -------------------------------------------------------------------
+
+  /**
+   * Twilio status callback. Signals the waiting OutboundCallWorkflow.
+   * Non-terminal transitions (`ringing`, `in-progress`) are also
+   * forwarded — the workflow only acts on terminal values, but we
+   * surface the full lifecycle for audit.
+   */
+  async handleStatusCallback(
+    workflowId: string,
+    params: Record<string, string>,
+  ): Promise<void> {
+    const callSid = params["CallSid"];
+    const status = params["CallStatus"] as CallStatusPayloadName;
+    if (!callSid || !status) {
+      throw new BadRequestException("missing CallSid or CallStatus");
+    }
+    const durationRaw = params["CallDuration"];
+    const durationSeconds = durationRaw
+      ? Number.parseInt(durationRaw, 10)
+      : undefined;
+    const at = params["Timestamp"] ?? new Date().toISOString();
+
+    const handle = this.temporal.workflow.getHandle(workflowId);
+    try {
+      await handle.signal("call.status.update", {
+        callSid,
+        status,
+        ...(durationSeconds !== undefined && Number.isFinite(durationSeconds)
+          ? { durationSeconds }
+          : {}),
+        at,
+      });
+    } catch (err) {
+      this.log.warn(
+        `call-status signal failed for ${workflowId}: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  /**
+   * Twilio recording callback. Downloads the MP3, uploads to S3 under
+   * recordings/{tenant_id}/{call_sid}.mp3, and signals the workflow
+   * with the storage key. Transcript text is left empty — Sprint 12
+   * defers automated transcription; a follow-up sprint adds Whisper.
+   */
+  async handleRecordingCallback(
+    tenantId: string,
+    workflowId: string,
+    params: Record<string, string>,
+  ): Promise<void> {
+    const recordingStatus = params["RecordingStatus"];
+    if (recordingStatus && recordingStatus !== "completed") {
+      this.log.log(`recording status=${recordingStatus} for ${workflowId}`);
+      return;
+    }
+    const callSid = params["CallSid"];
+    const recordingSid = params["RecordingSid"];
+    const recordingUrl = params["RecordingUrl"];
+    const durationRaw = params["RecordingDuration"];
+    if (!callSid || !recordingSid || !recordingUrl) {
+      throw new BadRequestException(
+        "missing CallSid / RecordingSid / RecordingUrl",
+      );
+    }
+    const durationSeconds = durationRaw
+      ? Number.parseInt(durationRaw, 10)
+      : 0;
+
+    // Twilio serves both mp3 and wav; default is mp3.
+    const audioUrl = recordingUrl.endsWith(".mp3")
+      ? recordingUrl
+      : `${recordingUrl}.mp3`;
+    const audio = await this.twilio.downloadRecording(audioUrl);
+    const storageKey = this.twilio.recordingStorageKey(tenantId, callSid);
+    await this.s3.putBuffer(storageKey, audio, "audio/mpeg");
+
+    const handle = this.temporal.workflow.getHandle(workflowId);
+    try {
+      await handle.signal("call.recording.available", {
+        callSid,
+        recordingSid,
+        storageKey,
+        durationSeconds,
+      });
+    } catch (err) {
+      this.log.warn(
+        `call-recording signal failed for ${workflowId}: ${(err as Error).message}`,
+      );
+    }
+  }
+}
+
+type CallStatusPayloadName =
+  | "initiated"
+  | "ringing"
+  | "in-progress"
+  | "answered"
+  | "completed"
+  | "busy"
+  | "failed"
+  | "no-answer"
+  | "canceled";

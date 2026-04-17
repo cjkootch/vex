@@ -6,6 +6,7 @@ import {
 } from "@nestjs/platform-fastify";
 import { loadEnv } from "@vex/config";
 import {
+  ActivityRepository,
   AgentRunRepository,
   ApprovalRepository,
   ContactRepository,
@@ -15,6 +16,7 @@ import {
   RetrievalService,
   SummaryRepository,
   TouchpointRepository,
+  WorkspaceRepository,
   createDb,
 } from "@vex/db";
 import {
@@ -25,7 +27,10 @@ import {
 import {
   AnthropicAdapter,
   OpenAIAdapter,
+  S3Uploader,
+  TEMPORAL_TASK_QUEUE,
   createTemporalClient,
+  createTwilioClient,
 } from "@vex/integrations";
 import { initOtel, InMemoryCostLedger, shutdownOtel } from "@vex/telemetry";
 import { AppModule } from "./app.module.js";
@@ -34,9 +39,12 @@ import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
 import { BriefModule } from "./brief/brief.module.js";
+import { CallsModule } from "./calls/calls.module.js";
+import { ContactsModule } from "./contacts/contacts.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { VoiceSessionStore } from "./voice/voice-session-store.js";
 import { HealthModule } from "./health/health.module.js";
+import { TwilioVerifier } from "./webhooks/twilio-verifier.js";
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
@@ -63,11 +71,13 @@ async function bootstrap(): Promise<void> {
   const rawEventRepository = new RawEventRepository();
   const approvalRepository = new ApprovalRepository();
   const agentRunRepository = new AgentRunRepository();
+  const activityRepository = new ActivityRepository();
   const eventRepository = new EventRepository();
   const organizationRepository = new OrganizationRepository();
   const contactRepository = new ContactRepository();
   const summaryRepository = new SummaryRepository();
   const touchpointRepository = new TouchpointRepository();
+  const workspaceRepository = new WorkspaceRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
 
@@ -75,6 +85,30 @@ async function bootstrap(): Promise<void> {
   const openai = new OpenAIAdapter({ apiKey: env.OPENAI_API_KEY, costLedger });
   const anthropic = new AnthropicAdapter({ apiKey: env.ANTHROPIC_API_KEY, costLedger });
   const retrieval = new RetrievalService();
+
+  // Sprint 12 — Twilio + S3 for outbound calls. The Twilio client is
+  // only constructed when the three Twilio env vars are present, so a
+  // workspace that isn't using outbound calls keeps booting cleanly.
+  // When unset the CallsModule stays unregistered.
+  const twilioConfigured =
+    env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER;
+  const twilio = twilioConfigured
+    ? createTwilioClient({
+        accountSid: env.TWILIO_ACCOUNT_SID!,
+        authToken: env.TWILIO_AUTH_TOKEN!,
+        fromNumber: env.TWILIO_PHONE_NUMBER!,
+      })
+    : null;
+  const twilioVerifier = env.TWILIO_AUTH_TOKEN
+    ? new TwilioVerifier({ authToken: env.TWILIO_AUTH_TOKEN })
+    : null;
+  const s3 = new S3Uploader({
+    region: env.S3_REGION,
+    bucket: env.S3_BUCKET,
+    accessKeyId: env.S3_ACCESS_KEY_ID,
+    secretAccessKey: env.S3_SECRET_ACCESS_KEY,
+    ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
+  });
 
   const voiceSessionStore = new VoiceSessionStore(redis);
   const voiceContextBuilder = new VoiceContextBuilder({
@@ -130,6 +164,30 @@ async function bootstrap(): Promise<void> {
         summaries: summaryRepository,
         approvals: approvalRepository,
       }),
+      contacts: ContactsModule.register({
+        db,
+        contacts: contactRepository,
+        events: eventRepository,
+      }),
+      ...(temporal && twilio && twilioVerifier
+        ? {
+            calls: CallsModule.register({
+              db,
+              workspaces: workspaceRepository,
+              contacts: contactRepository,
+              agentRuns: agentRunRepository,
+              approvals: approvalRepository,
+              activities: activityRepository,
+              summaries: summaryRepository,
+              events: eventRepository,
+              temporal: temporal.client,
+              twilio,
+              twilioVerifier,
+              s3,
+              taskQueue: TEMPORAL_TASK_QUEUE,
+            }),
+          }
+        : {}),
       voice: VoiceModule.register({
         db,
         openai,

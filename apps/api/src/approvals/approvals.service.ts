@@ -113,10 +113,17 @@ export class ApprovalsService {
   }
 
   /**
-   * Best-effort Temporal signal. The follow-up workflow expects a signal
-   * keyed by approvalId; if the approval came from a non-workflow source
-   * (Sprint-6 BullMQ FollowUpAgent) the signal will fail with a
-   * `WorkflowNotFound` error which we swallow and log.
+   * Best-effort Temporal signal. Routes by `approval.actionType`:
+   *   - `outbound_call` (Sprint 12, T3) → `WorkflowId.outboundCall(agentRunId)`.
+   *     If `proposedPayload.workflow_id` is set it wins — the CallsService
+   *     stamps the canonical workflow id there so the signal always
+   *     reaches the exact instance even if agentRunId drifts.
+   *   - everything else → `WorkflowId.followUp(agentRunId)` (pre-Sprint-12
+   *     default).
+   *
+   * When no agentRunId and no stamped workflow_id are resolvable we
+   * skip silently — the approval still lands, the executor queue still
+   * fires, and the audit event is already written.
    */
   private async signalWorkflow(
     approval: Approval,
@@ -124,8 +131,8 @@ export class ApprovalsService {
     args: DecisionArgs,
   ): Promise<void> {
     if (!this.temporal) return;
-    if (!approval.agentRunId) return;
-    const workflowId = WorkflowId.followUp(approval.agentRunId);
+    const workflowId = resolveWorkflowId(approval);
+    if (!workflowId) return;
     try {
       const handle = this.temporal.workflow.getHandle(workflowId);
       await handle.signal("approval.decision", {
@@ -140,4 +147,14 @@ export class ApprovalsService {
       );
     }
   }
+}
+
+function resolveWorkflowId(approval: Approval): string | null {
+  const stamped = approval.proposedPayload["workflow_id"];
+  if (typeof stamped === "string" && stamped.length > 0) return stamped;
+  if (!approval.agentRunId) return null;
+  if (approval.actionType === "outbound_call") {
+    return WorkflowId.outboundCall(approval.agentRunId);
+  }
+  return WorkflowId.followUp(approval.agentRunId);
 }

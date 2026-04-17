@@ -1,0 +1,3 @@
+export const CONTACTS_DB_CLIENT = Symbol("CONTACTS_DB_CLIENT");
+export const CONTACTS_REPO = Symbol("CONTACTS_REPO");
+export const CONTACTS_EVENTS_REPO = Symbol("CONTACTS_EVENTS_REPO");
