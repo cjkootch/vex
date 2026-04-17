@@ -19,7 +19,7 @@ interface Props {
 
 export function ConversationThread({ turns, onTurns }: Props) {
   const [input, setInput] = useState("");
-  const { text, manifest, isStreaming, error, send } = useVexQuery();
+  const { text, manifest, isStreaming, wakingUp, error, send } = useVexQuery();
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   // Stream just finished — append the assistant turn to history.
@@ -80,7 +80,15 @@ export function ConversationThread({ turns, onTurns }: Props) {
           {isStreaming && (
             <div className="self-start" data-testid="assistant-streaming">
               <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90">
-                {text ? renderProse(text) : <TypingIndicator />}
+                {wakingUp ? (
+                  <span className="text-white/60">
+                    API is waking up — one moment…
+                  </span>
+                ) : text ? (
+                  renderProse(text)
+                ) : (
+                  <TypingIndicator />
+                )}
               </div>
               {manifest && (
                 <div className="mt-3">
