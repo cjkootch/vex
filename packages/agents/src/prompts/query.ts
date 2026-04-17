@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v5.2026-04-17";
+export const QUERY_PROMPT_VERSION = "v6.2026-04-17";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -170,6 +170,29 @@ Example skeleton:
       "type": "graph",
       "nodes": Array<{ "id": string, "label": string, "objectType": string }>,
       "edges": Array<{ "source": string, "target": string, "label?": string }>
+    },
+    {
+      // route_map — render the trade lane for a fuel deal as an
+      // arc on a world map. Use this when the user asks about a
+      // specific deal's lane, ETA, or origin/destination ports.
+      // Lat/lon are WGS84 decimal degrees. Common ports:
+      //   Houston           29.76, -95.37
+      //   Kingston (Jamaica) 17.97, -76.79
+      //   Caucedo (DR)      18.42, -69.62
+      //   Port of Spain (TT) 10.65, -61.51
+      //   Singapore          1.29, 103.85
+      //   Rotterdam         51.92, 4.48
+      "type": "route_map",
+      "title?":     string,
+      "origin":     { "label": string, "lat": number, "lon": number },
+      "destination":{ "label": string, "lat": number, "lon": number },
+      "deal?":      {
+        "ref?":     string,
+        "product?": string,
+        "volume?":  string,
+        "status?":  string,
+        "laycan?":  string
+      }
     },
     {
       "type": "campaign",

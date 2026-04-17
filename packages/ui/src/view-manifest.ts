@@ -122,6 +122,31 @@ const ConfirmEntityPanel = z.object({
   sublabel: z.string().optional(),
 });
 
+const RoutePoint = z.object({
+  label: z.string().min(1),
+  /** WGS84 latitude, -90..90 (positive = north). */
+  lat: z.number().min(-90).max(90),
+  /** WGS84 longitude, -180..180 (positive = east). */
+  lon: z.number().min(-180).max(180),
+});
+
+const RouteMapPanel = z.object({
+  type: z.literal("route_map"),
+  title: z.string().optional(),
+  origin: RoutePoint,
+  destination: RoutePoint,
+  /** Optional deal context — renders alongside the map. */
+  deal: z
+    .object({
+      ref: z.string().optional(),
+      product: z.string().optional(),
+      volume: z.string().optional(),
+      status: z.string().optional(),
+      laycan: z.string().optional(),
+    })
+    .optional(),
+});
+
 export const ManifestPanel = z.discriminatedUnion("type", [
   ProfilePanel,
   TablePanel,
@@ -133,6 +158,7 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   VoiceSessionPanel,
   DisambiguationPanel,
   ConfirmEntityPanel,
+  RouteMapPanel,
   // Signal-only panel: ManifestCanvas intercepts it to switch workspace
   // mode and show a toast, never renders a concrete component.
   WorkspaceModeSwitchPanel,

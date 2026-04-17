@@ -17,6 +17,8 @@ import {
   type ChatTurn,
 } from "@/components/chat/conversation-thread";
 import { EvidenceDetail } from "@/components/chat/evidence-detail";
+import { PinnedPane } from "@/components/canvas/pinned-pane";
+import { PinnedPanelsProvider } from "@/lib/pinned-panels";
 
 interface Conversation {
   id: string;
@@ -37,7 +39,9 @@ interface Conversation {
 export default function ChatPage() {
   return (
     <WorkspaceModeProvider>
-      <ChatPageInner />
+      <PinnedPanelsProvider>
+        <ChatPageInner />
+      </PinnedPanelsProvider>
     </WorkspaceModeProvider>
   );
 }
@@ -142,6 +146,8 @@ function ChatPageInner() {
           )}
         </div>
       </main>
+
+      <PinnedPane />
 
       <EvidenceDetail
         evidenceRefs={evidenceRefs}
