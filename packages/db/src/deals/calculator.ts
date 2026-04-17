@@ -1024,3 +1024,184 @@ function resolveAmount(
   }
   return 0;
 }
+
+// ===========================================================================
+// Sensitivity grids
+// ===========================================================================
+
+/**
+ * One 5x5 sensitivity grid. `values[r][c]` is the computed metric at
+ * (rowLabels[r], colLabels[c]). `highlightRow` / `highlightCol` point at
+ * the current deal's position in the grid so UI panels can render a
+ * "you are here" marker; -1 means the grid isn't applicable (e.g. the
+ * utilizationVsMargin grid on a deal with no vessel).
+ */
+export interface SensitivityGrid {
+  rowLabels: string[];
+  colLabels: string[];
+  values: number[][];
+  highlightRow: number;
+  highlightCol: number;
+}
+
+export interface SensitivityOutputs {
+  /** EBITDA $, rows = sellPrice ±$0.20, cols = volume × 0.7..1.3. */
+  priceVsVolume: SensitivityGrid;
+  /** Peak cash exposure $, rows = sellPrice ±$0.20, cols = freight × 0.5..1.5. */
+  priceVsFreight: SensitivityGrid;
+  /** Net margin $/USG, rows = utilization 10/30/50/75/100%,
+   *  cols = sellPrice ±$0.15. Empty rows/cols/values when no vessel. */
+  utilizationVsMargin: SensitivityGrid;
+  /** EBITDA $, rows = productCost ±$0.15, cols = sellPrice ±$0.15. */
+  productCostVsPrice: SensitivityGrid;
+}
+
+/**
+ * Pre-compute the four canonical sensitivity grids. Each cell re-runs
+ * {@link calculateFuelDeal} (or {@link calculateCashflow} for the peak-
+ * cash grid) with modified inputs — pure, deterministic, ~100 calculator
+ * invocations per deal. Callers typically run this once at evaluation
+ * time and cache the result on the scenario so UI panels can render
+ * instantly.
+ */
+export function calculateSensitivityGrids(
+  inputs: FuelDealInputs,
+): SensitivityOutputs {
+  // Axis definitions. `priceOffsets20` and `priceOffsets15` are ± offsets
+  // in 5 steps (center at index 2). The multiplier and utilization axes
+  // are absolute values; multipliers center on 1.0 (index 2).
+  const priceOffsets20 = [-0.2, -0.1, 0, 0.1, 0.2];
+  const priceOffsets15 = [-0.15, -0.075, 0, 0.075, 0.15];
+  const productCostOffsets15 = [-0.15, -0.075, 0, 0.075, 0.15];
+  const volumeMultipliers = [0.7, 0.85, 1.0, 1.15, 1.3];
+  const freightMultipliers = [0.5, 0.75, 1.0, 1.25, 1.5];
+  const utilizations = [10, 30, 50, 75, 100];
+
+  const fmtPrice = (p: number): string => `$${p.toFixed(3)}`;
+  const fmtVolume = (v: number): string =>
+    `${(v / 1_000_000).toFixed(2)}M USG`;
+  const fmtFreight = (f: number): string => `$${f.toFixed(4)}/USG`;
+  const fmtUtil = (u: number): string => `${u.toFixed(0)}%`;
+
+  // -------- Grid 1: priceVsVolume → EBITDA ----------------------------------
+  const priceVsVolume: SensitivityGrid = {
+    rowLabels: priceOffsets20.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
+    colLabels: volumeMultipliers.map((m) => fmtVolume(inputs.volumeUsg * m)),
+    values: priceOffsets20.map((o) =>
+      volumeMultipliers.map((m) => {
+        const cell = calculateFuelDeal({
+          ...inputs,
+          sellPricePerUsg: inputs.sellPricePerUsg + o,
+          volumeUsg: inputs.volumeUsg * m,
+        });
+        return cell.totals.ebitdaUsd;
+      }),
+    ),
+    highlightRow: 2,
+    highlightCol: 2,
+  };
+
+  // -------- Grid 2: priceVsFreight → peak cash exposure ---------------------
+  // Only the cashflow walk is needed for this metric, so call
+  // calculateCashflow directly — skips the scorecard / warnings work.
+  const priceVsFreight: SensitivityGrid = {
+    rowLabels: priceOffsets20.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
+    colLabels: freightMultipliers.map((m) =>
+      fmtFreight(inputs.freightPerUsg * m),
+    ),
+    values: priceOffsets20.map((o) =>
+      freightMultipliers.map((m) => {
+        const cashflow = calculateCashflow({
+          ...inputs,
+          sellPricePerUsg: inputs.sellPricePerUsg + o,
+          freightPerUsg: inputs.freightPerUsg * m,
+        });
+        return cashflow.peakExposureUsd;
+      }),
+    ),
+    highlightRow: 2,
+    highlightCol: 2,
+  };
+
+  // -------- Grid 3: utilizationVsMargin → net margin / USG ------------------
+  // Recompute freightPerUsg from the vessel lump sum + fixed costs at each
+  // utilization rung. When the deal has no vessel input this grid is
+  // not applicable — return empty rows/cols/values and -1 highlights.
+  let utilizationVsMargin: SensitivityGrid;
+  if (!inputs.vessel) {
+    utilizationVsMargin = {
+      rowLabels: [],
+      colLabels: [],
+      values: [],
+      highlightRow: -1,
+      highlightCol: -1,
+    };
+  } else {
+    const vessel = inputs.vessel;
+    const fixedUsd =
+      vessel.portDuesLoadUsd +
+      vessel.portDuesDischargeUsd +
+      vessel.canalTransitUsd +
+      vessel.demurrageRatePerDay * vessel.demurrageEstimatedDays;
+    const totalVesselCost = vessel.freightLumpSumUsd + fixedUsd;
+
+    // highlightRow picks the utilization rung nearest the current deal.
+    let nearestRow = 0;
+    let nearestDist = Number.POSITIVE_INFINITY;
+    utilizations.forEach((u, i) => {
+      const d = Math.abs(u - vessel.utilizationPct);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestRow = i;
+      }
+    });
+
+    utilizationVsMargin = {
+      rowLabels: utilizations.map(fmtUtil),
+      colLabels: priceOffsets15.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
+      values: utilizations.map((u) => {
+        const actualVolume = vessel.capacityUsg * (u / 100);
+        const freightAtUtil =
+          actualVolume > 0 ? totalVesselCost / actualVolume : 0;
+        return priceOffsets15.map((o) => {
+          const cell = calculateFuelDeal({
+            ...inputs,
+            sellPricePerUsg: inputs.sellPricePerUsg + o,
+            freightPerUsg: freightAtUtil,
+            vessel: { ...vessel, utilizationPct: u },
+          });
+          return cell.perUsg.netMargin;
+        });
+      }),
+      highlightRow: nearestRow,
+      highlightCol: 2,
+    };
+  }
+
+  // -------- Grid 4: productCostVsPrice → EBITDA -----------------------------
+  const productCostVsPrice: SensitivityGrid = {
+    rowLabels: productCostOffsets15.map((o) =>
+      fmtPrice(inputs.productCostPerUsg + o),
+    ),
+    colLabels: priceOffsets15.map((o) => fmtPrice(inputs.sellPricePerUsg + o)),
+    values: productCostOffsets15.map((oRow) =>
+      priceOffsets15.map((oCol) => {
+        const cell = calculateFuelDeal({
+          ...inputs,
+          productCostPerUsg: inputs.productCostPerUsg + oRow,
+          sellPricePerUsg: inputs.sellPricePerUsg + oCol,
+        });
+        return cell.totals.ebitdaUsd;
+      }),
+    ),
+    highlightRow: 2,
+    highlightCol: 2,
+  };
+
+  return {
+    priceVsVolume,
+    priceVsFreight,
+    utilizationVsMargin,
+    productCostVsPrice,
+  };
+}
