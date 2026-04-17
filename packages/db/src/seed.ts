@@ -66,8 +66,34 @@ async function main(): Promise<void> {
     //   - contacts references organizations → delete before orgs
     //   - everything references workspace via tenant_id (text, not FK)
     //     so workspace can be deleted last
+    // Diagnostic — print every public table present. Useful when a
+    // migration didn't land and the seed hits a missing-relation error.
+    const tableList = await client.query<{ table_name: string }>(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name`,
+    );
+    // eslint-disable-next-line no-console
+    console.log(
+      `seed: public tables (${tableList.rows.length}): ${tableList.rows
+        .map((r) => r.table_name)
+        .join(", ")}`,
+    );
+
     const reset = async (table: string): Promise<void> => {
-      await client.query(`DELETE FROM ${table} WHERE id LIKE '01HSEED%'`);
+      try {
+        await client.query(`DELETE FROM ${table} WHERE id LIKE '01HSEED%'`);
+      } catch (err) {
+        // Swallow "relation does not exist" (42P01) so a partial
+        // migration state doesn't block the rest of the reset. Any
+        // such missing table will re-surface when the seed tries to
+        // INSERT into it — at which point the failure mode is
+        // obvious and migrate-then-seed is the answer.
+        if ((err as { code?: string }).code === "42P01") {
+          // eslint-disable-next-line no-console
+          console.log(`seed: table ${table} not present — skipping reset`);
+          return;
+        }
+        throw err;
+      }
     };
     await reset("fuel_deal_cost_stack");
     await reset("fuel_deal_cashflow_events");
