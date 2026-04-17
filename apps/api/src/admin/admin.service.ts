@@ -125,13 +125,18 @@ export class AdminService {
 
   async getSettings(workspaceId: string): Promise<WorkspaceSettings> {
     // The workspaces table's RLS policy is `id = current_setting(
-    // 'app.tenant_id', true)`. Without a session tenant, every row is
-    // filtered out and getSettings returns null → the controller 404s.
-    // Wrap in withTenant so the tenant_id session var is set to the
-    // workspace id (which IS the tenant id in this product).
-    const current = await withTenant(this.db, workspaceId, async () =>
-      this.workspaces.getSettings(this.db, workspaceId),
-    );
+    // 'app.tenant_id', true)`. The session var is set on the
+    // transaction `tx` that withTenant opens — querying via this.db
+    // (outside that tx) bypasses the SET LOCAL and reads zero rows.
+    // Inline the SELECT against tx so the tenant context applies.
+    const current = await withTenant(this.db, workspaceId, async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, workspaceId))
+        .limit(1);
+      return row?.settings ?? null;
+    });
     if (!current) throw new NotFoundException(`workspace ${workspaceId}`);
     return current;
   }
@@ -151,11 +156,16 @@ export class AdminService {
     const current = await this.getSettings(workspaceId);
     const next: WorkspaceSettings = mergeSettings(current, patch);
     // Same RLS story as getSettings — the update needs the tenant_id
-    // session var set or the WHERE id = $1 matches zero rows and
-    // drizzle throws.
-    const updated = await withTenant(this.db, workspaceId, async () =>
-      this.workspaces.updateSettings(this.db, workspaceId, next),
-    );
+    // session var, so the UPDATE has to run via tx, not this.db.
+    const updated = await withTenant(this.db, workspaceId, async (tx) => {
+      const [row] = await tx
+        .update(schema.workspaces)
+        .set({ settings: next, updatedAt: new Date() })
+        .where(eq(schema.workspaces.id, workspaceId))
+        .returning();
+      if (!row) throw new Error(`workspace ${workspaceId} not found`);
+      return row;
+    });
     await withTenant(this.db, tenantId, async (tx) => {
       await this.events.insertIfNotExists(tx, tenantId, {
         verb: "admin.settings.updated",
