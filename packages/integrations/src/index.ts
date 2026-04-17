@@ -45,3 +45,11 @@ export {
   WorkflowId,
   type TemporalConfig,
 } from "./temporal.js";
+export {
+  createOpenFGAClient,
+  StubOpenFGAClient,
+  type OpenFGAClient,
+  type OpenFGAConfig,
+  type OpenFGATuple,
+  type OpenFGATupleFilter,
+} from "./openfga.js";
