@@ -33,6 +33,30 @@ export class ContactsController {
     @Inject(ContactsService) private readonly service: ContactsService,
   ) {}
 
+  @Get()
+  async list(
+    @Query("limit") limitRaw?: string,
+    @Query("status") statusRaw?: string,
+  ) {
+    const limit = clampLimit(limitRaw);
+    const status = statusRaw === "suppressed" ? "suppressed" : "active";
+    const contacts =
+      status === "suppressed"
+        ? await this.service.listSuppressed(this.tenant.tenantId, limit)
+        : await this.service.listActive(this.tenant.tenantId, limit);
+    return { contacts };
+  }
+
+  @Get("suppressed")
+  async listSuppressed(@Query("limit") limitRaw: string | undefined) {
+    const limit = clampLimit(limitRaw);
+    const contacts = await this.service.listSuppressed(
+      this.tenant.tenantId,
+      limit,
+    );
+    return { contacts };
+  }
+
   @Get(":id")
   async getContact(@Param("id") id: string) {
     const contact = await this.service.findById(this.tenant.tenantId, id);
@@ -52,16 +76,6 @@ export class ContactsController {
       reason: parsed.data.reason,
     });
     return { contact };
-  }
-
-  @Get("suppressed")
-  async listSuppressed(@Query("limit") limitRaw: string | undefined) {
-    const limit = clampLimit(limitRaw);
-    const contacts = await this.service.listSuppressed(
-      this.tenant.tenantId,
-      limit,
-    );
-    return { contacts };
   }
 }
 

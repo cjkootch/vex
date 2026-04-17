@@ -3,7 +3,7 @@ import { APP_GUARD } from "@nestjs/core";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { AuthModule } from "./auth/index.js";
 import { HealthModule } from "./health/health.module.js";
-import { OrganizationsController } from "./organizations/organizations.controller.js";
+import { OrganizationsModule } from "./organizations/organizations.module.js";
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
@@ -25,6 +25,7 @@ export interface AppModuleConfig {
   calls?: DynamicModule;
   contacts?: DynamicModule;
   deals?: DynamicModule;
+  organizations?: DynamicModule;
   admin?: DynamicModule;
   voice?: DynamicModule;
   health?: DynamicModule;
@@ -68,6 +69,7 @@ export class AppModule {
     if (config.brief) imports.push(config.brief);
     if (config.contacts) imports.push(config.contacts);
     if (config.deals) imports.push(config.deals);
+    if (config.organizations) imports.push(config.organizations);
     if (config.calls) imports.push(config.calls);
     if (config.admin) imports.push(config.admin);
     if (config.voice) imports.push(config.voice);
@@ -75,7 +77,7 @@ export class AppModule {
     return {
       module: AppModule,
       imports,
-      controllers: [OrganizationsController],
+      controllers: [],
       providers: [
         { provide: APP_GUARD, useClass: TenantThrottlerGuard },
       ],
@@ -93,6 +95,7 @@ export {
   CallsModule,
   ContactsModule,
   DealsModule,
+  OrganizationsModule,
   VoiceModule,
   HealthModule,
 };

@@ -75,6 +75,12 @@ export class ContactsService {
     );
   }
 
+  async listActive(tenantId: string, limit = 200): Promise<Contact[]> {
+    return withTenant(this.db, tenantId, async (tx) =>
+      this.contacts.listActive(tx, limit),
+    );
+  }
+
   async findById(tenantId: string, id: string): Promise<Contact> {
     const contact = await withTenant(this.db, tenantId, async (tx) =>
       this.contacts.findById(tx, id),
