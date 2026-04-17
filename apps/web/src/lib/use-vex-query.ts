@@ -15,6 +15,12 @@ export interface VexQueryState {
   text: string;
   manifest: ManifestEvent | null;
   isStreaming: boolean;
+  /**
+   * True while we're retrying after an upstream 502/503 — the API
+   * machine is probably cold-starting. The ConversationThread can
+   * use this to surface a friendlier message than "HTTP 503".
+   */
+  wakingUp: boolean;
   error: string | null;
 }
 
@@ -22,8 +28,12 @@ const INITIAL: VexQueryState = {
   text: "",
   manifest: null,
   isStreaming: false,
+  wakingUp: false,
   error: null,
 };
+
+/** Fly cold starts can take up to ~20s. One 4s retry covers most cases. */
+const COLD_START_RETRY_DELAY_MS = 4000;
 
 /**
  * Custom SSE consumer for `POST /api/query/stream`.
@@ -32,6 +42,11 @@ const INITIAL: VexQueryState = {
  * convention with named events (`token`, `manifest`, `done`, `error`).
  * `useChat` expects the AI SDK's stream-data protocol — incompatible.
  * A small handwritten parser keeps the wire format simple and explicit.
+ *
+ * Cold-start handling: if the first fetch returns 502 (bad gateway)
+ * or 503 (service unavailable), we wait COLD_START_RETRY_DELAY_MS
+ * and try once more. Fly's `auto_start_machines` wakes the API on
+ * demand but the initial request often lands before boot completes.
  */
 export function useVexQuery() {
   const [state, setState] = useState<VexQueryState>(INITIAL);
@@ -47,17 +62,38 @@ export function useVexQuery() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    setState({ text: "", manifest: null, isStreaming: true, error: null });
+    setState({
+      text: "",
+      manifest: null,
+      isStreaming: true,
+      wakingUp: false,
+      error: null,
+    });
 
-    try {
-      const response = await fetch("/api/query/stream", {
+    const doFetch = (): Promise<Response> =>
+      fetch("/api/query/stream", {
         method: "POST",
         headers: { "content-type": "application/json", accept: "text/event-stream" },
         body: JSON.stringify({ message }),
         signal: controller.signal,
       });
+
+    try {
+      let response = await doFetch();
+      if (response.status === 502 || response.status === 503) {
+        // Cold start — the Fly machine is waking up. Surface a
+        // message to the UI and retry once.
+        setState((s) => ({ ...s, wakingUp: true }));
+        await sleep(COLD_START_RETRY_DELAY_MS, controller.signal);
+        response = await doFetch();
+      }
+
       if (!response.ok || !response.body) {
-        throw new Error(`HTTP ${response.status}`);
+        throw new Error(
+          response.status === 502 || response.status === 503
+            ? "API is waking up — please try again in a moment."
+            : `HTTP ${response.status}`,
+        );
       }
 
       const reader = response.body.getReader();
@@ -75,14 +111,33 @@ export function useVexQuery() {
           handleEvent(event, setState);
         }
       }
-      setState((s) => ({ ...s, isStreaming: false }));
+      setState((s) => ({ ...s, isStreaming: false, wakingUp: false }));
     } catch (err) {
       if (controller.signal.aborted) return;
-      setState((s) => ({ ...s, isStreaming: false, error: (err as Error).message }));
+      setState((s) => ({
+        ...s,
+        isStreaming: false,
+        wakingUp: false,
+        error: (err as Error).message,
+      }));
     }
   }, []);
 
   return { ...state, send, reset };
+}
+
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(new DOMException("aborted", "AbortError"));
+    });
+  });
 }
 
 interface ParsedEvent {
