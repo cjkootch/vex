@@ -33,11 +33,12 @@ async function main(): Promise<void> {
 
   const client = await pool.connect();
   try {
-    const { rows: [who] } = await client.query<{
+    const { rows } = await client.query<{
       current_user: string;
       session_user: string;
       current_database: string;
     }>("SELECT current_user, session_user, current_database()");
+    const who = rows[0]!;
     // eslint-disable-next-line no-console
     console.log(
       `seed: connected user=${who.current_user} session=${who.session_user} db=${who.current_database}`,
