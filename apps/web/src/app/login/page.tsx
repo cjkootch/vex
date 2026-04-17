@@ -2,9 +2,9 @@ import { signIn } from "@/auth";
 import { VexLogoDatamosh } from "@/components/brand/vex-logo-datamosh";
 
 /**
- * Sign-in splash. The datamosh loop lives behind a darkened card so
- * the logo keeps centre stage; buttons follow the same accent-purple
- * affordance used across the app.
+ * Sign-in splash. A compact datamosh mark sits above the card so
+ * the animation reads as a branded heading rather than fighting the
+ * form for focus.
  */
 export default function LoginPage() {
   async function loginGoogle(): Promise<void> {
@@ -17,28 +17,15 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-canvas text-white">
-      {/* Datamosh hero — keeps running behind the card, low intensity
-          so it feels alive without being loud. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-60"
-      >
-        <div className="w-[min(90vw,900px)]">
-          <VexLogoDatamosh intensity={0.28} loopDurationMs={7000} />
+    <main className="flex min-h-screen items-center justify-center bg-canvas px-4 py-8 text-white">
+      <div className="flex w-full max-w-sm flex-col items-center gap-6">
+        <div className="w-40" aria-hidden>
+          <VexLogoDatamosh intensity={0.32} loopDurationMs={7000} />
         </div>
-      </div>
 
-      {/* Gradient vignette so the form card reads cleanly over the logo. */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-canvas/40 via-canvas/10 to-canvas/90"
-      />
-
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-4">
-        <div className="w-full max-w-sm rounded-lg border border-line bg-canvas/80 p-6 shadow-xl backdrop-blur-sm">
-          <div className="mb-6 flex flex-col items-center gap-3 text-center">
-            <h1 className="text-2xl font-semibold">Welcome to Vex</h1>
+        <div className="w-full rounded-lg border border-line bg-muted/30 p-6 shadow-lg">
+          <div className="mb-6 flex flex-col items-center gap-2 text-center">
+            <h1 className="text-xl font-semibold">Welcome to Vex</h1>
             <p className="text-sm text-white/60">
               Sign in to pick up where you left off.
             </p>
