@@ -98,6 +98,16 @@ jobs:
       # the runner resolves its own imports.
       - name: Build workspace packages
         run: pnpm -r --filter="./packages/*" run build
+      # NEON_DEV_URL is a long-lived Neon branch shared across CI
+      # runs. New migrations (e.g. Sprint 11's fuel_deals) only land
+      # here if we explicitly apply them. Without this step, the
+      # eval suite fails ~80% of fixtures with
+      # `relation "fuel_deals" does not exist`. drizzle-kit's migrate
+      # is idempotent (checks the ledger) so re-running is cheap.
+      - name: Apply migrations to dev branch
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
+        run: pnpm --filter @vex/db run migrate
       # Runner enforces the 85% gate + fails on any regression vs
       # evals/results/latest.json. See packages/agents/src/evals/runner.ts.
       - name: Run eval suite
