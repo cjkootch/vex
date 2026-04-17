@@ -53,6 +53,42 @@ async function main(): Promise<void> {
       // Pre-Sprint-3 deployments don't have the role yet — RLS isn't enabled
       // either, so the seed can run as the connection's default role.
     }
+
+    // Idempotent reset — delete every row whose id starts with the
+    // `01HSEED` seed prefix before inserting. Real user-created rows
+    // use createId() which generates Date.now()-prefixed ULIDs that
+    // never start with `01HSEED`, so this is safe against hand-entered
+    // data. Order respects FK dependencies:
+    //   - scenarios / cost-stack / cashflow / documents / counterparty
+    //     all reference fuel_deals → delete first
+    //   - fuel_deals references organizations → delete before orgs
+    //   - contact_org_memberships CASCADEs on contact/org delete
+    //   - contacts references organizations → delete before orgs
+    //   - everything references workspace via tenant_id (text, not FK)
+    //     so workspace can be deleted last
+    const reset = async (table: string): Promise<void> => {
+      await client.query(`DELETE FROM ${table} WHERE id LIKE '01HSEED%'`);
+    };
+    await reset("fuel_deal_cost_stack");
+    await reset("fuel_deal_cashflow_events");
+    await reset("fuel_deal_scenarios");
+    await reset("fuel_deal_documents");
+    await reset("fuel_deal_counterparty_scores");
+    await reset("fuel_deals");
+    await reset("fuel_market_rates");
+    await reset("touchpoints");
+    await reset("summaries");
+    await reset("events");
+    await reset("raw_events");
+    await reset("contacts"); // cascades contact_org_memberships
+    await reset("leads");
+    await reset("campaigns");
+    await reset("organizations");
+    await reset("users");
+    await reset("workspaces");
+    // eslint-disable-next-line no-console
+    console.log("seed: previous seed rows cleared");
+
     const db = drizzle(client, { schema });
 
     await db.insert(schema.workspaces).values({
