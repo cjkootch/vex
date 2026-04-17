@@ -61,6 +61,47 @@ async function main(): Promise<void> {
         );
       }
 
+      // Schema-vs-ledger desync repair. We've observed a state where
+      // `drizzle.__drizzle_migrations` claims 0002 + 0003 are applied
+      // but the tables they create (e.g. `fuel_deals`,
+      // `contact_org_memberships`) don't exist on disk. Drizzle then
+      // reports "migrations applied" without running anything and
+      // nothing ever catches up.
+      //
+      // Repair: if the drizzle schema exists AND fuel_deals does not,
+      // treat every ledger row past the first two (0000 + 0001) as
+      // suspect and delete them. The next drizzle.migrate call will
+      // find 0002+ pending and run them for real.
+      //
+      // Runs as the connection owner (neondb_owner) BEFORE
+      // SET ROLE vex_migrator so ownership of the drizzle schema
+      // doesn't bite us.
+      try {
+        await client.query(`
+          DO $repair$ BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'drizzle')
+               AND NOT EXISTS (
+                 SELECT 1 FROM information_schema.tables
+                 WHERE table_schema = 'public' AND table_name = 'fuel_deals'
+               )
+            THEN
+              DELETE FROM drizzle.__drizzle_migrations
+              WHERE id IN (
+                SELECT id FROM drizzle.__drizzle_migrations
+                ORDER BY id
+                OFFSET 2
+              );
+              RAISE NOTICE 'migrate: drizzle ledger repaired — 0002+ will re-run';
+            END IF;
+          END $repair$;
+        `);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `migrate: ledger-repair step skipped (${(err as Error).message})`,
+        );
+      }
+
       // Drizzle stores its bookkeeping in a private `drizzle` schema.
       // When that schema already exists (created by a prior run under
       // neondb_owner), vex_migrator needs USAGE / CREATE plus full
