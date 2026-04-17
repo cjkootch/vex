@@ -12,6 +12,7 @@ import { AdminModule } from "./admin/admin.module.js";
 import { BriefModule } from "./brief/brief.module.js";
 import { CallsModule } from "./calls/calls.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
+import { DealsModule } from "./deals/deals.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { TenantThrottlerGuard } from "./throttler/tenant-throttler.guard.js";
 
@@ -23,6 +24,7 @@ export interface AppModuleConfig {
   brief?: DynamicModule;
   calls?: DynamicModule;
   contacts?: DynamicModule;
+  deals?: DynamicModule;
   admin?: DynamicModule;
   voice?: DynamicModule;
   health?: DynamicModule;
@@ -65,6 +67,7 @@ export class AppModule {
     if (config.agentRuns) imports.push(config.agentRuns);
     if (config.brief) imports.push(config.brief);
     if (config.contacts) imports.push(config.contacts);
+    if (config.deals) imports.push(config.deals);
     if (config.calls) imports.push(config.calls);
     if (config.admin) imports.push(config.admin);
     if (config.voice) imports.push(config.voice);
@@ -89,6 +92,7 @@ export {
   BriefModule,
   CallsModule,
   ContactsModule,
+  DealsModule,
   VoiceModule,
   HealthModule,
 };
