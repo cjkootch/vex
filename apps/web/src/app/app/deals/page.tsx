@@ -56,14 +56,28 @@ export default function DealsPage() {
     const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
     fetch(`/api/deals${qs}`)
       .then(async (res) => {
+        if (res.status === 404) {
+          throw new Error(
+            "apps/api doesn't have /deals yet — redeploy it on Fly.",
+          );
+        }
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return res.json();
       })
-      .then((body: { deals: DealRow[] }) => {
-        if (!cancelled) {
-          setDeals(body.deals);
-          setError(null);
+      .then((body: unknown) => {
+        if (cancelled) return;
+        const rows =
+          typeof body === "object" && body !== null &&
+          Array.isArray((body as { deals?: unknown }).deals)
+            ? ((body as { deals: DealRow[] }).deals)
+            : null;
+        if (rows === null) {
+          setDeals([]);
+          setError("apps/api returned an unexpected payload.");
+          return;
         }
+        setDeals(rows);
+        setError(null);
       })
       .catch((err: Error) => {
         if (!cancelled) {

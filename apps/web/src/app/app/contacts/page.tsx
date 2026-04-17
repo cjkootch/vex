@@ -48,14 +48,32 @@ export default function ContactsPage() {
     setContacts(null);
     fetch(`/api/contacts?status=${tab}`)
       .then(async (res) => {
+        // The upstream may 404 when Fly hasn't redeployed and the
+        // older apps/api doesn't have the list endpoint yet. Surface
+        // a specific message + fall back to empty instead of the
+        // bare HTTP status.
+        if (res.status === 404) {
+          throw new Error(
+            "apps/api doesn't have /contacts list yet — redeploy it on Fly.",
+          );
+        }
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return res.json();
       })
-      .then((body: { contacts: ContactRow[] }) => {
-        if (!cancelled) {
-          setContacts(body.contacts);
-          setError(null);
+      .then((body: unknown) => {
+        if (cancelled) return;
+        const rows =
+          typeof body === "object" && body !== null &&
+          Array.isArray((body as { contacts?: unknown }).contacts)
+            ? ((body as { contacts: ContactRow[] }).contacts)
+            : null;
+        if (rows === null) {
+          setContacts([]);
+          setError("apps/api returned an unexpected payload.");
+          return;
         }
+        setContacts(rows);
+        setError(null);
       })
       .catch((err: Error) => {
         if (!cancelled) {
