@@ -62,6 +62,16 @@ const NAV_ITEMS: NavItem[] = [
     matchKey: "/app/activity",
     iconPath: "M3 12h4l3-9 4 18 3-9h4",
   },
+  {
+    // Sprint-13 admin console. Non-owners get a 403-style denied page
+    // rendered server-side, so exposing the link unconditionally is
+    // safe and avoids coupling the shell to role state.
+    href: "/app/admin",
+    label: "Admin",
+    matchKey: "/app/admin",
+    iconPath:
+      "M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z",
+  },
 ];
 
 // WorkspaceContextType from @vex/ui is "deal" | "organization" |
