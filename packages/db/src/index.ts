@@ -36,6 +36,10 @@ export type {
   FieldConfidenceMap,
 } from "./schema/organizations.js";
 export type { Contact, NewContact } from "./schema/contacts.js";
+export type {
+  ContactOrgMembership,
+  NewContactOrgMembership,
+} from "./schema/contact-org-memberships.js";
 export type { Touchpoint, NewTouchpoint } from "./schema/touchpoints.js";
 export type { Activity, NewActivity } from "./schema/activities.js";
 export type { Event, NewEvent } from "./schema/events.js";

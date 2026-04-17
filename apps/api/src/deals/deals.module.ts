@@ -1,16 +1,23 @@
 import { Module, type DynamicModule } from "@nestjs/common";
-import type { Db } from "@vex/db";
-import { DEALS_DB_CLIENT, DealsController } from "./deals.controller.js";
+import type { Db, EventRepository, FuelDealRepository } from "@vex/db";
+import {
+  DEALS_DB_CLIENT,
+  DEALS_EVENT_REPO,
+  DEALS_REPO,
+  DealsController,
+} from "./deals.controller.js";
 
 export interface DealsModuleConfig {
   db: Db;
+  deals: FuelDealRepository;
+  events: EventRepository;
 }
 
 /**
- * Dynamic module for the /deals read endpoints. Thin wrapper — the
- * controller talks to the schema directly for the buyer-join, so no
- * service layer is needed yet. When write endpoints land (POST /deals,
- * PATCH /deals/:id) split a DealsService into its own file.
+ * Dynamic module for /deals. Sprint 14 added POST + PATCH write
+ * endpoints, so the controller now injects the repo and event
+ * repository alongside the raw Db client (the list/detail endpoints
+ * still go straight to drizzle for the buyer-name join).
  */
 @Module({})
 export class DealsModule {
@@ -18,7 +25,11 @@ export class DealsModule {
     return {
       module: DealsModule,
       controllers: [DealsController],
-      providers: [{ provide: DEALS_DB_CLIENT, useValue: config.db }],
+      providers: [
+        { provide: DEALS_DB_CLIENT, useValue: config.db },
+        { provide: DEALS_REPO, useValue: config.deals },
+        { provide: DEALS_EVENT_REPO, useValue: config.events },
+      ],
     };
   }
 }

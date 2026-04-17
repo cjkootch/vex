@@ -22,6 +22,13 @@
       "when": 1776412800000,
       "tag": "0002_fuel_deals",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1776499200000,
+      "tag": "0003_contact_memberships",
+      "breakpoints": true
     }
   ]
 }

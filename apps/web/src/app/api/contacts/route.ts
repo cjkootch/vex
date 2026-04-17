@@ -45,19 +45,26 @@ export async function GET(req: NextRequest): Promise<Response> {
   });
 }
 
+interface StubOrgLink {
+  orgId: string;
+  role: string | null;
+  isPrimary: boolean;
+}
+
 function baseContact(
   id: string,
-  orgId: string,
+  primaryOrgId: string,
   fullName: string,
   title: string,
   email: string,
+  orgs: StubOrgLink[] = [{ orgId: primaryOrgId, role: title, isPrimary: true }],
   optOutAt: string | null = null,
 ) {
   const now = new Date().toISOString();
   return {
     id,
     tenantId: "01HSEEDWRK0000000000000001",
-    orgId,
+    orgId: primaryOrgId,
     fullName,
     title,
     emails: [email],
@@ -71,6 +78,7 @@ function baseContact(
     optOutReason: optOutAt ? "user requested" : null,
     createdAt: now,
     updatedAt: now,
+    orgs,
   };
 }
 
@@ -82,6 +90,10 @@ function stubActive() {
       "Contact 1",
       "VP Operations",
       "contact1@example1.test",
+      [
+        { orgId: "01HSEEDCRP0000000000000001", role: "VP Operations", isPrimary: true },
+        { orgId: "01HSEEDCRP0000000000000002", role: "Advisor", isPrimary: false },
+      ],
     ),
     baseContact(
       "01HSEEDCNT0000000000000002",
@@ -89,6 +101,10 @@ function stubActive() {
       "Contact 2",
       "Procurement Lead",
       "contact2@example1.test",
+      [
+        { orgId: "01HSEEDCRP0000000000000001", role: "Procurement Lead", isPrimary: true },
+        { orgId: "01HSEEDCRP0000000000000003", role: "Board Observer", isPrimary: false },
+      ],
     ),
     baseContact(
       "01HSEEDCNT0000000000000003",
@@ -115,6 +131,13 @@ function stubSuppressed() {
       "Former Contact",
       "IT Director",
       "former@initech.test",
+      [
+        {
+          orgId: "01HSEEDCRP0000000000000003",
+          role: "IT Director",
+          isPrimary: true,
+        },
+      ],
       new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString(),
     ),
   ];

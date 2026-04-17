@@ -1,13 +1,22 @@
 import {
+  BadRequestException,
+  Body,
+  ConflictException,
   Controller,
   Get,
+  HttpCode,
   Inject,
+  Logger,
   NotFoundException,
   Param,
+  Post,
   Query,
   UseGuards,
 } from "@nestjs/common";
 import { count, desc, eq } from "drizzle-orm";
+import { z } from "zod";
+import { createId } from "@vex/domain";
+import type { EventRepository, OrganizationRepository } from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
 
@@ -24,6 +33,14 @@ import { schema, withTenant, type Db, type Tx } from "@vex/db";
  */
 
 export const ORGANIZATIONS_DB_CLIENT = Symbol("ORGANIZATIONS_DB_CLIENT");
+export const ORGANIZATIONS_REPO = Symbol("ORGANIZATIONS_REPO");
+export const ORGANIZATIONS_EVENT_REPO = Symbol("ORGANIZATIONS_EVENT_REPO");
+
+const CreateOrganizationBody = z.object({
+  legalName: z.string().min(1).max(200),
+  domain: z.string().max(255).optional(),
+  industry: z.string().max(120).optional(),
+});
 
 type RecordStatus = "active" | "archived" | "inactive";
 
@@ -63,9 +80,13 @@ const STATUS_VALUES = new Set<RecordStatus>([
 @Controller("organizations")
 @UseGuards(JwtAuthGuard)
 export class OrganizationsController {
+  private readonly log = new Logger(OrganizationsController.name);
+
   constructor(
     @Inject(TenantContext) private readonly tenant: TenantContext,
     @Inject(ORGANIZATIONS_DB_CLIENT) private readonly db: Db,
+    @Inject(ORGANIZATIONS_REPO) private readonly organizations: OrganizationRepository,
+    @Inject(ORGANIZATIONS_EVENT_REPO) private readonly events: EventRepository,
   ) {}
 
   @Get()
@@ -111,6 +132,69 @@ export class OrganizationsController {
     return { organizations };
   }
 
+  @Post()
+  @HttpCode(201)
+  async create(
+    @Body() raw: unknown,
+  ): Promise<{ organization: OrganizationListRow }> {
+    const parsed = CreateOrganizationBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const input = parsed.data;
+    const id = createId();
+    const { tenantId, userId } = this.tenant;
+
+    const organization = await withTenant(this.db, tenantId, async (tx) => {
+      try {
+        const row = await this.organizations.create(tx, tenantId, {
+          id,
+          legalName: input.legalName,
+          ...(input.domain ? { domain: input.domain } : {}),
+          ...(input.industry ? { industry: input.industry } : {}),
+        });
+        await this.events.insertIfNotExists(tx, tenantId, {
+          verb: "organization.created",
+          subjectType: "organization",
+          subjectId: id,
+          actorType: "user",
+          actorId: userId,
+          objectType: "organization",
+          objectId: id,
+          occurredAt: new Date(),
+          idempotencyKey: `organization.created:${id}`,
+          metadata: {
+            legal_name: input.legalName,
+            domain: input.domain ?? null,
+            created_by: userId,
+          },
+        });
+        return row;
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (msg.includes("duplicate") || msg.includes("unique")) {
+          throw new ConflictException(`organization ${input.legalName} exists`);
+        }
+        throw err;
+      }
+    });
+
+    this.log.log(`organization ${input.legalName} (${id}) created by ${userId}`);
+    return {
+      organization: {
+        id: organization.id,
+        legalName: organization.legalName,
+        domain: organization.domain,
+        industry: organization.industry,
+        fitScore: organization.fitScore,
+        status: organization.status,
+        contactCount: 0,
+        createdAt: organization.createdAt.toISOString(),
+        updatedAt: organization.updatedAt.toISOString(),
+      },
+    };
+  }
+
   @Get(":id")
   async detail(@Param("id") id: string): Promise<{ organization: OrganizationDetail }> {
     const organization = await withTenant(
@@ -124,12 +208,25 @@ export class OrganizationsController {
           .limit(1);
         if (!row) return null;
 
-        const contacts = await tx
-          .select()
-          .from(schema.contacts)
-          .where(eq(schema.contacts.orgId, id))
+        // Read through the m:n memberships table so a contact that
+        // represents multiple orgs shows up on every one of its orgs'
+        // detail pages — not only the single org stored in
+        // `contacts.org_id`.
+        const contactRows = await tx
+          .select({
+            contact: schema.contacts,
+            role: schema.contactOrgMemberships.role,
+            isPrimary: schema.contactOrgMemberships.isPrimary,
+          })
+          .from(schema.contactOrgMemberships)
+          .innerJoin(
+            schema.contacts,
+            eq(schema.contactOrgMemberships.contactId, schema.contacts.id),
+          )
+          .where(eq(schema.contactOrgMemberships.orgId, id))
           .orderBy(desc(schema.contacts.updatedAt))
           .limit(200);
+        const contacts = contactRows.map((r) => r.contact);
 
         const detail: OrganizationDetail = {
           id: row.id,
@@ -168,10 +265,15 @@ function clampLimit(raw: string | undefined, fallback: number, max: number): num
 }
 
 async function loadContactCounts(tx: Tx): Promise<Map<string, number>> {
+  // Count via the m:n memberships table so a contact shared across
+  // multiple orgs counts once per org it belongs to.
   const rows = await tx
-    .select({ orgId: schema.contacts.orgId, count: count() })
-    .from(schema.contacts)
-    .groupBy(schema.contacts.orgId);
+    .select({
+      orgId: schema.contactOrgMemberships.orgId,
+      count: count(),
+    })
+    .from(schema.contactOrgMemberships)
+    .groupBy(schema.contactOrgMemberships.orgId);
   const out = new Map<string, number>();
   for (const r of rows) out.set(r.orgId, Number(r.count));
   return out;
