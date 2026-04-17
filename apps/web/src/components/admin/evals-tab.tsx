@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { fetchWithRetry } from "@/lib/fetch-with-retry";
 
 interface EvalFixtureResult {
   id: string;
@@ -40,10 +41,16 @@ export function EvalsTab() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/admin/evals/latest", {
+        const res = await fetchWithRetry("/api/admin/evals/latest", {
           credentials: "include",
           cache: "no-store",
+          onWaking: () => {
+            if (!cancelled) setError("API is waking up…");
+          },
         });
+        if (res.status === 502 || res.status === 503) {
+          throw new Error("API is still waking up. Try again in a moment.");
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = (await res.json()) as Response;
         if (!cancelled) {

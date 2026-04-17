@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { fetchWithRetry } from "@/lib/fetch-with-retry";
 import { AgentsTab } from "./agents-tab";
 import { HealthTab } from "./health-tab";
 import { CostLedgerTab } from "./cost-ledger-tab";
@@ -41,13 +42,22 @@ export function AdminConsole() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/admin/settings", {
+        const res = await fetchWithRetry("/api/admin/settings", {
           credentials: "include",
           cache: "no-store",
+          onWaking: () => {
+            if (!cancelled) setSettingsError("API is waking up…");
+          },
         });
+        if (res.status === 502 || res.status === 503) {
+          throw new Error("API is still waking up. Try again in a moment.");
+        }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = (await res.json()) as { settings: WorkspaceSettings };
-        if (!cancelled) setSettings(body.settings);
+        if (!cancelled) {
+          setSettings(body.settings);
+          setSettingsError(null);
+        }
       } catch (err) {
         if (!cancelled) setSettingsError((err as Error).message);
       }
@@ -60,12 +70,17 @@ export function AdminConsole() {
   const patchSettings = useCallback(
     async (patch: Partial<WorkspaceSettings>): Promise<boolean> => {
       try {
-        const res = await fetch("/api/admin/settings", {
+        const res = await fetchWithRetry("/api/admin/settings", {
           method: "PATCH",
           credentials: "include",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(patch),
+          onWaking: () => setSettingsError("API is waking up…"),
         });
+        if (res.status === 502 || res.status === 503) {
+          setSettingsError("API is still waking up. Try again in a moment.");
+          return false;
+        }
         if (!res.ok) {
           const errBody = (await res.json().catch(() => null)) as
             | { message?: string }
