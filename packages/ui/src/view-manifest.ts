@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WorkspaceModeSwitchPanel } from "./workspace-modes.js";
 
 /**
  * The ViewManifest is Vex's canonical model output.
@@ -110,6 +111,9 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   GraphPanel,
   CampaignPanel,
   VoiceSessionPanel,
+  // Signal-only panel: ManifestCanvas intercepts it to switch workspace
+  // mode and show a toast, never renders a concrete component.
+  WorkspaceModeSwitchPanel,
 ]);
 export type ManifestPanel = z.infer<typeof ManifestPanel>;
 
