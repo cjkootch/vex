@@ -219,6 +219,8 @@ export interface FuelDealResults {
   breakeven: BreakevenAnalysis;
   warnings: DealWarning[];
   scorecard: DealScorecard;
+  cashflow: CashflowResults;
+  sensitivity: SensitivityOutputs;
 }
 
 // ===========================================================================
@@ -834,6 +836,8 @@ export function calculateFuelDeal(inputs: FuelDealInputs): FuelDealResults {
     breakeven,
     warnings,
     scorecard,
+    cashflow: calculateCashflow(inputs),
+    sensitivity: calculateSensitivityGrids(inputs),
   };
 }
 
