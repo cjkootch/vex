@@ -25,7 +25,10 @@ import { useVexQuery } from "@/lib/use-vex-query";
 export interface DisambiguationOption {
   id: string;
   label: string;
-  sublabel?: string;
+  // `| undefined` required under exactOptionalPropertyTypes so the
+  // Zod-inferred shape from @vex/ui (z.string().optional() →
+  // `string | undefined`) assigns cleanly into this prop.
+  sublabel?: string | undefined;
   confidence: number;
 }
 

@@ -144,3 +144,116 @@ export function AutonomyFeed() {
       .map((key) => ({ key, tone: GROUP_TONE[key], items: buckets[key] }))
       .filter((s) => s.items.length > 0);
   }, [runs]);
+
+  const spentToday = useMemo(() => {
+    if (!runs) return null;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const startMs = start.getTime();
+    let sum = 0;
+    let n = 0;
+    for (const run of runs) {
+      if (new Date(run.startedAt).getTime() >= startMs) {
+        sum += run.costUsd;
+        n++;
+      }
+    }
+    return { sum, n };
+  }, [runs]);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex-1 overflow-auto px-3 py-2">
+        {runs === null && error === null ? (
+          <SkeletonRows />
+        ) : runs === null && error !== null ? (
+          <p className="px-1 py-4 text-sm text-red-400">
+            Feed unavailable: {error}
+          </p>
+        ) : sections.length === 0 ? (
+          <p className="px-1 py-4 text-sm text-white/60">
+            Vex is idle. Agents run on schedule.
+          </p>
+        ) : (
+          sections.map(({ key, tone, items }) => (
+            <section key={key} className="mb-4">
+              <h3
+                className={`mb-1 px-1 text-xs font-medium uppercase tracking-wider ${tone.className}`}
+              >
+                {tone.label}
+              </h3>
+              <ul className="space-y-1">
+                {items.map((run) => (
+                  <AutonomyRow key={run.id} run={run} />
+                ))}
+              </ul>
+            </section>
+          ))
+        )}
+      </div>
+      {spentToday !== null && spentToday.n > 0 ? (
+        <footer className="border-t border-line px-3 py-2 text-xs text-white/50">
+          Spent ${spentToday.sum.toFixed(2)} today across {spentToday.n}{" "}
+          {spentToday.n === 1 ? "run" : "runs"}
+        </footer>
+      ) : null}
+    </div>
+  );
+}
+
+function AutonomyRow({ run }: { run: AgentRunItem }) {
+  const needsApproval =
+    run.hasApproval && run.approvalStatus === "pending";
+  return (
+    <li className="rounded-md border border-transparent px-2 py-2 text-sm transition hover:border-line hover:bg-white/5">
+      <div className="flex items-start gap-2">
+        <span
+          aria-hidden="true"
+          className={`mt-1.5 h-2 w-2 flex-shrink-0 rounded-full ${STATUS_DOT[run.status]}`}
+        />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-baseline gap-2">
+            <span className="rounded-sm bg-white/10 px-1.5 py-0.5 text-xs text-white/80">
+              {agentLabel(run.agentName)}
+            </span>
+            <span className="truncate text-xs text-white/40">
+              {formatDistanceToNow(new Date(run.startedAt), {
+                addSuffix: true,
+              })}
+            </span>
+            <span className="ml-auto text-xs text-white/30">
+              {formatCost(run.costUsd)}
+            </span>
+          </div>
+          <p className="mt-1 line-clamp-2 text-xs text-white/70">
+            {run.summary}
+          </p>
+          {needsApproval ? (
+            <Link
+              href="/app/approvals"
+              className="mt-1 inline-block text-xs text-amber-300 hover:text-amber-200"
+            >
+              {vexCopy.approvals.needs_attention} →
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function SkeletonRows() {
+  return (
+    <div className="space-y-2" aria-hidden="true">
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-start gap-2 rounded-md px-2 py-2">
+          <div className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full bg-white/10" />
+          <div className="flex-1 space-y-1.5">
+            <div className="h-3 w-1/3 rounded bg-white/10" />
+            <div className="h-3 w-4/5 rounded bg-white/10" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}

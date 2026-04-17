@@ -3,11 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  WORKSPACE_MODE_CONFIGS,
-  WorkspaceMode,
-  type WorkspaceModeConfig,
-} from "@vex/ui";
+import { WorkspaceMode, type WorkspaceModeConfig } from "@vex/ui";
 import {
   WorkspaceModeProvider,
   useWorkspaceMode,
