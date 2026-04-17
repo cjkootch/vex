@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
+import { NewContactForm } from "@/components/crm/new-contact-form";
 
 interface ContactRow {
   id: string;
@@ -28,6 +29,7 @@ export default function ContactsPage() {
   const [contacts, setContacts] = useState<ContactRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "suppressed">("active");
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,7 +128,25 @@ export default function ContactsPage() {
             automation.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+        >
+          + New contact
+        </button>
       </header>
+
+      <NewContactForm
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={() => {
+          // Easiest correct behaviour: refetch so the new row picks up
+          // the server-assigned computed fields (status, timestamps).
+          setContacts(null);
+          setTab("active");
+        }}
+      />
 
       <div className="flex gap-1">
         {FILTER_TABS.map((t) => (

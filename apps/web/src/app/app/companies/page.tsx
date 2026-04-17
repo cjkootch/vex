@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
+import { NewCompanyForm } from "@/components/crm/new-company-form";
 
 interface OrganizationRow {
   id: string;
@@ -20,6 +21,7 @@ interface OrganizationRow {
 export default function CompaniesPage() {
   const [organizations, setOrganizations] = useState<OrganizationRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,7 +111,39 @@ export default function CompaniesPage() {
             All organizations in your workspace. Click a name to research it with Vex.
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setCreating(true)}
+          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+        >
+          + New company
+        </button>
       </header>
+
+      <NewCompanyForm
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={(created) => {
+          setOrganizations((prev) =>
+            prev
+              ? [
+                  {
+                    id: created.id,
+                    legalName: created.legalName,
+                    domain: null,
+                    industry: null,
+                    fitScore: null,
+                    status: "active",
+                    contactCount: 0,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
+                  },
+                  ...prev,
+                ]
+              : prev,
+          );
+        }}
+      />
 
       {error && (
         <div className="rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">

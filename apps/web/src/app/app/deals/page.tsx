@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
+import { NewDealForm } from "@/components/crm/new-deal-form";
 
 interface DealRow {
   id: string;
@@ -46,6 +47,7 @@ export default function DealsPage() {
   const [deals, setDeals] = useState<DealRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -148,13 +150,33 @@ export default function DealsPage() {
             Fuel deals, sortable and filterable. Click a row to open the deal detail.
           </p>
         </div>
-        <Link
-          href="/app/chat?ask=Show%20me%20all%20deals%20with%20compliance%20holds"
-          className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
-        >
-          Ask Vex →
-        </Link>
+        <div className="flex gap-2">
+          <Link
+            href="/app/chat?ask=Show%20me%20all%20deals%20with%20compliance%20holds"
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
+          >
+            Ask Vex →
+          </Link>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+          >
+            + New deal
+          </button>
+        </div>
       </header>
+
+      <NewDealForm
+        open={creating}
+        onClose={() => setCreating(false)}
+        onCreated={() => {
+          // Refetch so the new row shows up with server-enriched buyer
+          // name and updated timestamps.
+          setDeals(null);
+          setStatusFilter("");
+        }}
+      />
 
       <div className="flex flex-wrap gap-1">
         {STATUS_FILTERS.map((s) => (
