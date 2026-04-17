@@ -1,4 +1,4 @@
-import { and, desc, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import {
   approxTokens,
   packTokens,
@@ -6,7 +6,10 @@ import {
   type EvidencePack,
 } from "@vex/domain";
 import type { Tx } from "../client.js";
+import { contacts } from "../schema/contacts.js";
 import { embeddingChunks } from "../schema/embedding-chunks.js";
+import { fuelDeals } from "../schema/fuel-deals.js";
+import { organizations } from "../schema/organizations.js";
 import { summaries } from "../schema/summaries.js";
 import { ScopeResolver, type ResolvedScope } from "./scope-resolver.js";
 
@@ -23,6 +26,49 @@ const W_CORROBORATION = 0.1;
 
 /** Token budget for the assembled pack. Truncate oldest items to fit. */
 const DEFAULT_TOKEN_CAP = 28_000;
+
+/** Common English filler words dropped from the name-match fallback tokeniser. */
+const STOPWORDS = new Set([
+  "the",
+  "and",
+  "for",
+  "are",
+  "but",
+  "not",
+  "you",
+  "all",
+  "can",
+  "her",
+  "was",
+  "one",
+  "our",
+  "out",
+  "what",
+  "when",
+  "with",
+  "this",
+  "that",
+  "from",
+  "they",
+  "them",
+  "show",
+  "list",
+  "find",
+  "tell",
+  "give",
+  "have",
+  "any",
+  "about",
+  "into",
+  "deal",
+  "deals",
+  "company",
+  "companies",
+  "contact",
+  "contacts",
+  "org",
+  "organization",
+]);
 
 interface ChunkRow {
   id: string;
@@ -154,17 +200,156 @@ export class RetrievalService {
     const summariesItems = await this.fetchScopeSummaries(tx, scope);
     const items = await this.hybridSearch(tx, queryText, queryEmbedding, scope, options.limit);
 
+    // Fallback: when the embedding-based search returns nothing
+    // (workspace seeded but `embedding_chunks` not populated yet),
+    // do a tenant-scoped ILIKE across organizations / contacts /
+    // fuel_deals so the chat can still answer name-based questions
+    // ("show me VTC-2026-001"). Embeddings remain the primary path
+    // when they exist.
+    let fallbackItems: EvidenceItem[] = [];
+    if (summariesItems.length === 0 && items.length === 0) {
+      fallbackItems = await this.nameMatchFallback(tx, queryText);
+    }
+
     const cap = options.tokenCap ?? DEFAULT_TOKEN_CAP;
     let pack: EvidencePack = {
       summaries: summariesItems,
-      items,
-      estimated_tokens: packTokens({ summaries: summariesItems, items }),
+      items: items.length > 0 ? items : fallbackItems,
+      estimated_tokens: packTokens({
+        summaries: summariesItems,
+        items: items.length > 0 ? items : fallbackItems,
+      }),
     };
 
     if (pack.estimated_tokens > cap) {
       pack = truncateToCap(pack, cap);
     }
     return pack;
+  }
+
+  /**
+   * ILIKE-based fallback retrieval. Picks meaningful tokens out of
+   * the query (length >= 3, common stopwords dropped) and matches
+   * each against organization names + domains, contact names, and
+   * fuel-deal refs. Returns at most 12 items composed as
+   * EvidenceItems with confidence_score 0.4 — Claude treats these
+   * as low-confidence per the prompt's < 0.5 prefix rule, so the
+   * answer is qualified with "[Best current view — limited
+   * evidence]".
+   */
+  private async nameMatchFallback(
+    tx: Tx,
+    queryText: string,
+  ): Promise<EvidenceItem[]> {
+    const tokens = queryText
+      .toLowerCase()
+      .split(/[^a-z0-9-]+/)
+      .filter((t) => t.length >= 3 && !STOPWORDS.has(t))
+      .slice(0, 4);
+    if (tokens.length === 0) return [];
+
+    const patterns = tokens.map((t) => `%${t.replace(/[%_]/g, (c) => `\\${c}`)}%`);
+
+    const [orgRows, contactRows, dealRows] = await Promise.all([
+      tx
+        .select({
+          id: organizations.id,
+          legalName: organizations.legalName,
+          domain: organizations.domain,
+          industry: organizations.industry,
+          updatedAt: organizations.updatedAt,
+        })
+        .from(organizations)
+        .where(
+          or(
+            ...patterns.flatMap((p) => [
+              ilike(organizations.legalName, p),
+              ilike(organizations.domain, p),
+            ]),
+          ),
+        )
+        .limit(4),
+      tx
+        .select({
+          id: contacts.id,
+          fullName: contacts.fullName,
+          title: contacts.title,
+          updatedAt: contacts.updatedAt,
+        })
+        .from(contacts)
+        .where(or(...patterns.map((p) => ilike(contacts.fullName, p))))
+        .limit(4),
+      tx
+        .select({
+          id: fuelDeals.id,
+          dealRef: fuelDeals.dealRef,
+          status: fuelDeals.status,
+          product: fuelDeals.product,
+          updatedAt: fuelDeals.updatedAt,
+        })
+        .from(fuelDeals)
+        .where(or(...patterns.map((p) => ilike(fuelDeals.dealRef, p))))
+        .limit(4),
+    ]);
+
+    const items: EvidenceItem[] = [];
+    const now = Date.now();
+
+    for (const o of orgRows) {
+      const text = `Organization ${o.legalName}${o.domain ? ` (${o.domain})` : ""}${o.industry ? ` — industry: ${o.industry}` : ""}.`;
+      items.push({
+        chunk_id: o.id,
+        object_type: "organization",
+        object_id: o.id,
+        chunk_text: text,
+        source_ref: `name-match / organization ${o.id}`,
+        source_type: "fallback",
+        occurred_at: o.updatedAt,
+        freshness_hours: Math.max(0, (now - o.updatedAt.getTime()) / 3_600_000),
+        confidence_score: 0.4,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      });
+    }
+    for (const c of contactRows) {
+      const text = `Contact ${c.fullName}${c.title ? ` — ${c.title}` : ""}.`;
+      items.push({
+        chunk_id: c.id,
+        object_type: "contact",
+        object_id: c.id,
+        chunk_text: text,
+        source_ref: `name-match / contact ${c.id}`,
+        source_type: "fallback",
+        occurred_at: c.updatedAt,
+        freshness_hours: Math.max(0, (now - c.updatedAt.getTime()) / 3_600_000),
+        confidence_score: 0.4,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      });
+    }
+    for (const d of dealRows) {
+      const text = `Fuel deal ${d.dealRef} — product ${d.product}, status ${d.status}.`;
+      items.push({
+        chunk_id: d.id,
+        object_type: "fuel_deal",
+        object_id: d.id,
+        chunk_text: text,
+        source_ref: `name-match / fuel_deal ${d.id}`,
+        source_type: "fallback",
+        occurred_at: d.updatedAt,
+        freshness_hours: Math.max(0, (now - d.updatedAt.getTime()) / 3_600_000),
+        confidence_score: 0.4,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      });
+    }
+    return items;
   }
 
   /**

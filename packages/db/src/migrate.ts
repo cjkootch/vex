@@ -130,6 +130,18 @@ async function main(): Promise<void> {
         );
       }
 
+      // Capture the connection role BEFORE SET ROLE so we can grant
+      // back to it after migrations. New tables created under
+      // vex_migrator are owned by vex_migrator; without an explicit
+      // grant the runtime role can't even SELECT them, which is what
+      // bit /api/deals + /api/organizations with
+      // \"permission denied for table fuel_deals\" /
+      // \"permission denied for table contact_org_memberships\".
+      const ownerRow = await client.query<{ owner: string }>(
+        `SELECT current_user AS owner`,
+      );
+      const runtimeRole = ownerRow.rows[0]?.owner ?? "neondb_owner";
+
       try {
         await client.query("SET ROLE vex_migrator");
         // eslint-disable-next-line no-console
@@ -140,6 +152,30 @@ async function main(): Promise<void> {
       }
       const db = drizzle(client);
       await migrate(db, { migrationsFolder });
+
+      // Hand the new schema back to the runtime role.
+      // SET ROLE is reset, then GRANT and ALTER DEFAULT PRIVILEGES
+      // are issued so the API can read every table the migration
+      // just created. Idempotent and safe against pre-existing
+      // grants.
+      try {
+        await client.query("RESET ROLE");
+        await client.query(`
+          GRANT ALL ON ALL TABLES    IN SCHEMA public TO ${quoteIdent(runtimeRole)};
+          GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${quoteIdent(runtimeRole)};
+          ALTER DEFAULT PRIVILEGES FOR ROLE vex_migrator IN SCHEMA public
+            GRANT ALL ON TABLES    TO ${quoteIdent(runtimeRole)};
+          ALTER DEFAULT PRIVILEGES FOR ROLE vex_migrator IN SCHEMA public
+            GRANT ALL ON SEQUENCES TO ${quoteIdent(runtimeRole)};
+        `);
+        // eslint-disable-next-line no-console
+        console.log(`migrate: granted full table access to ${runtimeRole}`);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `migrate: post-migrate grant to ${runtimeRole} failed (${(err as Error).message})`,
+        );
+      }
     } finally {
       client.release();
     }
@@ -148,6 +184,12 @@ async function main(): Promise<void> {
   } finally {
     await pool.end();
   }
+}
+
+function quoteIdent(name: string): string {
+  // Postgres double-quote escape: " → "". Safe for identifiers we
+  // pulled straight from current_user.
+  return `"${name.replace(/"/g, '""')}"`;
 }
 
 main().catch((err) => {
