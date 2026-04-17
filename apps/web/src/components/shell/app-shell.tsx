@@ -9,6 +9,7 @@ import {
   useWorkspaceMode,
 } from "@/lib/workspace-mode-context";
 import { ContextChip, type ContextChipType } from "./context-chip";
+import { CommandPalette } from "./command-palette";
 
 /**
  * Persistent shell wrapping all /app/* pages: 48px TopBar, 240px
@@ -147,6 +148,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex h-screen flex-col bg-canvas text-white">
       <TopBar pending={pending} />
+      <CommandPalette />
       <div className="flex flex-1 overflow-hidden">
         <SideRail
           collapsed={sideCollapsed}
@@ -188,6 +190,7 @@ function TopBar({ pending }: { pending: number }) {
         />
       </div>
       <div className="flex items-center gap-3">
+        <SearchHint />
         <ApprovalBadge count={pending} />
         <div
           aria-label={vexCopy.navigation.exit_workspace}
@@ -195,6 +198,27 @@ function TopBar({ pending }: { pending: number }) {
         />
       </div>
     </header>
+  );
+}
+
+function SearchHint() {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        // Dispatch a synthetic ⌘K keydown so the CommandPalette's
+        // global listener picks it up. Keeps the open-state owned by
+        // the palette rather than plumbed through AppShell.
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "k", metaKey: true }),
+        );
+      }}
+      className="hidden items-center gap-2 rounded-md border border-line bg-muted/40 px-2 py-1 text-xs text-white/60 hover:border-accent hover:text-white md:flex"
+      aria-label="Open search"
+    >
+      <span>Search</span>
+      <kbd className="rounded bg-white/10 px-1 text-[10px] font-mono">⌘K</kbd>
+    </button>
   );
 }
 

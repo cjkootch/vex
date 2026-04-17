@@ -48,6 +48,7 @@ import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { OrganizationsModule } from "./organizations/organizations.module.js";
+import { SearchModule } from "./search/search.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { VoiceSessionStore } from "./voice/voice-session-store.js";
 import { HealthModule } from "./health/health.module.js";
@@ -191,6 +192,7 @@ async function bootstrap(): Promise<void> {
         organizations: organizationRepository,
         events: eventRepository,
       }),
+      search: SearchModule.register({ db }),
       admin: AdminModule.register({
         db,
         workspaces: workspaceRepository,

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
+import { Tabs } from "@/components/ui/tabs";
 
 interface DealDetail {
   id: string;
@@ -42,6 +43,7 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
   const [deal, setDeal] = useState<DealDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [activeTab, setActiveTab] = useState("overview");
 
   useEffect(() => {
     let cancelled = false;
@@ -124,75 +126,95 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
         </div>
       </header>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2 flex flex-col gap-4">
-          <Card title="Terms">
-            <Field label="Incoterm" value={deal.incoterm.toUpperCase()} />
-            <Field label="Payment" value={humanize(deal.paymentTerms)} />
-            <Field label="Currency" value={deal.currency.toUpperCase()} />
-            <Field label="Origin" value={deal.originPort ?? "—"} />
-            <Field label="Destination" value={deal.destinationPort ?? "—"} />
-            <Field
-              label="Laycan"
-              value={formatLaycan(deal.laycanStart, deal.laycanEnd)}
-            />
-          </Card>
+      <Tabs
+        active={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            id: "overview",
+            label: "Overview",
+            content: <OverviewTab deal={deal} />,
+          },
+          {
+            id: "activity",
+            label: "Activity",
+            content: (
+              <ActivityTimeline subjectType="fuel_deal" subjectId={deal.id} />
+            ),
+          },
+        ]}
+      />
+    </div>
+  );
+}
 
-          <Card title="Parties">
-            <Field
-              label="Buyer"
-              value={deal.buyerName ?? deal.buyerOrgId}
-            />
-            <Field
-              label="Seller"
-              value={deal.sellerName ?? deal.sellerOrgId ?? "—"}
-            />
-            <Field
-              label="OFAC screening"
-              value={humanize(deal.ofacStatus)}
-              tone={deal.ofacStatus === "cleared" ? "good" : "warn"}
-            />
-          </Card>
+function OverviewTab({ deal }: { deal: DealDetail }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <Card title="Terms">
+        <Field label="Incoterm" value={deal.incoterm.toUpperCase()} />
+        <Field label="Payment" value={humanize(deal.paymentTerms)} />
+        <Field label="Currency" value={deal.currency.toUpperCase()} />
+        <Field label="Origin" value={deal.originPort ?? "—"} />
+        <Field label="Destination" value={deal.destinationPort ?? "—"} />
+        <Field
+          label="Laycan"
+          value={formatLaycan(deal.laycanStart, deal.laycanEnd)}
+        />
+      </Card>
 
-          {deal.notes && (
-            <Card title="Notes">
-              <p className="text-sm text-white/80 whitespace-pre-line">
-                {deal.notes}
-              </p>
-            </Card>
-          )}
+      <Card title="Parties">
+        <FieldLink
+          label="Buyer"
+          href={`/app/companies/${deal.buyerOrgId}`}
+          text={deal.buyerName ?? deal.buyerOrgId}
+        />
+        {deal.sellerOrgId ? (
+          <FieldLink
+            label="Seller"
+            href={`/app/companies/${deal.sellerOrgId}`}
+            text={deal.sellerName ?? deal.sellerOrgId}
+          />
+        ) : (
+          <Field label="Seller" value="—" />
+        )}
+        <Field
+          label="OFAC screening"
+          value={humanize(deal.ofacStatus)}
+          tone={deal.ofacStatus === "cleared" ? "good" : "warn"}
+        />
+      </Card>
 
-          {deal.latestScenario && (
-            <Card title={`Latest scenario · ${deal.latestScenario.scenarioName}`}>
+      {deal.notes && (
+        <Card title="Notes">
+          <p className="text-sm text-white/80 whitespace-pre-line">
+            {deal.notes}
+          </p>
+        </Card>
+      )}
+
+      {deal.latestScenario && (
+        <Card title={`Latest scenario · ${deal.latestScenario.scenarioName}`}>
+          <Field
+            label="Score"
+            value={
+              deal.latestScenario.score !== null
+                ? `${Math.round(deal.latestScenario.score)}/100`
+                : "not yet scored"
+            }
+          />
+          {(() => {
+            const tone = scoreTone(deal.latestScenario.recommendation);
+            return (
               <Field
-                label="Score"
-                value={
-                  deal.latestScenario.score !== null
-                    ? `${Math.round(deal.latestScenario.score)}/100`
-                    : "not yet scored"
-                }
+                label="Recommendation"
+                value={deal.latestScenario.recommendation ?? "—"}
+                {...(tone ? { tone } : {})}
               />
-              {(() => {
-                const tone = scoreTone(deal.latestScenario.recommendation);
-                return (
-                  <Field
-                    label="Recommendation"
-                    value={deal.latestScenario.recommendation ?? "—"}
-                    {...(tone ? { tone } : {})}
-                  />
-                );
-              })()}
-            </Card>
-          )}
-        </div>
-
-        <aside className="flex flex-col gap-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-white/50">
-            Activity
-          </h2>
-          <ActivityTimeline subjectType="fuel_deal" subjectId={deal.id} />
-        </aside>
-      </div>
+            );
+          })()}
+        </Card>
+      )}
     </div>
   );
 }
@@ -249,6 +271,25 @@ function Field({
     <div className="grid grid-cols-[120px_1fr] gap-3 text-sm">
       <span className="text-white/50">{label}</span>
       <span className={toneClass}>{value}</span>
+    </div>
+  );
+}
+
+function FieldLink({
+  label,
+  href,
+  text,
+}: {
+  label: string;
+  href: string;
+  text: string;
+}) {
+  return (
+    <div className="grid grid-cols-[120px_1fr] gap-3 text-sm">
+      <span className="text-white/50">{label}</span>
+      <Link href={href} className="text-accent hover:underline">
+        {text}
+      </Link>
     </div>
   );
 }
