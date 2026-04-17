@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { loadEnv } from "@vex/config";
 import { createDb, RetrievalService, withTenant } from "@vex/db";
@@ -8,15 +8,35 @@ import { TenantId, type EvidencePack } from "@vex/domain";
 import { validateManifest } from "@vex/ui";
 import { loadFixture, type EvalEntryT } from "./fixture.js";
 import { QUERY_SYSTEM_PROMPT } from "../prompts/query.js";
+import { computeRegressions } from "./regressions.js";
 
-/** Pass threshold — CI eval gate fails below this. */
-const PASS_THRESHOLD = 0.8;
-
-/** Default seed tenant + user from packages/db seed-ids. */
+/** Pass threshold — Sprint 13 raised from 0.8 to 0.85. 22/25 fixtures. */
+const PASS_THRESHOLD = 0.85;
 const DEFAULT_TENANT_ID = "01HSEEDWRK0000000000000001";
 
+/** Canonical on-disk shape. Matches the admin `/admin/evals/latest`
+ *  response body the UI's Evals tab consumes. */
+interface StoredResults {
+  runAt: string;
+  fixture: string;
+  totalFixtures: number;
+  passed: number;
+  failed: number;
+  passRate: number;
+  totalCostUsd: number;
+  regressions: string[];
+  fixtures: Array<{
+    id: string;
+    question: string;
+    passed: boolean;
+    errors?: string[];
+  }>;
+}
+
+/** Internal detail the runner prints to stdout; not persisted. */
 interface CaseResult {
   id: string;
+  question: string;
   passed: boolean;
   evidenceHits: string[];
   evidenceMisses: string[];
@@ -24,16 +44,9 @@ interface CaseResult {
   answerMisses: string[];
   costUsd: number;
   cacheReadTokens: number;
-  reason?: string;
-}
-
-interface RunSummary {
-  fixture: string;
-  passRate: number;
-  passed: number;
-  failed: number;
-  totalCostUsd: number;
-  cases: CaseResult[];
+  manifestValid: boolean;
+  manifestError?: string;
+  runtimeError?: string;
 }
 
 async function main(): Promise<void> {
@@ -58,35 +71,65 @@ async function main(): Promise<void> {
   const cases: CaseResult[] = [];
   for (const entry of fixtures) {
     cases.push(
-      await runCase(entry, tenantId, db, retrieval, openai, anthropic).catch((err) => ({
-        id: entry.id,
-        passed: false,
-        evidenceHits: [],
-        evidenceMisses: entry.expected_evidence_object_ids,
-        answerMatches: [],
-        answerMisses: entry.expected_answer_contains,
-        costUsd: 0,
-        cacheReadTokens: 0,
-        reason: (err as Error).message,
-      })),
+      await runCase(entry, tenantId, db, retrieval, openai, anthropic).catch(
+        (err): CaseResult => ({
+          id: entry.id,
+          question: entry.question,
+          passed: false,
+          evidenceHits: [],
+          evidenceMisses: entry.expected_evidence_object_ids,
+          answerMatches: [],
+          answerMisses: entry.expected_answer_contains,
+          costUsd: 0,
+          cacheReadTokens: 0,
+          manifestValid: false,
+          runtimeError: (err as Error).message,
+        }),
+      ),
     );
   }
 
-  const summary: RunSummary = {
+  const prev = readPreviousResults(resultsPath(fixtureName));
+  const regressions = computeRegressions(
+    prev
+      ? prev.fixtures.map((f) => ({ id: f.id, passed: f.passed }))
+      : null,
+    cases.map((c) => ({ id: c.id, passed: c.passed })),
+  );
+
+  const passed = cases.filter((c) => c.passed).length;
+  const failed = cases.length - passed;
+  const stored: StoredResults = {
+    runAt: new Date().toISOString(),
     fixture: fixtureName,
-    passRate: cases.filter((c) => c.passed).length / cases.length,
-    passed: cases.filter((c) => c.passed).length,
-    failed: cases.filter((c) => !c.passed).length,
+    totalFixtures: cases.length,
+    passed,
+    failed,
+    passRate: cases.length > 0 ? passed / cases.length : 0,
     totalCostUsd: cases.reduce((s, c) => s + c.costUsd, 0),
-    cases,
+    regressions,
+    fixtures: cases.map((c) => {
+      const errors = collectErrors(c);
+      return {
+        id: c.id,
+        question: c.question,
+        passed: c.passed,
+        ...(errors.length > 0 ? { errors } : {}),
+      };
+    }),
   };
 
-  printSummary(summary);
-  writeResults(summary);
+  printSummary(stored, cases);
+  writeResults(fixtureName, stored);
 
-  if (summary.passRate < PASS_THRESHOLD) {
+  if (stored.passRate < PASS_THRESHOLD) {
     fail(
-      `eval gate failed: ${(summary.passRate * 100).toFixed(0)}% < ${PASS_THRESHOLD * 100}% required`,
+      `eval gate failed: ${(stored.passRate * 100).toFixed(0)}% < ${PASS_THRESHOLD * 100}% required (${passed}/${cases.length})`,
+    );
+  }
+  if (regressions.length > 0) {
+    fail(
+      `eval regression: ${regressions.length} fixture(s) regressed — ${regressions.join(", ")}`,
     );
   }
 }
@@ -115,8 +158,6 @@ async function runCase(
   });
 
   const validated = validateManifest(queryResult.viewManifest);
-  // Validation failure is allowed (we have a fallback) but counts against the
-  // case if the answer text also doesn't satisfy expectations.
 
   const evidenceObjectIds = new Set(
     [...pack.summaries, ...pack.items].map((item) => item.object_id),
@@ -137,44 +178,85 @@ async function runCase(
   );
 
   const evidenceOk = evidenceHits.length > 0;
-  const answerOk = answerMatches.length >= Math.ceil(entry.expected_answer_contains.length / 2);
-  const validationOk = validated.success;
+  const answerOk =
+    answerMatches.length >= Math.ceil(entry.expected_answer_contains.length / 2);
 
   return {
     id: entry.id,
-    passed: evidenceOk && answerOk && validationOk,
+    question: entry.question,
+    passed: evidenceOk && answerOk && validated.success,
     evidenceHits,
     evidenceMisses,
     answerMatches,
     answerMisses,
     costUsd: queryResult.costUsd,
     cacheReadTokens: queryResult.cacheReadTokens,
-    ...(validated.success ? {} : { reason: `manifest_invalid:${validated.error.slice(0, 80)}` }),
+    manifestValid: validated.success,
+    ...(validated.success ? {} : { manifestError: validated.error.slice(0, 80) }),
   };
 }
 
-function printSummary(summary: RunSummary): void {
+/** Turn a CaseResult's diagnostics into short, human-readable strings the
+ *  admin UI surfaces under each failed fixture. */
+function collectErrors(c: CaseResult): string[] {
+  const out: string[] = [];
+  if (c.runtimeError) out.push(`runtime: ${c.runtimeError.slice(0, 160)}`);
+  if (c.evidenceMisses.length > 0)
+    out.push(`evidence missing: ${c.evidenceMisses.join(", ")}`);
+  if (c.answerMisses.length > 0)
+    out.push(`answer missing keywords: ${c.answerMisses.join(", ")}`);
+  if (!c.manifestValid)
+    out.push(`manifest invalid${c.manifestError ? `: ${c.manifestError}` : ""}`);
+  return out;
+}
+
+function printSummary(stored: StoredResults, cases: CaseResult[]): void {
   const lines: string[] = [];
-  lines.push(`eval/${summary.fixture}: ${summary.passed}/${summary.cases.length} passed`);
-  lines.push(`  pass_rate=${(summary.passRate * 100).toFixed(0)}%`);
-  lines.push(`  total_cost_usd=${summary.totalCostUsd.toFixed(4)}`);
-  for (const c of summary.cases) {
+  lines.push(
+    `eval/${stored.fixture}: ${stored.passed}/${stored.totalFixtures} passed`,
+  );
+  lines.push(`  pass_rate=${(stored.passRate * 100).toFixed(0)}%`);
+  lines.push(`  total_cost_usd=${stored.totalCostUsd.toFixed(4)}`);
+  if (stored.regressions.length > 0) {
+    lines.push(`  regressions: ${stored.regressions.join(", ")}`);
+  }
+  for (const c of cases) {
     const flag = c.passed ? "PASS" : "FAIL";
     lines.push(
       `  [${flag}] ${c.id}: evidence ${c.evidenceHits.length}/${c.evidenceHits.length + c.evidenceMisses.length}` +
         ` | answer ${c.answerMatches.length}/${c.answerMatches.length + c.answerMisses.length}` +
         ` | cache_read=${c.cacheReadTokens}` +
-        (c.reason ? ` | ${c.reason}` : ""),
+        (c.runtimeError ? ` | err=${c.runtimeError.slice(0, 60)}` : "") +
+        (c.manifestError ? ` | manifest_invalid:${c.manifestError}` : ""),
     );
   }
   // eslint-disable-next-line no-console
   console.log(lines.join("\n"));
 }
 
-function writeResults(summary: RunSummary): void {
-  const path = resolve(process.cwd(), "evals/results/latest.json");
+function resultsPath(fixtureName: string): string {
+  // `latest.json` is always the primary fixture output; named fixtures
+  // (non-default) get their own files so multiple eval suites don't
+  // clobber each other.
+  if (fixtureName === "fixtures") {
+    return resolve(process.cwd(), "evals/results/latest.json");
+  }
+  return resolve(process.cwd(), `evals/results/latest.${fixtureName}.json`);
+}
+
+function readPreviousResults(path: string): StoredResults | null {
+  try {
+    const raw = readFileSync(path, "utf8");
+    return JSON.parse(raw) as StoredResults;
+  } catch {
+    return null;
+  }
+}
+
+function writeResults(fixtureName: string, stored: StoredResults): void {
+  const path = resultsPath(fixtureName);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(summary, null, 2), "utf8");
+  writeFileSync(path, JSON.stringify(stored, null, 2), "utf8");
 }
 
 function fail(msg: string): never {
