@@ -40,6 +40,13 @@ const NAV_ITEMS: NavItem[] = [
       "M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10",
   },
   {
+    href: "/app/chat",
+    label: "Chat",
+    matchKey: "/app/chat",
+    iconPath:
+      "M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.26 0-2.46-.23-3.55-.65L3 21l1.67-4.5C3.6 15.2 3 13.66 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
+  },
+  {
     href: "/app/deals",
     label: "Deals",
     matchKey: "/app/deals",
