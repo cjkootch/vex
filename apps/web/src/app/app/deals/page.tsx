@@ -6,6 +6,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
 import { NewDealForm } from "@/components/crm/new-deal-form";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
+import { fetchWithRetry } from "@/lib/fetch-with-retry";
 
 interface DealRow {
   id: string;
@@ -54,12 +55,19 @@ export default function DealsPage() {
   useEffect(() => {
     let cancelled = false;
     const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
-    fetch(`/api/deals${qs}`)
+    fetchWithRetry(`/api/deals${qs}`, {
+      onWaking: () => {
+        if (!cancelled) setError("API is waking up…");
+      },
+    })
       .then(async (res) => {
         if (res.status === 404) {
           throw new Error(
             "apps/api doesn't have /deals yet — redeploy it on Fly.",
           );
+        }
+        if (res.status === 502 || res.status === 503) {
+          throw new Error("API is still waking up. Try again in a moment.");
         }
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return res.json();

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
 import { NewCompanyForm } from "@/components/crm/new-company-form";
+import { fetchWithRetry } from "@/lib/fetch-with-retry";
 
 interface OrganizationRow {
   id: string;
@@ -25,8 +26,15 @@ export default function CompaniesPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/organizations")
+    fetchWithRetry("/api/organizations", {
+      onWaking: () => {
+        if (!cancelled) setError("API is waking up…");
+      },
+    })
       .then(async (res) => {
+        if (res.status === 502 || res.status === 503) {
+          throw new Error("API is still waking up. Try again in a moment.");
+        }
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
         return res.json();
       })
