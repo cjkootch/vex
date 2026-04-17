@@ -37,6 +37,13 @@ export const EnvSchema = z.object({
   // Model pinning (invariants demand explicit model versions)
   ANTHROPIC_REASONING_MODEL: z.string().default("claude-sonnet-4-20250514"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  /**
+   * OpenAI Realtime model used for browser voice sessions (Sprint 9).
+   * Ephemeral session tokens are minted against this model.
+   */
+  VOICE_REALTIME_MODEL: z.string().default("gpt-4o-realtime-preview-2024-12-17"),
+  /** Voice context token budget — hard ceiling enforced by VoiceContextBuilder. */
+  VOICE_CONTEXT_TOKEN_BUDGET: z.coerce.number().int().positive().default(10_000),
 
   // PSTN / email
   TWILIO_ACCOUNT_SID: z.string().optional(),

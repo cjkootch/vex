@@ -23,3 +23,17 @@ export {
   type ApprovalDecision,
 } from "./approval-repository.js";
 export { ThreadRepository } from "./thread-repository.js";
+export {
+  PostgresCostLedgerRepository,
+  type CostLedgerRepository,
+} from "./cost-ledger-repository.js";
+export {
+  CounterpartyRiskRepository,
+  FuelDealRepository,
+  FuelDealScenarioRepository,
+  FuelMarketRateRepository,
+  type CounterpartyScoreUpsert,
+  type FuelDealCreate,
+  type FuelDealScenarioCreate,
+  type FuelMarketRateInsert,
+} from "./deals.js";

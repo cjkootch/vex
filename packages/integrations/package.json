@@ -25,6 +25,10 @@
     "./resend": {
       "types": "./dist/resend.d.ts",
       "default": "./dist/resend.js"
+    },
+    "./s3": {
+      "types": "./dist/s3.d.ts",
+      "default": "./dist/s3.js"
     }
   },
   "scripts": {
@@ -36,6 +40,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.27.3",
+    "@aws-sdk/client-s3": "3.645.0",
     "@temporalio/client": "1.11.1",
     "openai": "4.56.0",
     "resend": "3.5.0",

@@ -201,4 +201,75 @@ describe("AgentRunner.run", () => {
     expect(record.error).toBe("boom");
     expect(fixture.auditCalls.map((c) => c.verb)).toContain("agent.failed");
   });
+
+  it("skips a T1+ run when today's cost is at the workspace cap", async () => {
+    const fixture = buildDeps({ enabled_agents: ["follow_up"], kill_all_agents: false });
+    const deps = fixture.deps as unknown as {
+      costLedgerRepo?: {
+        sumForTenantToday: (tx: unknown, tenantId: string) => Promise<number>;
+        sumBetween: (tx: unknown, tenantId: string, a: Date, b: Date) => Promise<number>;
+      };
+    };
+    deps.costLedgerRepo = {
+      async sumBetween() {
+        return 100_000_000;
+      },
+      async sumForTenantToday() {
+        return 100_000_000;
+      },
+    };
+    const runner = new AgentRunner(fixture.deps);
+    const record = await runner.run(new FakeAgent("follow_up", "T1"), {
+      workspaceId: "ws-1",
+    });
+    expect(record.status).toBe("skipped_cost_limit");
+    expect(record.rationale).toMatch(/daily cost limit/);
+    expect(fixture.agentRunCalls).toHaveLength(0);
+  });
+
+  it("lets a T1+ run through when today's cost is below the cap", async () => {
+    const fixture = buildDeps({ enabled_agents: ["follow_up"], kill_all_agents: false });
+    const deps = fixture.deps as unknown as {
+      costLedgerRepo?: {
+        sumForTenantToday: (tx: unknown, tenantId: string) => Promise<number>;
+        sumBetween: (tx: unknown, tenantId: string, a: Date, b: Date) => Promise<number>;
+      };
+    };
+    deps.costLedgerRepo = {
+      async sumBetween() {
+        return 1_000_000;
+      },
+      async sumForTenantToday() {
+        return 1_000_000;
+      },
+    };
+    const runner = new AgentRunner(fixture.deps);
+    const record = await runner.run(new FakeAgent("follow_up", "T1"), {
+      workspaceId: "ws-1",
+    });
+    expect(record.status).toBe("completed");
+  });
+
+  it("skips the cost gate for T0 agents (read-only, always allowed)", async () => {
+    const fixture = buildDeps({ enabled_agents: ["daily_brief"], kill_all_agents: false });
+    const sumForTenantToday = vi.fn(async () => 999_999_999);
+    const deps = fixture.deps as unknown as {
+      costLedgerRepo?: {
+        sumForTenantToday: (tx: unknown, tenantId: string) => Promise<number>;
+        sumBetween: (tx: unknown, tenantId: string, a: Date, b: Date) => Promise<number>;
+      };
+    };
+    deps.costLedgerRepo = {
+      sumForTenantToday,
+      async sumBetween() {
+        return 999_999_999;
+      },
+    };
+    const runner = new AgentRunner(fixture.deps);
+    const record = await runner.run(new FakeAgent("daily_brief", "T0"), {
+      workspaceId: "ws-1",
+    });
+    expect(record.status).toBe("completed");
+    expect(sumForTenantToday).not.toHaveBeenCalled();
+  });
 });

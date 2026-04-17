@@ -132,5 +132,51 @@
     "expected_evidence_object_ids": ["01HSEEDWRK0000000000000001"],
     "expected_answer_contains": ["kill", "skipped"],
     "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_001",
+    "question": "What is the net margin per gallon on deal VTC-2026-001?",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": ["01HSEEDDEA0000000000000001"],
+    "expected_answer_contains": ["VTC-2026-001", "margin"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_002",
+    "question": "Which deals have vessel utilization below 50%?",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": ["01HSEEDDEA0000000000000001"],
+    "expected_answer_contains": ["VTC-2026-001", "utilization"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_003",
+    "question": "Show me all deals with compliance holds or OFAC not cleared.",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": [
+      "01HSEEDDEA0000000000000001",
+      "01HSEEDDEA0000000000000003"
+    ],
+    "expected_answer_contains": ["VTC-2026-001", "VTC-2026-003"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_004",
+    "question": "What is the total estimated EBITDA across all active deals?",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": [
+      "01HSEEDDEA0000000000000001",
+      "01HSEEDDEA0000000000000002"
+    ],
+    "expected_answer_contains": ["EBITDA"],
+    "retrieval_mode": "hybrid"
+  },
+  {
+    "id": "eval_deal_005",
+    "question": "What happens to VTC-2026-002 margin if Platts moves up $0.05/USG?",
+    "expected_subject_types": ["fuel_deal"],
+    "expected_evidence_object_ids": ["01HSEEDDEA0000000000000002"],
+    "expected_answer_contains": ["VTC-2026-002", "margin"],
+    "retrieval_mode": "hybrid"
   }
 ]

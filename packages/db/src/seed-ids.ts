@@ -26,6 +26,10 @@ export const SEED_ORG_IDS = {
   initech: make("CRP", 3),
   umbrella: make("CRP", 4),
   stark: make("CRP", 5),
+  // Sprint 11 — Caribbean buyers used by the fuel deal seed.
+  massy: make("CRP", 6), // Massy United Industries (Jamaica) — ULSD buyer
+  punta: make("CRP", 7), // Punta Caucedo Energy (DR) — ULSD buyer
+  caribAir: make("CRP", 8), // Caribbean Airlines (Trinidad) — Jet A1 buyer
 } as const;
 
 export const SEED_CONTACT_IDS = Array.from({ length: 20 }, (_, i) => make("CNT", i + 1));
@@ -49,6 +53,64 @@ export const SEED_SUMMARY_IDS = {
 export const SEED_RAW_EVENT_IDS = Array.from({ length: 3 }, (_, i) => make("RAW", i + 1));
 export const SEED_EVENT_IDS = Array.from({ length: 3 }, (_, i) => make("EVT", i + 1));
 
+// ---------------------------------------------------------------------------
+// Sprint 11 — fuel deal seed IDs
+// ---------------------------------------------------------------------------
+
+export const SEED_FUEL_DEAL_IDS = {
+  deal1: make("DEA", 1), // VTC-2026-001 — ULSD → Jamaica, low vessel utilization
+  deal2: make("DEA", 2), // VTC-2026-002 — ULSD → Dominican Republic, healthy
+  deal3: make("DEA", 3), // VTC-2026-003 — Jet A1 → Trinidad, BIS missing
+} as const;
+
+export const SEED_FUEL_DEAL_REFS = {
+  deal1: "VTC-2026-001",
+  deal2: "VTC-2026-002",
+  deal3: "VTC-2026-003",
+} as const;
+
+export const SEED_FUEL_DEAL_COST_STACK_IDS = {
+  deal1: make("FCS", 1),
+  deal2: make("FCS", 2),
+  deal3: make("FCS", 3),
+} as const;
+
+export const SEED_FUEL_DEAL_SCENARIO_IDS = {
+  deal1Base: make("FSC", 1),
+  deal2Base: make("FSC", 2),
+  deal3Base: make("FSC", 3),
+} as const;
+
+/**
+ * Flat aliases for the Sprint 11 fuel-deal seed IDs. Eval fixtures and
+ * unit tests can reference these short names without drilling into the
+ * grouped const objects above. Source of truth remains the grouped
+ * objects — these are just re-exports.
+ */
+export const DEAL_1_ID = SEED_FUEL_DEAL_IDS.deal1;
+export const DEAL_2_ID = SEED_FUEL_DEAL_IDS.deal2;
+export const DEAL_3_ID = SEED_FUEL_DEAL_IDS.deal3;
+
+export const SCENARIO_1_ID = SEED_FUEL_DEAL_SCENARIO_IDS.deal1Base;
+export const SCENARIO_2_ID = SEED_FUEL_DEAL_SCENARIO_IDS.deal2Base;
+export const SCENARIO_3_ID = SEED_FUEL_DEAL_SCENARIO_IDS.deal3Base;
+
+/** 15 IDs = 5 cashflow events per deal × 3 deals. */
+export const SEED_FUEL_DEAL_CASHFLOW_IDS = Array.from(
+  { length: 15 },
+  (_, i) => make("FCF", i + 1),
+);
+
+export const SEED_COUNTERPARTY_SCORE_IDS = {
+  massy: make("CRS", 1),
+  punta: make("CRS", 2),
+  caribAir: make("CRS", 3),
+} as const;
+
+export const SEED_FUEL_MARKET_RATE_IDS = Array.from({ length: 5 }, (_, i) =>
+  make("FMR", i + 1),
+);
+
 /**
  * Flat list of every seed ID. Useful for sanity-checking fixtures.
  */
@@ -62,4 +124,11 @@ export const ALL_SEED_IDS: readonly string[] = [
   ...Object.values(SEED_SUMMARY_IDS),
   ...SEED_RAW_EVENT_IDS,
   ...SEED_EVENT_IDS,
+  // Sprint 11
+  ...Object.values(SEED_FUEL_DEAL_IDS),
+  ...Object.values(SEED_FUEL_DEAL_COST_STACK_IDS),
+  ...Object.values(SEED_FUEL_DEAL_SCENARIO_IDS),
+  ...SEED_FUEL_DEAL_CASHFLOW_IDS,
+  ...Object.values(SEED_COUNTERPARTY_SCORE_IDS),
+  ...SEED_FUEL_MARKET_RATE_IDS,
 ];

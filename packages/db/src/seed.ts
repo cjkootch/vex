@@ -6,10 +6,21 @@ import { loadEnv } from "@vex/config";
 import { createId } from "@vex/domain";
 import * as schema from "./schema/index.js";
 import {
+  calculateFuelDeal,
+  type FuelDealInputs,
+} from "./deals/calculator.js";
+import {
   SEED_ADMIN_USER_ID,
   SEED_CAMPAIGN_IDS,
   SEED_CONTACT_IDS,
+  SEED_COUNTERPARTY_SCORE_IDS,
   SEED_EVENT_IDS,
+  SEED_FUEL_DEAL_CASHFLOW_IDS,
+  SEED_FUEL_DEAL_COST_STACK_IDS,
+  SEED_FUEL_DEAL_IDS,
+  SEED_FUEL_DEAL_REFS,
+  SEED_FUEL_DEAL_SCENARIO_IDS,
+  SEED_FUEL_MARKET_RATE_IDS,
   SEED_ORG_IDS,
   SEED_RAW_EVENT_IDS,
   SEED_SUMMARY_IDS,
@@ -126,6 +137,43 @@ async function main(): Promise<void> {
         fitScore: 0.97,
         sourceOfTruth: "internal",
         externalKeys: { apollo: "apollo-stark-777", salesforce: "0015x00000Stark2" },
+        fieldConfidence: {},
+      },
+      // Sprint 11 — Caribbean buyers for the fuel deal seed.
+      {
+        id: SEED_ORG_IDS.massy,
+        tenantId,
+        legalName: "Massy United Industries",
+        domain: "massyunited.test",
+        industry: "Fuel Distribution",
+        geo: { country: "JM", region: "Kingston" },
+        fitScore: 0.88,
+        sourceOfTruth: "internal",
+        externalKeys: { internal: "vtc-buyer-massy" },
+        fieldConfidence: {},
+      },
+      {
+        id: SEED_ORG_IDS.punta,
+        tenantId,
+        legalName: "Punta Caucedo Energy",
+        domain: "puntacaucedo.test",
+        industry: "Fuel Distribution",
+        geo: { country: "DO", region: "Santo Domingo" },
+        fitScore: 0.81,
+        sourceOfTruth: "internal",
+        externalKeys: { internal: "vtc-buyer-punta" },
+        fieldConfidence: {},
+      },
+      {
+        id: SEED_ORG_IDS.caribAir,
+        tenantId,
+        legalName: "Caribbean Airlines",
+        domain: "caribbean-airlines.test",
+        industry: "Aviation",
+        geo: { country: "TT", region: "Port of Spain" },
+        fitScore: 0.76,
+        sourceOfTruth: "internal",
+        externalKeys: { internal: "vtc-buyer-caribair" },
         fieldConfidence: {},
       },
     ]);
@@ -285,6 +333,884 @@ async function main(): Promise<void> {
         metadata: { from_raw_event: SEED_RAW_EVENT_IDS[i] },
       })),
     );
+
+    // -----------------------------------------------------------------------
+    // Sprint 11 — Deal 1 (VTC-2026-001)
+    //
+    // ULSD Houston → Kingston, Jamaica. CIF, LC sight payment. Ships on an
+    // MR tanker carrying only 14% of its capacity — this exists to
+    // demonstrate the vessel-underutilization critical warning and the
+    // matching "do_not_proceed" recommendation regardless of numeric score.
+    // OFAC screening is in_progress, so a secondary compliance caution
+    // also surfaces.
+    // -----------------------------------------------------------------------
+    const deal1Inputs: FuelDealInputs = {
+      dealRef: SEED_FUEL_DEAL_REFS.deal1,
+      product: "ulsd",
+      incoterm: "cif",
+      volumeUsg: 2_000_000,
+      densityKgL: 0.845, // ULSD @ 15°C
+      volumeTolerancePct: 5,
+      sellPricePerUsg: 2.9,
+      buyerCurrencyCode: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      productCostPerUsg: 2.4, // Platts USGC ULSD + 4¢
+      productQualityPremiumPerUsg: 0,
+      // freightPerUsg gets the all-in rate from calculateVesselEconomics's
+      // full-load reference; the vessel sub-record carries the actual
+      // utilization penalty, which the warning generator surfaces.
+      freightPerUsg: 0.255,
+      cargoInsurancePct: 0.0018,
+      warRiskPremiumPct: 0.0005,
+      politicalRiskPremiumPct: 0.0002,
+      dischargeHandlingPerUsg: 0.012,
+      compliancePerUsg: 0.003,
+      tradeFinancePerUsg: 0.008,
+      intermediaryFeePerUsg: 0.005,
+      vtcVariableOpsPerUsg: 0.003,
+      vessel: {
+        capacityUsg: 14_000_000, // typical MR tanker ~42 kMT
+        utilizationPct: 14,
+        freightLumpSumUsd: 500_000,
+        demurrageRatePerDay: 25_000,
+        demurrageEstimatedDays: 0.5,
+        despatchRatePerDay: 12_500,
+        portDuesLoadUsd: 18_000,
+        portDuesDischargeUsd: 22_000,
+        canalTransitUsd: 0,
+      },
+      overheadAllocationUsd: 35_000,
+      tradeFinance: {
+        type: "lc_sight",
+        lcValueUsd: 5_800_000,
+        lcMarginPct: 0.1,
+      },
+      counterpartyRiskScore: 30,
+      countryRiskScore: 40, // Jamaica — Coface/OECD mid band
+      thresholds: {
+        maxPeakCashExposureUsd: 5_000_000,
+        minGrossMarginPct: 0.05,
+        minNetMarginPerUsg: 0.03,
+        maxCounterpartyRiskScore: 65,
+        maxCountryRiskScore: 70,
+        maxDemurrageDays: 2,
+      },
+      monthlyFixedOverheadUsd: 120_000,
+      compliance: {
+        ofac: "in_progress",
+        bisRequired: false,
+        bisIssued: false,
+        eeiRequired: true,
+        eeiFiled: false,
+      },
+    };
+    const deal1Results = calculateFuelDeal(deal1Inputs);
+
+    await db.insert(schema.fuelDeals).values({
+      id: SEED_FUEL_DEAL_IDS.deal1,
+      tenantId,
+      dealRef: SEED_FUEL_DEAL_REFS.deal1,
+      status: "negotiating",
+      dealType: "spot",
+      product: "ulsd",
+      productGrade: "ULSD 15 ppm S",
+      productSpecNotes: "Flashpoint 52°C min, cetane 40 min",
+      originCountry: "US",
+      originPort: "Houston",
+      originTerminal: "Kinder Morgan Galena Park",
+      destinationCountry: "JM",
+      destinationPort: "Kingston",
+      destinationTerminal: "Petrojam Refinery",
+      incoterm: "cif",
+      pricingBasis: "platts",
+      pricingFormula: "Platts US Gulf Coast ULSD + $0.04/gal",
+      priceLockDate: "2026-04-14",
+      priceLockTime: "Platts 10-day average around BL date",
+      volumeUsg: deal1Inputs.volumeUsg,
+      volumeMt: deal1Results.volumeMt,
+      volumeBbls: deal1Results.volumeBbls,
+      densityKgL: deal1Inputs.densityKgL,
+      volumeTolerancePct: deal1Inputs.volumeTolerancePct,
+      currency: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      buyerOrgId: SEED_ORG_IDS.massy,
+      laycanStart: "2026-04-22",
+      laycanEnd: "2026-04-26",
+      blDateEstimated: "2026-04-24",
+      etaDestination: "2026-04-30",
+      paymentTerms: "lc_sight",
+      lcIssuingBank: "National Commercial Bank Jamaica",
+      lcConfirmingBank: "Citibank N.A.",
+      lcValueUsd: 5_800_000,
+      lcExpiryDate: "2026-05-20",
+      lcMarginPct: 0.1,
+      tradeFinanceCostPct: 0.012,
+      ofacScreeningStatus: "in_progress",
+      bisLicenseRequired: false,
+      eeiFilingRequired: true,
+      complianceHold: false,
+      counterpartyRiskScore: 30,
+      countryRiskScore: 40,
+      politicalRiskInsured: false,
+      notes:
+        "Repeat Kingston lane. Freight is carrying a heavy underutilization penalty — vessel share search open.",
+      internalNotes: "VTC demo deal — seeded to exercise the vessel utilization warning path.",
+      createdBy: SEED_ADMIN_USER_ID,
+    });
+
+    await db.insert(schema.fuelDealCostStack).values({
+      id: SEED_FUEL_DEAL_COST_STACK_IDS.deal1,
+      tenantId,
+      dealId: SEED_FUEL_DEAL_IDS.deal1,
+      productCostPerUsg: deal1Inputs.productCostPerUsg,
+      productQualityPremiumUsg: 0,
+      productCostBasis: "Platts + 4¢ settled 2026-04-14",
+      vesselName: "MT Osprey Venture",
+      vesselType: "tanker_mr",
+      vesselCapacityUsg: deal1Inputs.vessel!.capacityUsg,
+      vesselUtilizationPct: deal1Inputs.vessel!.utilizationPct,
+      freightBasis: "lump_sum",
+      freightRateRaw: deal1Inputs.vessel!.freightLumpSumUsd,
+      freightRatePerUsg: deal1Results.vessel!.freightPerUsgIfFullLoad,
+      freightCurrency: "usd",
+      demurrageRatePerDay: deal1Inputs.vessel!.demurrageRatePerDay,
+      demurrageAllowedHours: 72,
+      demurrageDaysEstimated: deal1Inputs.vessel!.demurrageEstimatedDays,
+      demurrageCostEstimated:
+        deal1Inputs.vessel!.demurrageRatePerDay * deal1Inputs.vessel!.demurrageEstimatedDays,
+      despatchRatePerDay: deal1Inputs.vessel!.despatchRatePerDay,
+      portDuesLoadUsd: deal1Inputs.vessel!.portDuesLoadUsd,
+      portDuesDischargeUsd: deal1Inputs.vessel!.portDuesDischargeUsd,
+      canalTransitCostUsd: 0,
+      freightTotalUsd:
+        deal1Inputs.vessel!.freightLumpSumUsd +
+        deal1Inputs.vessel!.portDuesLoadUsd +
+        deal1Inputs.vessel!.portDuesDischargeUsd,
+      freightPerUsgAllIn: deal1Results.vessel!.freightActualPerUsg,
+      cargoInsurancePct: deal1Inputs.cargoInsurancePct,
+      cargoInsuranceUsd: deal1Results.insurance.cargoInsuranceUsd,
+      warRiskPremiumPct: deal1Inputs.warRiskPremiumPct,
+      warRiskUsd: deal1Results.insurance.warRiskUsd,
+      politicalRiskPremiumPct: deal1Inputs.politicalRiskPremiumPct,
+      politicalRiskUsd: deal1Results.insurance.politicalRiskUsd,
+      totalInsurancePerUsg: deal1Results.insurance.totalInsurancePerUsg,
+      dischargeHandlingPerUsg: deal1Inputs.dischargeHandlingPerUsg,
+      inspectionFeeUsd: 4_500,
+      samplingTestingUsd: 2_500,
+      totalCompliancePerUsg: deal1Inputs.compliancePerUsg,
+      ofacScreeningFeeUsd: 1_500,
+      eeiFilingFeeUsd: 300,
+      complianceLegalUsd: 4_000,
+      lcFeeUsd: 29_000,
+      tradeFinanceTotalUsd: deal1Inputs.tradeFinancePerUsg * deal1Inputs.volumeUsg,
+      tradeFinancePerUsg: deal1Inputs.tradeFinancePerUsg,
+      brokeragePct: 0.002,
+      intermediaryFeePct: 0,
+      totalAgentPerUsg: deal1Inputs.intermediaryFeePerUsg,
+      vtcVariableOpsPerUsg: deal1Inputs.vtcVariableOpsPerUsg,
+      overheadAllocationUsd: deal1Inputs.overheadAllocationUsd,
+      overheadPerUsg: deal1Results.perUsg.overheadAllocation,
+      totalLandedCostPerUsg:
+        deal1Results.perUsg.totalVariableCost + deal1Results.perUsg.overheadAllocation,
+      grossMarginPerUsg: deal1Results.perUsg.grossMargin,
+      grossMarginPct: deal1Results.totals.grossMarginPct,
+      netMarginPerUsg: deal1Results.perUsg.netMargin,
+      netMarginPct: deal1Results.totals.ebitdaMarginPct,
+      ebitdaUsd: deal1Results.totals.ebitdaUsd,
+      breakevenSellPriceUsg: deal1Results.breakeven.sellPricePerUsg,
+    });
+
+    await db.insert(schema.fuelDealCashflowEvents).values([
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[0]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal1,
+        dayRelative: -10,
+        label: "Freight deposit (20% of freight)",
+        direction: "outflow",
+        eventType: "freight_deposit",
+        baseType: "freight",
+        amountPct: 0.2,
+        amountFixedUsd: null,
+        amountCalculatedUsd: 0.2 * deal1Results.totals.freightUsd,
+        counterparty: "Osprey Shipping Agents",
+        paymentMethod: "wire",
+      },
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[1]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal1,
+        dayRelative: -3,
+        label: "Product purchase (100% of product cost)",
+        direction: "outflow",
+        eventType: "product_purchase",
+        baseType: "product_cost",
+        amountPct: 1,
+        amountFixedUsd: null,
+        amountCalculatedUsd: deal1Results.totals.productCostUsd,
+        counterparty: "US Gulf Coast supplier",
+        paymentMethod: "wire",
+      },
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[2]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal1,
+        dayRelative: 1,
+        label: "Buyer LC payment on documents (100% of revenue)",
+        direction: "inflow",
+        eventType: "lc_payment",
+        baseType: "revenue",
+        amountPct: 1,
+        amountFixedUsd: null,
+        amountCalculatedUsd: deal1Results.totals.revenueUsd,
+        counterparty: "Massy United Industries",
+        paymentMethod: "lc",
+      },
+    ]);
+
+    await db.insert(schema.fuelDealScenarios).values({
+      id: SEED_FUEL_DEAL_SCENARIO_IDS.deal1Base,
+      tenantId,
+      dealId: SEED_FUEL_DEAL_IDS.deal1,
+      scenarioName: "Base Case",
+      scenarioType: "base",
+      isActive: true,
+      sellPricePerUsg: deal1Inputs.sellPricePerUsg,
+      resultsJson: deal1Results as unknown as Record<string, unknown>,
+      score: deal1Results.scorecard.overallScore,
+      recommendation: deal1Results.scorecard.recommendation,
+      calculatedAt: now,
+      notes:
+        "Base case at current Platts. Critical vessel utilization warning is expected — share-vessel negotiation needed before approval.",
+    });
+
+    // -----------------------------------------------------------------------
+    // Sprint 11 — Deal 2 (VTC-2026-002)
+    //
+    // ULSD Houston → Santo Domingo (Punta Caucedo). FOB pricing basis but
+    // VTC still coordinates the vessel for reimbursement against the LC.
+    // Vessel is a small coastal tanker at 85% utilization — freight is
+    // healthy and the deal prices comfortably above breakeven.
+    // OFAC is cleared, BIS not required, EEI filed — clean compliance.
+    // Expected scorecard lands in the "acceptable" band (~78).
+    // -----------------------------------------------------------------------
+    const deal2Inputs: FuelDealInputs = {
+      dealRef: SEED_FUEL_DEAL_REFS.deal2,
+      product: "ulsd",
+      incoterm: "fob",
+      volumeUsg: 3_500_000,
+      densityKgL: 0.845,
+      volumeTolerancePct: 5,
+      sellPricePerUsg: 2.59,
+      buyerCurrencyCode: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      productCostPerUsg: 2.35, // Platts FOB USGC ULSD
+      productQualityPremiumPerUsg: 0,
+      freightPerUsg: 0.07, // matches the vessel full-load figure
+      cargoInsurancePct: 0.0015,
+      warRiskPremiumPct: 0.0003,
+      politicalRiskPremiumPct: 0.0001,
+      dischargeHandlingPerUsg: 0.01,
+      compliancePerUsg: 0.0025,
+      tradeFinancePerUsg: 0.006,
+      intermediaryFeePerUsg: 0.002,
+      vtcVariableOpsPerUsg: 0.002,
+      vessel: {
+        capacityUsg: 4_200_000, // small coastal tanker (~13 kMT)
+        utilizationPct: 85,
+        freightLumpSumUsd: 250_000,
+        demurrageRatePerDay: 18_000,
+        demurrageEstimatedDays: 0.3,
+        despatchRatePerDay: 9_000,
+        portDuesLoadUsd: 15_000,
+        portDuesDischargeUsd: 19_000,
+        canalTransitUsd: 0,
+      },
+      overheadAllocationUsd: 60_000,
+      tradeFinance: {
+        type: "lc_sight",
+        lcValueUsd: 9_100_000,
+        lcMarginPct: 0.08,
+      },
+      counterpartyRiskScore: 40,
+      countryRiskScore: 55, // Dominican Republic — Coface B
+      thresholds: {
+        maxPeakCashExposureUsd: 5_000_000,
+        minGrossMarginPct: 0.05,
+        minNetMarginPerUsg: 0.03,
+        maxCounterpartyRiskScore: 65,
+        maxCountryRiskScore: 70,
+        maxDemurrageDays: 2,
+      },
+      monthlyFixedOverheadUsd: 120_000,
+      compliance: {
+        ofac: "cleared",
+        bisRequired: false,
+        bisIssued: false,
+        eeiRequired: true,
+        eeiFiled: true,
+      },
+    };
+    const deal2Results = calculateFuelDeal(deal2Inputs);
+
+    await db.insert(schema.fuelDeals).values({
+      id: SEED_FUEL_DEAL_IDS.deal2,
+      tenantId,
+      dealRef: SEED_FUEL_DEAL_REFS.deal2,
+      status: "approved",
+      dealType: "spot",
+      product: "ulsd",
+      productGrade: "ULSD 15 ppm S",
+      productSpecNotes: "Flashpoint 52°C min, cetane 40 min",
+      originCountry: "US",
+      originPort: "Houston",
+      originTerminal: "Magellan East Houston",
+      destinationCountry: "DO",
+      destinationPort: "Santo Domingo",
+      destinationTerminal: "Punta Caucedo",
+      incoterm: "fob",
+      pricingBasis: "platts",
+      pricingFormula: "Platts US Gulf Coast ULSD FOB + $0.02/gal",
+      priceLockDate: "2026-04-15",
+      priceLockTime: "Platts 5-day average around BL date",
+      volumeUsg: deal2Inputs.volumeUsg,
+      volumeMt: deal2Results.volumeMt,
+      volumeBbls: deal2Results.volumeBbls,
+      densityKgL: deal2Inputs.densityKgL,
+      volumeTolerancePct: deal2Inputs.volumeTolerancePct,
+      currency: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      buyerOrgId: SEED_ORG_IDS.punta,
+      laycanStart: "2026-04-25",
+      laycanEnd: "2026-04-29",
+      blDateEstimated: "2026-04-27",
+      etaDestination: "2026-05-02",
+      paymentTerms: "lc_sight",
+      lcIssuingBank: "Banco Popular Dominicano",
+      lcConfirmingBank: "JPMorgan Chase Bank",
+      lcValueUsd: 9_100_000,
+      lcExpiryDate: "2026-05-25",
+      lcMarginPct: 0.08,
+      tradeFinanceCostPct: 0.009,
+      ofacScreeningStatus: "cleared",
+      bisLicenseRequired: false,
+      eeiFilingRequired: true,
+      eeiItn: "AES-X20260415-00342",
+      complianceHold: false,
+      counterpartyRiskScore: 40,
+      countryRiskScore: 55,
+      politicalRiskInsured: true,
+      approvedBy: SEED_ADMIN_USER_ID,
+      notes: "Healthy vessel economics at 85% utilization. Approved for loading in the 25–29 Apr window.",
+      internalNotes: "VTC demo deal — seeded to exercise the acceptable recommendation path with clean compliance.",
+      createdBy: SEED_ADMIN_USER_ID,
+    });
+
+    await db.insert(schema.fuelDealCostStack).values({
+      id: SEED_FUEL_DEAL_COST_STACK_IDS.deal2,
+      tenantId,
+      dealId: SEED_FUEL_DEAL_IDS.deal2,
+      productCostPerUsg: deal2Inputs.productCostPerUsg,
+      productQualityPremiumUsg: 0,
+      productCostBasis: "Platts FOB + 2¢ settled 2026-04-15",
+      vesselName: "MT Caribbean Horizon",
+      vesselType: "coastal_tanker",
+      vesselCapacityUsg: deal2Inputs.vessel!.capacityUsg,
+      vesselUtilizationPct: deal2Inputs.vessel!.utilizationPct,
+      freightBasis: "lump_sum",
+      freightRateRaw: deal2Inputs.vessel!.freightLumpSumUsd,
+      freightRatePerUsg: deal2Results.vessel!.freightPerUsgIfFullLoad,
+      freightCurrency: "usd",
+      demurrageRatePerDay: deal2Inputs.vessel!.demurrageRatePerDay,
+      demurrageAllowedHours: 72,
+      demurrageDaysEstimated: deal2Inputs.vessel!.demurrageEstimatedDays,
+      demurrageCostEstimated:
+        deal2Inputs.vessel!.demurrageRatePerDay * deal2Inputs.vessel!.demurrageEstimatedDays,
+      despatchRatePerDay: deal2Inputs.vessel!.despatchRatePerDay,
+      portDuesLoadUsd: deal2Inputs.vessel!.portDuesLoadUsd,
+      portDuesDischargeUsd: deal2Inputs.vessel!.portDuesDischargeUsd,
+      canalTransitCostUsd: 0,
+      freightTotalUsd:
+        deal2Inputs.vessel!.freightLumpSumUsd +
+        deal2Inputs.vessel!.portDuesLoadUsd +
+        deal2Inputs.vessel!.portDuesDischargeUsd,
+      freightPerUsgAllIn: deal2Results.vessel!.freightActualPerUsg,
+      cargoInsurancePct: deal2Inputs.cargoInsurancePct,
+      cargoInsuranceUsd: deal2Results.insurance.cargoInsuranceUsd,
+      warRiskPremiumPct: deal2Inputs.warRiskPremiumPct,
+      warRiskUsd: deal2Results.insurance.warRiskUsd,
+      politicalRiskPremiumPct: deal2Inputs.politicalRiskPremiumPct,
+      politicalRiskUsd: deal2Results.insurance.politicalRiskUsd,
+      totalInsurancePerUsg: deal2Results.insurance.totalInsurancePerUsg,
+      dischargeHandlingPerUsg: deal2Inputs.dischargeHandlingPerUsg,
+      inspectionFeeUsd: 3_800,
+      samplingTestingUsd: 2_200,
+      totalCompliancePerUsg: deal2Inputs.compliancePerUsg,
+      ofacScreeningFeeUsd: 1_200,
+      eeiFilingFeeUsd: 280,
+      complianceLegalUsd: 3_000,
+      lcFeeUsd: 36_400,
+      tradeFinanceTotalUsd: deal2Inputs.tradeFinancePerUsg * deal2Inputs.volumeUsg,
+      tradeFinancePerUsg: deal2Inputs.tradeFinancePerUsg,
+      brokeragePct: 0.001,
+      intermediaryFeePct: 0,
+      totalAgentPerUsg: deal2Inputs.intermediaryFeePerUsg,
+      vtcVariableOpsPerUsg: deal2Inputs.vtcVariableOpsPerUsg,
+      overheadAllocationUsd: deal2Inputs.overheadAllocationUsd,
+      overheadPerUsg: deal2Results.perUsg.overheadAllocation,
+      totalLandedCostPerUsg:
+        deal2Results.perUsg.totalVariableCost + deal2Results.perUsg.overheadAllocation,
+      grossMarginPerUsg: deal2Results.perUsg.grossMargin,
+      grossMarginPct: deal2Results.totals.grossMarginPct,
+      netMarginPerUsg: deal2Results.perUsg.netMargin,
+      netMarginPct: deal2Results.totals.ebitdaMarginPct,
+      ebitdaUsd: deal2Results.totals.ebitdaUsd,
+      breakevenSellPriceUsg: deal2Results.breakeven.sellPricePerUsg,
+    });
+
+    await db.insert(schema.fuelDealCashflowEvents).values([
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[3]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal2,
+        dayRelative: -8,
+        label: "Freight deposit (20% of freight)",
+        direction: "outflow",
+        eventType: "freight_deposit",
+        baseType: "freight",
+        amountPct: 0.2,
+        amountFixedUsd: null,
+        amountCalculatedUsd: 0.2 * deal2Results.totals.freightUsd,
+        counterparty: "Caribbean Horizon Shipping",
+        paymentMethod: "wire",
+      },
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[4]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal2,
+        dayRelative: -2,
+        label: "Product purchase (100% of product cost)",
+        direction: "outflow",
+        eventType: "product_purchase",
+        baseType: "product_cost",
+        amountPct: 1,
+        amountFixedUsd: null,
+        amountCalculatedUsd: deal2Results.totals.productCostUsd,
+        counterparty: "US Gulf Coast supplier",
+        paymentMethod: "wire",
+      },
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[5]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal2,
+        dayRelative: 2,
+        label: "Buyer LC payment on documents (100% of revenue)",
+        direction: "inflow",
+        eventType: "lc_payment",
+        baseType: "revenue",
+        amountPct: 1,
+        amountFixedUsd: null,
+        amountCalculatedUsd: deal2Results.totals.revenueUsd,
+        counterparty: "Punta Caucedo Energy",
+        paymentMethod: "lc",
+      },
+    ]);
+
+    await db.insert(schema.fuelDealScenarios).values({
+      id: SEED_FUEL_DEAL_SCENARIO_IDS.deal2Base,
+      tenantId,
+      dealId: SEED_FUEL_DEAL_IDS.deal2,
+      scenarioName: "Base Case",
+      scenarioType: "base",
+      isActive: true,
+      sellPricePerUsg: deal2Inputs.sellPricePerUsg,
+      resultsJson: deal2Results as unknown as Record<string, unknown>,
+      score: deal2Results.scorecard.overallScore,
+      recommendation: deal2Results.scorecard.recommendation,
+      calculatedAt: now,
+      notes:
+        "Base case at current Platts FOB. Healthy vessel utilization, clean compliance — recommendation lands in the acceptable band.",
+    });
+
+    // -----------------------------------------------------------------------
+    // Sprint 11 — Deal 3 (VTC-2026-003)
+    //
+    // Jet A-1 Houston → Pointe-à-Pierre (Caribbean Airlines). Draft status,
+    // no vessel chartered yet — the `vessel` sub-record is intentionally
+    // omitted so calculateVesselEconomics returns undefined and no vessel
+    // warnings fire. The critical warning instead comes from the BIS
+    // export licence being required but not yet issued; EEI filing is
+    // also outstanding (caution). Expected recommendation: do_not_proceed
+    // regardless of numeric score, per the compliance gate.
+    // -----------------------------------------------------------------------
+    const deal3Inputs: FuelDealInputs = {
+      dealRef: SEED_FUEL_DEAL_REFS.deal3,
+      product: "jet_a1",
+      incoterm: "cif",
+      volumeUsg: 1_500_000,
+      densityKgL: 0.8, // Jet A-1 nominal
+      volumeTolerancePct: 5,
+      sellPricePerUsg: 2.9,
+      buyerCurrencyCode: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      productCostPerUsg: 2.55, // Platts USGC Jet
+      productQualityPremiumPerUsg: 0,
+      freightPerUsg: 0.1, // placeholder — no vessel chartered yet
+      cargoInsurancePct: 0.0018,
+      warRiskPremiumPct: 0.0008,
+      politicalRiskPremiumPct: 0.0002,
+      dischargeHandlingPerUsg: 0.015,
+      compliancePerUsg: 0.003,
+      tradeFinancePerUsg: 0.008,
+      intermediaryFeePerUsg: 0.005,
+      vtcVariableOpsPerUsg: 0.003,
+      // vessel intentionally omitted — draft deal, no charter yet.
+      overheadAllocationUsd: 40_000,
+      tradeFinance: {
+        type: "prepayment_80_20",
+        prepaymentPct: 0.8,
+      },
+      counterpartyRiskScore: 20,
+      countryRiskScore: 35, // Trinidad & Tobago — lower risk
+      thresholds: {
+        maxPeakCashExposureUsd: 5_000_000,
+        minGrossMarginPct: 0.05,
+        minNetMarginPerUsg: 0.03,
+        maxCounterpartyRiskScore: 65,
+        maxCountryRiskScore: 70,
+        maxDemurrageDays: 2,
+      },
+      monthlyFixedOverheadUsd: 120_000,
+      compliance: {
+        ofac: "cleared",
+        bisRequired: true,
+        bisIssued: false,
+        eeiRequired: true,
+        eeiFiled: false,
+      },
+    };
+    const deal3Results = calculateFuelDeal(deal3Inputs);
+
+    await db.insert(schema.fuelDeals).values({
+      id: SEED_FUEL_DEAL_IDS.deal3,
+      tenantId,
+      dealRef: SEED_FUEL_DEAL_REFS.deal3,
+      status: "draft",
+      dealType: "spot",
+      product: "jet_a1",
+      productGrade: "Jet A-1 DEF STAN 91-091",
+      productSpecNotes: "Flashpoint 38°C min, freeze point -47°C max, AN-8 anti-icing required",
+      originCountry: "US",
+      originPort: "Houston",
+      originTerminal: "Kinder Morgan Pasadena",
+      destinationCountry: "TT",
+      destinationPort: "Pointe-à-Pierre",
+      destinationTerminal: "Petrotrin Refinery Jetty",
+      incoterm: "cif",
+      pricingBasis: "platts",
+      pricingFormula: "Platts US Gulf Coast Jet + $0.05/gal",
+      priceLockDate: "2026-04-16",
+      priceLockTime: "Platts 7-day average around BL date",
+      volumeUsg: deal3Inputs.volumeUsg,
+      volumeMt: deal3Results.volumeMt,
+      volumeBbls: deal3Results.volumeBbls,
+      densityKgL: deal3Inputs.densityKgL,
+      volumeTolerancePct: deal3Inputs.volumeTolerancePct,
+      currency: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      buyerOrgId: SEED_ORG_IDS.caribAir,
+      laycanStart: "2026-05-05",
+      laycanEnd: "2026-05-10",
+      blDateEstimated: "2026-05-07",
+      etaDestination: "2026-05-11",
+      paymentTerms: "prepayment_80_20",
+      tradeFinanceCostPct: 0.005,
+      ofacScreeningStatus: "cleared",
+      bisLicenseRequired: true,
+      // BIS licence number and expiry intentionally null — the licence
+      // is the blocker that forces the do_not_proceed recommendation.
+      bisLicenseNumber: null,
+      bisLicenseExpiry: null,
+      eeiFilingRequired: true,
+      eeiItn: null,
+      complianceHold: true,
+      complianceNotes:
+        "BIS export licence application submitted 2026-04-10, awaiting adjudication. EEI filing blocked on BIS issuance.",
+      counterpartyRiskScore: 20,
+      countryRiskScore: 35,
+      politicalRiskInsured: false,
+      notes:
+        "Draft. Cannot progress beyond negotiating until BIS licence is issued — airline has agreed to 80/20 prepayment structure contingent on licence clearance.",
+      internalNotes: "VTC demo deal — seeded to exercise the BIS-critical compliance path and the do_not_proceed recommendation.",
+      createdBy: SEED_ADMIN_USER_ID,
+    });
+
+    await db.insert(schema.fuelDealCostStack).values({
+      id: SEED_FUEL_DEAL_COST_STACK_IDS.deal3,
+      tenantId,
+      dealId: SEED_FUEL_DEAL_IDS.deal3,
+      productCostPerUsg: deal3Inputs.productCostPerUsg,
+      productQualityPremiumUsg: 0,
+      productCostBasis: "Platts Jet USGC + 5¢ (preliminary, to be re-locked at BL)",
+      // Vessel fields left null — no charter yet; the cost-stack row for
+      // a pre-charter deal stores only the product + shore-side + finance
+      // build-up. Freight figures still carry the placeholder so panels
+      // that read the stack have something to render.
+      freightBasis: "per_usg",
+      freightRateRaw: deal3Inputs.freightPerUsg,
+      freightRatePerUsg: deal3Inputs.freightPerUsg,
+      freightCurrency: "usd",
+      freightTotalUsd: deal3Inputs.freightPerUsg * deal3Inputs.volumeUsg,
+      freightPerUsgAllIn: deal3Inputs.freightPerUsg,
+      cargoInsurancePct: deal3Inputs.cargoInsurancePct,
+      cargoInsuranceUsd: deal3Results.insurance.cargoInsuranceUsd,
+      warRiskPremiumPct: deal3Inputs.warRiskPremiumPct,
+      warRiskUsd: deal3Results.insurance.warRiskUsd,
+      politicalRiskPremiumPct: deal3Inputs.politicalRiskPremiumPct,
+      politicalRiskUsd: deal3Results.insurance.politicalRiskUsd,
+      totalInsurancePerUsg: deal3Results.insurance.totalInsurancePerUsg,
+      dischargeHandlingPerUsg: deal3Inputs.dischargeHandlingPerUsg,
+      inspectionFeeUsd: 5_500, // Jet A-1 requires a fuller MSEP/particulate panel
+      samplingTestingUsd: 3_000,
+      totalCompliancePerUsg: deal3Inputs.compliancePerUsg,
+      ofacScreeningFeeUsd: 1_200,
+      bisLicenseFeeUsd: 2_500,
+      eeiFilingFeeUsd: 300,
+      complianceLegalUsd: 6_500,
+      tradeFinanceTotalUsd: deal3Inputs.tradeFinancePerUsg * deal3Inputs.volumeUsg,
+      tradeFinancePerUsg: deal3Inputs.tradeFinancePerUsg,
+      brokeragePct: 0.002,
+      intermediaryFeePct: 0,
+      totalAgentPerUsg: deal3Inputs.intermediaryFeePerUsg,
+      vtcVariableOpsPerUsg: deal3Inputs.vtcVariableOpsPerUsg,
+      overheadAllocationUsd: deal3Inputs.overheadAllocationUsd,
+      overheadPerUsg: deal3Results.perUsg.overheadAllocation,
+      totalLandedCostPerUsg:
+        deal3Results.perUsg.totalVariableCost + deal3Results.perUsg.overheadAllocation,
+      grossMarginPerUsg: deal3Results.perUsg.grossMargin,
+      grossMarginPct: deal3Results.totals.grossMarginPct,
+      netMarginPerUsg: deal3Results.perUsg.netMargin,
+      netMarginPct: deal3Results.totals.ebitdaMarginPct,
+      ebitdaUsd: deal3Results.totals.ebitdaUsd,
+      breakevenSellPriceUsg: deal3Results.breakeven.sellPricePerUsg,
+    });
+
+    await db.insert(schema.fuelDealCashflowEvents).values([
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[6]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal3,
+        dayRelative: -10,
+        label: "Buyer prepayment (80% of revenue)",
+        direction: "inflow",
+        eventType: "buyer_prepayment",
+        baseType: "revenue",
+        amountPct: 0.8,
+        amountFixedUsd: null,
+        amountCalculatedUsd: 0.8 * deal3Results.totals.revenueUsd,
+        counterparty: "Caribbean Airlines",
+        paymentMethod: "wire",
+      },
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[7]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal3,
+        dayRelative: -3,
+        label: "Product purchase (100% of product cost)",
+        direction: "outflow",
+        eventType: "product_purchase",
+        baseType: "product_cost",
+        amountPct: 1,
+        amountFixedUsd: null,
+        amountCalculatedUsd: deal3Results.totals.productCostUsd,
+        counterparty: "US Gulf Coast Jet supplier",
+        paymentMethod: "wire",
+      },
+      {
+        id: SEED_FUEL_DEAL_CASHFLOW_IDS[8]!,
+        tenantId,
+        dealId: SEED_FUEL_DEAL_IDS.deal3,
+        dayRelative: 5,
+        label: "Buyer final payment (20% of revenue)",
+        direction: "inflow",
+        eventType: "buyer_final_payment",
+        baseType: "revenue",
+        amountPct: 0.2,
+        amountFixedUsd: null,
+        amountCalculatedUsd: 0.2 * deal3Results.totals.revenueUsd,
+        counterparty: "Caribbean Airlines",
+        paymentMethod: "wire",
+      },
+    ]);
+
+    await db.insert(schema.fuelDealScenarios).values({
+      id: SEED_FUEL_DEAL_SCENARIO_IDS.deal3Base,
+      tenantId,
+      dealId: SEED_FUEL_DEAL_IDS.deal3,
+      scenarioName: "Base Case",
+      scenarioType: "base",
+      isActive: true,
+      sellPricePerUsg: deal3Inputs.sellPricePerUsg,
+      resultsJson: deal3Results as unknown as Record<string, unknown>,
+      score: deal3Results.scorecard.overallScore,
+      recommendation: deal3Results.scorecard.recommendation,
+      calculatedAt: now,
+      notes:
+        "Base case at current Platts Jet. BIS export licence is the gating item — recommendation is do_not_proceed until the licence is issued.",
+    });
+
+    // -----------------------------------------------------------------------
+    // Sprint 11 — Benchmark prices (fuel_market_rates)
+    //
+    // Five trailing days: three ULSD rows (Platts USGC ULSD) and two Jet
+    // A-1 rows (Platts USGC Jet). Prices are in USD/USG with per-barrel
+    // and per-metric-tonne alternates derived at a fixed ULSD density of
+    // 0.845 kg/L and Jet A-1 density of 0.800 kg/L. Source is stamped as
+    // the benchmark publisher so the rate provenance survives in the UI.
+    // -----------------------------------------------------------------------
+    const ULSD_USG_PER_MT = 1000 / (0.845 * 3.785411784); // ≈ 312.69
+    const JET_USG_PER_MT = 1000 / (0.8 * 3.785411784); // ≈ 330.21
+    await db.insert(schema.fuelMarketRates).values([
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[0]!,
+        tenantId,
+        rateDate: "2026-04-13",
+        product: "ulsd",
+        benchmark: "platts_usgc_ulsd",
+        pricePerUsg: 2.38,
+        pricePerBbl: 2.38 * 42,
+        pricePerMt: 2.38 * ULSD_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[1]!,
+        tenantId,
+        rateDate: "2026-04-14",
+        product: "ulsd",
+        benchmark: "platts_usgc_ulsd",
+        pricePerUsg: 2.4,
+        pricePerBbl: 2.4 * 42,
+        pricePerMt: 2.4 * ULSD_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[2]!,
+        tenantId,
+        rateDate: "2026-04-15",
+        product: "ulsd",
+        benchmark: "platts_usgc_ulsd",
+        pricePerUsg: 2.41,
+        pricePerBbl: 2.41 * 42,
+        pricePerMt: 2.41 * ULSD_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[3]!,
+        tenantId,
+        rateDate: "2026-04-16",
+        product: "jet_a1",
+        benchmark: "platts_usgc_jet",
+        pricePerUsg: 2.54,
+        pricePerBbl: 2.54 * 42,
+        pricePerMt: 2.54 * JET_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+      {
+        id: SEED_FUEL_MARKET_RATE_IDS[4]!,
+        tenantId,
+        rateDate: "2026-04-17",
+        product: "jet_a1",
+        benchmark: "platts_usgc_jet",
+        pricePerUsg: 2.55,
+        pricePerBbl: 2.55 * 42,
+        pricePerMt: 2.55 * JET_USG_PER_MT,
+        currency: "usd",
+        source: "platts",
+      },
+    ]);
+
+    // -----------------------------------------------------------------------
+    // Sprint 11 — Counterparty risk scores
+    //
+    // One row per seeded Caribbean buyer. Each dimension is 0-100 with
+    // higher = riskier; composite_score is the simple arithmetic mean of
+    // the eight dimensions. risk_tier reflects the scoring committee's
+    // judgement (not a pure function of composite_score), and the
+    // recommended payment terms + max exposure capture the policy the
+    // desk should enforce on future deals.
+    // -----------------------------------------------------------------------
+    await db.insert(schema.fuelDealCounterpartyScores).values([
+      {
+        id: SEED_COUNTERPARTY_SCORE_IDS.massy,
+        tenantId,
+        orgId: SEED_ORG_IDS.massy,
+        scoredBy: SEED_ADMIN_USER_ID,
+        countryRisk: 40, // Jamaica — Coface B
+        paymentHistoryRisk: 20,
+        creditRisk: 30,
+        sanctionsExposureRisk: 10,
+        ownershipTransparencyRisk: 15,
+        regulatoryComplexityRisk: 30,
+        operationalRisk: 25,
+        concentrationRisk: 15,
+        compositeScore: 23.125,
+        riskTier: "tier_2",
+        recommendedPaymentTerms: "LC at sight, confirmed by US money-center bank",
+        recommendedMaxExposureUsd: 8_000_000,
+        notes:
+          "Long-standing Caribbean buyer. Payment history clean; LC confirmation required due to sovereign banking risk.",
+      },
+      {
+        id: SEED_COUNTERPARTY_SCORE_IDS.punta,
+        tenantId,
+        orgId: SEED_ORG_IDS.punta,
+        scoredBy: SEED_ADMIN_USER_ID,
+        countryRisk: 55, // Dominican Republic — Coface B
+        paymentHistoryRisk: 30,
+        creditRisk: 40,
+        sanctionsExposureRisk: 15,
+        ownershipTransparencyRisk: 25,
+        regulatoryComplexityRisk: 35,
+        operationalRisk: 30,
+        concentrationRisk: 20,
+        compositeScore: 31.25,
+        riskTier: "tier_2",
+        recommendedPaymentTerms: "LC at sight + political risk insurance",
+        recommendedMaxExposureUsd: 6_000_000,
+        notes:
+          "Moderate exposure. Political risk cover required for any single-shipment value above $3M.",
+      },
+      {
+        id: SEED_COUNTERPARTY_SCORE_IDS.caribAir,
+        tenantId,
+        orgId: SEED_ORG_IDS.caribAir,
+        scoredBy: SEED_ADMIN_USER_ID,
+        countryRisk: 35, // Trinidad & Tobago — Coface A4
+        paymentHistoryRisk: 15,
+        creditRisk: 20,
+        sanctionsExposureRisk: 5,
+        ownershipTransparencyRisk: 10, // state-owned, high transparency
+        regulatoryComplexityRisk: 25,
+        operationalRisk: 20,
+        concentrationRisk: 15,
+        compositeScore: 18.125,
+        riskTier: "tier_1",
+        recommendedPaymentTerms: "Prepayment 80/20 or LC at sight",
+        recommendedMaxExposureUsd: 10_000_000,
+        notes:
+          "State-owned flag carrier. Strong credit profile, preferred counterparty for Jet A-1 volume.",
+      },
+    ]);
 
     // eslint-disable-next-line no-console
     console.log("seed complete");

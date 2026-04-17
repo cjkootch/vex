@@ -62,4 +62,29 @@ export class InMemoryCostLedger implements CostLedger {
     for (const e of this.entries.values()) total += e.costUsdMicros;
     return total;
   }
+
+  /**
+   * Sum cost_usd_micros for a tenant in `[start, end)`. Used by the agent
+   * runner's pre-run cost gate in tests; production goes through
+   * `PostgresCostLedgerRepository.sumBetween`.
+   */
+  sumMicrosBetween(tenantId: TenantId, start: Date, end: Date): number {
+    let total = 0;
+    for (const e of this.entries.values()) {
+      if (e.tenantId !== tenantId) continue;
+      const t = e.occurredAt.getTime();
+      if (t < start.getTime()) continue;
+      if (t >= end.getTime()) continue;
+      total += e.costUsdMicros;
+    }
+    return total;
+  }
+
+  sumMicrosForTenantToday(tenantId: TenantId, now: Date = new Date()): number {
+    const start = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0),
+    );
+    const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
+    return this.sumMicrosBetween(tenantId, start, end);
+  }
 }

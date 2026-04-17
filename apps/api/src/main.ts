@@ -7,12 +7,20 @@ import {
 import { loadEnv } from "@vex/config";
 import {
   ApprovalRepository,
+  ContactRepository,
   EventRepository,
+  OrganizationRepository,
   RawEventRepository,
   RetrievalService,
+  SummaryRepository,
+  TouchpointRepository,
   createDb,
 } from "@vex/db";
-import { createQueues, createRedisConnection } from "@vex/agents";
+import {
+  VoiceContextBuilder,
+  createQueues,
+  createRedisConnection,
+} from "@vex/agents";
 import {
   AnthropicAdapter,
   OpenAIAdapter,
@@ -23,6 +31,9 @@ import { AppModule } from "./app.module.js";
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
+import { VoiceModule } from "./voice/voice.module.js";
+import { VoiceSessionStore } from "./voice/voice-session-store.js";
+import { HealthModule } from "./health/health.module.js";
 
 async function bootstrap(): Promise<void> {
   const env = loadEnv();
@@ -49,6 +60,10 @@ async function bootstrap(): Promise<void> {
   const rawEventRepository = new RawEventRepository();
   const approvalRepository = new ApprovalRepository();
   const eventRepository = new EventRepository();
+  const organizationRepository = new OrganizationRepository();
+  const contactRepository = new ContactRepository();
+  const summaryRepository = new SummaryRepository();
+  const touchpointRepository = new TouchpointRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
 
@@ -56,6 +71,15 @@ async function bootstrap(): Promise<void> {
   const openai = new OpenAIAdapter({ apiKey: env.OPENAI_API_KEY, costLedger });
   const anthropic = new AnthropicAdapter({ apiKey: env.ANTHROPIC_API_KEY, costLedger });
   const retrieval = new RetrievalService();
+
+  const voiceSessionStore = new VoiceSessionStore(redis);
+  const voiceContextBuilder = new VoiceContextBuilder({
+    organizations: organizationRepository,
+    contacts: contactRepository,
+    summaries: summaryRepository,
+    touchpoints: touchpointRepository,
+    approvals: approvalRepository,
+  });
 
   // Temporal client — best-effort. If the Temporal cluster isn't reachable
   // at boot the API still starts; ApprovalsService will log signal failures
@@ -91,6 +115,19 @@ async function bootstrap(): Promise<void> {
         events: eventRepository,
         executorQueue: queues.approvalExecutor,
         temporal: temporal?.client ?? null,
+      }),
+      voice: VoiceModule.register({
+        db,
+        openai,
+        sessionStore: voiceSessionStore,
+        contextBuilder: voiceContextBuilder,
+        transcriptQueue: queues.transcript,
+      }),
+      health: HealthModule.register({
+        db,
+        redis,
+        temporal: temporal?.client ?? null,
+        queues,
       }),
     }),
     new FastifyAdapter({ logger: { level: env.LOG_LEVEL } }),

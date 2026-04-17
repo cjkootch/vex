@@ -4,18 +4,23 @@ import {
   DailyBriefAgent,
   FollowUpAgent,
   ResearchAgent,
+  backpressureEngaged,
   buildDlqProcessor,
   buildNormalizationProcessor,
+  buildTranscriptProcessor,
   createAgentWorker,
   createApprovalExecutorWorker,
   createDlqWorker,
   createNormalizationWorker,
   createQueues,
   createRedisConnection,
+  createTranscriptWorker,
+  getQueueDepths,
   scheduleRecurringAgents,
   type AgentJobData,
   type ApprovalExecutorJobData,
   type QueueHandles,
+  type TranscriptJobData,
 } from "@vex/agents";
 import {
   ActivityRepository,
@@ -25,6 +30,7 @@ import {
   EventRepository,
   LeadRepository,
   OrganizationRepository,
+  PostgresCostLedgerRepository,
   RawEventRepository,
   RetrievalService,
   SummaryRepository,
@@ -35,14 +41,28 @@ import {
   createDb,
   type Db,
 } from "@vex/db";
-import { AnthropicAdapter, OpenAIAdapter } from "@vex/integrations";
-import { InMemoryCostLedger } from "@vex/telemetry";
+import { AnthropicAdapter, OpenAIAdapter, S3Uploader } from "@vex/integrations";
+import {
+  InMemoryCostLedger,
+  recordQueueBackpressure,
+  recordQueueDepth,
+} from "@vex/telemetry";
+
+/** Interval at which the worker samples queue depths for telemetry. */
+const BACKPRESSURE_SAMPLE_MS = 10_000;
 
 export interface QueueRunnerOptions {
   redisUrl: string;
   applicationDatabaseUrl: string;
   anthropicApiKey: string;
   openaiApiKey: string;
+  s3: {
+    endpoint?: string;
+    region: string;
+    bucket: string;
+    accessKeyId: string;
+    secretAccessKey: string;
+  };
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
   defaultWorkspaceId?: string;
@@ -54,6 +74,9 @@ export interface QueueRunner {
   dlqWorker: Worker;
   agentWorker: Worker<AgentJobData>;
   approvalExecutorWorker: Worker<ApprovalExecutorJobData>;
+  transcriptWorker: Worker<TranscriptJobData>;
+  /** Current queue-depth snapshot. Updated every BACKPRESSURE_SAMPLE_MS. */
+  snapshotQueueDepths: () => Promise<Record<string, number>>;
   close: () => Promise<void>;
 }
 
@@ -99,6 +122,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   const openai = new OpenAIAdapter({ apiKey: options.openaiApiKey, costLedger });
   const retrieval = new RetrievalService();
 
+  const costLedgerRepo = new PostgresCostLedgerRepository();
   const runner = new AgentRunner({
     db,
     workspaces: repos.workspaces,
@@ -115,6 +139,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     anthropic,
     openai,
     costLedger,
+    costLedgerRepo,
     retrieval,
   });
 
@@ -127,9 +152,43 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   );
   await approvalExecutorWorker.waitUntilReady();
 
+  const s3 = new S3Uploader({
+    region: options.s3.region,
+    bucket: options.s3.bucket,
+    accessKeyId: options.s3.accessKeyId,
+    secretAccessKey: options.s3.secretAccessKey,
+    ...(options.s3.endpoint ? { endpoint: options.s3.endpoint } : {}),
+  });
+  const transcriptWorker = createTranscriptWorker(
+    buildTranscriptProcessor({
+      db,
+      s3,
+      anthropic,
+      openai,
+      activities: repos.activities,
+      touchpoints: repos.touchpoints,
+      summaries: repos.summaries,
+      approvals: repos.approvals,
+      events: repos.events,
+    }),
+    connection,
+  );
+  await transcriptWorker.waitUntilReady();
+
   if (options.defaultWorkspaceId) {
     await scheduleRecurringAgents(queues.agents, options.defaultWorkspaceId);
   }
+
+  // Sample queue depths on an interval so `vex.queue.depth` has fresh
+  // datapoints and `vex.queue.backpressure` flips promptly when a queue
+  // crosses its threshold.
+  const sampler = setInterval(() => {
+    void sampleQueueDepths(queues).catch(() => {
+      // Sampling errors are never fatal — we'd rather miss a data point
+      // than crash the worker.
+    });
+  }, BACKPRESSURE_SAMPLE_MS);
+  sampler.unref();
 
   return {
     queues,
@@ -137,15 +196,32 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     dlqWorker,
     agentWorker,
     approvalExecutorWorker,
+    transcriptWorker,
+    async snapshotQueueDepths() {
+      return getQueueDepths(queues);
+    },
     async close() {
+      clearInterval(sampler);
       await normalizationWorker.close();
       await dlqWorker.close();
       await agentWorker.close();
       await approvalExecutorWorker.close();
+      await transcriptWorker.close();
       await queues.close();
       connection.disconnect();
     },
   };
+}
+
+async function sampleQueueDepths(queues: QueueHandles): Promise<void> {
+  const depths = await getQueueDepths(queues);
+  for (const [queue, depth] of Object.entries(depths)) {
+    recordQueueDepth(queue, depth);
+  }
+  const engaged = new Set(backpressureEngaged(depths));
+  for (const queue of Object.keys(depths)) {
+    recordQueueBackpressure(queue, engaged.has(queue as never));
+  }
 }
 
 function buildAgentProcessor(runner: AgentRunner) {

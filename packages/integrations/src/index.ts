@@ -14,7 +14,14 @@ export {
   createOpenAIClient,
   type OpenAIDeps,
   type EmbedRequest,
+  type RealtimeTokenRequest,
+  type RealtimeTokenResponse,
 } from "./openai.js";
+export {
+  S3Uploader,
+  transcriptObjectKey,
+  type S3UploaderDeps,
+} from "./s3.js";
 export { createTwilioClient } from "./twilio.js";
 export { createResendClient } from "./resend.js";
 export { pricing } from "./pricing.js";

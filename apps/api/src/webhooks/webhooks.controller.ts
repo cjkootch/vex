@@ -8,6 +8,7 @@ import {
   Req,
   Res,
 } from "@nestjs/common";
+import { Throttle } from "@nestjs/throttler";
 import type { RawBodyRequest } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createHash } from "node:crypto";
@@ -27,6 +28,7 @@ import {
 } from "./tokens.js";
 
 @Controller("webhooks")
+@Throttle({ webhooks: { limit: 500, ttl: 60_000 } })
 export class WebhooksController {
   private readonly log = new Logger(WebhooksController.name);
 

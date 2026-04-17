@@ -5,13 +5,17 @@ export { InMemoryCostLedger } from "./cost-ledger.js";
 export type { CostLedger, CostEntry, CostOperation } from "./cost-ledger.js";
 export {
   recordAgentRun,
+  recordAgentSkipped,
   recordApprovalPendingDelta,
   recordEvidenceCount,
   recordQueryLatency,
   recordWebhookReceived,
   recordNeonLatency,
+  recordQueueDepth,
+  recordQueueBackpressure,
   measureNeonLatency,
   type AgentRunLabels,
+  type AgentSkipReason,
   type WebhookOutcome,
 } from "./metrics.js";
 export {
