@@ -11,10 +11,10 @@ import { loadEnv } from "@vex/config";
  * Migration runner. Connects via MIGRATION_DATABASE_URL (the direct Neon
  * endpoint) because pooled connections cannot execute DDL reliably.
  *
- * Switches to the `vex_migrator` role (BYPASSRLS, created by the Sprint 3
- * migration) before running migrations so RLS policies don't block schema
- * changes on policy-protected tables. The very first run — when the role
- * doesn't exist yet — silently falls back to the connection's default role.
+ * Runs as neondb_owner — Postgres table owners bypass RLS unless the table
+ * is marked FORCE ROW LEVEL SECURITY (we don't). Earlier versions did
+ * `SET ROLE vex_migrator` but that role lacks CREATE on the database, so
+ * drizzle's migration-tracking schema couldn't be created.
  */
 async function main(): Promise<void> {
   const env = loadEnv();
@@ -35,17 +35,6 @@ async function main(): Promise<void> {
       console.log(
         `migrate: connected user=${who.current_user} session=${who.session_user} db=${who.current_database}`,
       );
-
-      try {
-        await client.query("SET ROLE vex_migrator");
-        // eslint-disable-next-line no-console
-        console.log("migrate: running as vex_migrator (BYPASSRLS)");
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.log(
-          `migrate: SET ROLE vex_migrator skipped (${(err as Error).message}); using default role`,
-        );
-      }
       const db = drizzle(client);
       await migrate(db, { migrationsFolder });
     } finally {

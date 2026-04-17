@@ -42,20 +42,9 @@ async function main(): Promise<void> {
     console.log(
       `seed: connected user=${who.current_user} session=${who.session_user} db=${who.current_database}`,
     );
-
-    // Seed needs to write rows that span tenants and bypass the RLS WITH
-    // CHECK constraint on every business table. vex_migrator (BYPASSRLS) is
-    // the same role the migration runner uses for the same reason.
-    try {
-      await client.query("SET ROLE vex_migrator");
-      // eslint-disable-next-line no-console
-      console.log("seed: running as vex_migrator (BYPASSRLS)");
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.log(
-        `seed: SET ROLE vex_migrator skipped (${(err as Error).message}); using default role`,
-      );
-    }
+    // Runs as neondb_owner — the table owner bypasses RLS unless FORCE
+    // ROW LEVEL SECURITY is set (it isn't), so cross-tenant seed inserts
+    // pass the WITH CHECK constraint without any role switching.
     const db = drizzle(client, { schema });
 
     await db.insert(schema.workspaces).values({
