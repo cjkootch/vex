@@ -7,3 +7,10 @@ export {
   DealEvaluatorAgent,
   type DealEvaluatorInput,
 } from "./deal-evaluator.js";
+export {
+  MarketDataAgent,
+  type MarketDataAgentInput,
+  type MarketDataProvider,
+  type MarketDataSeries,
+  type MarketDataFetchResult,
+} from "./market-data.js";
