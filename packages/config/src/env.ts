@@ -64,6 +64,18 @@ export const EnvSchema = z.object({
    */
   RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
 
+  // Market data
+  EIA_API_KEY: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("US Energy Information Administration API key. Free at eia.gov/opendata."),
+  ALPHA_VANTAGE_API_KEY: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Alpha Vantage API key. Fallback commodity feed. Free at alphavantage.co."),
+
   // Temporal
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
   TEMPORAL_NAMESPACE: z.string().default("default"),
