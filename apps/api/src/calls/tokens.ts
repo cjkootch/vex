@@ -11,3 +11,9 @@ export const CALLS_TWILIO_CLIENT = Symbol("CALLS_TWILIO_CLIENT");
 export const CALLS_TWILIO_VERIFIER = Symbol("CALLS_TWILIO_VERIFIER");
 export const CALLS_S3_UPLOADER = Symbol("CALLS_S3_UPLOADER");
 export const CALLS_TASK_QUEUE = Symbol("CALLS_TASK_QUEUE");
+/**
+ * Twilio Voice SDK credentials used to mint browser-join Access Tokens
+ * (Sprint J). Null when the three env vars aren't set — the join
+ * endpoint returns 503 in that case instead of misconfiguring silently.
+ */
+export const CALLS_VOICE_SDK_CONFIG = Symbol("CALLS_VOICE_SDK_CONFIG");

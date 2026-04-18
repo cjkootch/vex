@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from "@nestjs/common";
 import type { Client as TemporalClient } from "@temporalio/client";
 import {
@@ -18,7 +19,13 @@ import {
   type SummaryRepository,
   type WorkspaceRepository,
 } from "@vex/db";
-import { WorkflowId, type S3Uploader, type TwilioClient } from "@vex/integrations";
+import {
+  WorkflowId,
+  mintVoiceAccessToken,
+  type S3Uploader,
+  type TwilioClient,
+} from "@vex/integrations";
+import type { VoiceSdkConfig } from "./calls.module.js";
 import {
   CALLS_ACTIVITIES_REPO,
   CALLS_AGENT_RUNS_REPO,
@@ -31,6 +38,7 @@ import {
   CALLS_TASK_QUEUE,
   CALLS_TEMPORAL_CLIENT,
   CALLS_TWILIO_CLIENT,
+  CALLS_VOICE_SDK_CONFIG,
   CALLS_WORKSPACES_REPO,
 } from "./tokens.js";
 
@@ -105,6 +113,7 @@ export class CallsService {
     @Inject(CALLS_TWILIO_CLIENT) private readonly twilio: TwilioClient,
     @Inject(CALLS_S3_UPLOADER) private readonly s3: S3Uploader,
     @Inject(CALLS_TASK_QUEUE) private readonly taskQueue: string,
+    @Inject(CALLS_VOICE_SDK_CONFIG) private readonly voiceSdk: VoiceSdkConfig,
   ) {}
 
   /**
@@ -367,6 +376,63 @@ export class CallsService {
     });
   }
 
+  /**
+   * Sprint J — mint a Twilio Voice SDK Access Token so the operator's
+   * browser can join the conference room the callee leg is in. The
+   * token carries a VoiceGrant scoped to the configured TwiML app;
+   * `Device.connect({ conference })` causes Twilio to POST to that
+   * app's Voice URL which should return `<Dial><Conference/>` for
+   * the matching conference name.
+   *
+   * Validation:
+   *   - env config present (503 otherwise)
+   *   - the workflow is a real call in this tenant (404 otherwise)
+   *   - the call isn't already in a terminal state (409 otherwise —
+   *     no point joining a conference that has wound down)
+   */
+  async mintJoinToken(args: {
+    tenantId: string;
+    workflowId: string;
+    userId: string;
+    conferenceName: string;
+  }): Promise<{
+    token: string;
+    identity: string;
+    conferenceName: string;
+    expiresAt: string;
+  }> {
+    if (!this.voiceSdk) {
+      throw new ServiceUnavailableException(
+        "twilio_voice_sdk_unconfigured: set TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID",
+      );
+    }
+    return withTenant(this.db, args.tenantId, async (tx) => {
+      const approval = await this.approvals.findByWorkflowId(tx, args.workflowId);
+      if (!approval) throw new NotFoundException(`call ${args.workflowId} not found`);
+      const activity = await this.activities.findByTypeAndSessionId(
+        tx,
+        "voice_call",
+        args.workflowId,
+      );
+      if (activity && isTerminalCallStatus(activity)) {
+        throw new BadRequestException("call_already_ended");
+      }
+      const minted = mintVoiceAccessToken(this.voiceSdk!, {
+        identity: `operator-${args.userId}`,
+        conferenceName: args.conferenceName,
+      });
+      this.log.log(
+        `minted join token for workflow=${args.workflowId} user=${args.userId}`,
+      );
+      return {
+        token: minted.token,
+        identity: minted.identity,
+        conferenceName: args.conferenceName,
+        expiresAt: minted.expiresAt,
+      };
+    });
+  }
+
   async getTranscript(
     tenantId: string,
     workflowId: string,
@@ -485,6 +551,25 @@ export class CallsService {
       );
     }
   }
+}
+
+/**
+ * Terminal status set from the Twilio Voice lifecycle. We use the
+ * activity metadata mirror the webhook writes into — the activities
+ * table is the canonical "is the call still live" signal in apps/api.
+ */
+function isTerminalCallStatus(activity: { metadata: Record<string, unknown>; result: string | null }): boolean {
+  const status =
+    (typeof activity.metadata["status"] === "string"
+      ? (activity.metadata["status"] as string)
+      : activity.result) ?? "";
+  return [
+    "completed",
+    "busy",
+    "failed",
+    "no-answer",
+    "canceled",
+  ].includes(status);
 }
 
 type CallStatusPayloadName =

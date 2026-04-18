@@ -24,10 +24,14 @@ export {
 } from "./s3.js";
 export {
   createTwilioClient,
+  mintVoiceAccessToken,
   type CreateOutboundCallParams,
   type CreateOutboundCallResult,
+  type MintVoiceAccessTokenParams,
+  type MintVoiceAccessTokenResult,
   type TwilioClient,
   type TwilioDeps,
+  type TwilioVoiceSdkDeps,
 } from "./twilio.js";
 export { createResendClient } from "./resend.js";
 export { pricing } from "./pricing.js";

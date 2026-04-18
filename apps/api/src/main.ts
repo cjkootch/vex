@@ -245,6 +245,15 @@ async function bootstrap(): Promise<void> {
               twilio,
               twilioVerifier,
               s3,
+              voiceSdk:
+                env.TWILIO_API_KEY && env.TWILIO_API_SECRET && env.TWILIO_TWIML_APP_SID
+                  ? {
+                      accountSid: env.TWILIO_ACCOUNT_SID!,
+                      apiKey: env.TWILIO_API_KEY,
+                      apiSecret: env.TWILIO_API_SECRET,
+                      twimlAppSid: env.TWILIO_TWIML_APP_SID,
+                    }
+                  : null,
               taskQueue: TEMPORAL_TASK_QUEUE,
             }),
           }
