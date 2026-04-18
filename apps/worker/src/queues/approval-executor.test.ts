@@ -88,9 +88,28 @@ function buildDeps(
     memberships: {
       create: vi.fn().mockResolvedValue(undefined),
     },
+    touchpoints: {
+      insert: vi.fn().mockResolvedValue({ id: "tp-1" }),
+    },
     events: {
       insertIfNotExists: vi.fn().mockResolvedValue(undefined),
     },
+    // Twilio — default: both channels succeed. Individual tests
+    // override to simulate errors or a null-client path.
+    twilio: {
+      sendSms: vi
+        .fn()
+        .mockResolvedValue({ sid: "SM_TEST", error: null, segments: 1 }),
+      sendWhatsApp: vi
+        .fn()
+        .mockResolvedValue({ sid: "WA_TEST", error: null, segments: null }),
+    },
+    costLedger: {
+      record: vi.fn().mockResolvedValue(undefined),
+    },
+    // Freeze time at 14:00 UTC so default quiet-hours (08:00–21:00) is
+    // satisfied regardless of where the test host clock happens to be.
+    now: () => new Date("2026-04-18T14:00:00Z"),
   };
 
   return deps;
@@ -404,5 +423,244 @@ describe("approval executor — unknown action types", () => {
     const deps = buildDeps(null);
     await runJob(deps);
     expect(deps.events.insertIfNotExists).not.toHaveBeenCalled();
+  });
+});
+
+describe("approval executor — sms.send", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const validPayload = {
+    to: "+15555551234",
+    body: "Hey — any update on the Q3 ULSD plan? Happy to jump on a quick call.",
+    contact_id: "01HSEEDCNT0000000000000001",
+    org_id: "01HSEEDCRP0000000000000001",
+    campaign_id: "01HSEEDCPN0000000000000001",
+    timezone: "America/New_York",
+    rationale: "48h since last touch, warm band",
+  };
+
+  it("dispatches via Twilio, records per-segment cost, touchpoint, markApplied, audit", async () => {
+    const deps = buildDeps({
+      actionType: "sms.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    deps.twilio.sendSms.mockResolvedValueOnce({
+      sid: "SM_ACK",
+      error: null,
+      segments: 2,
+    });
+
+    await runJob(deps);
+
+    expect(deps.twilio.sendSms).toHaveBeenCalledWith({
+      to: validPayload.to,
+      body: validPayload.body,
+    });
+
+    const [, tenantArg, tpData] = deps.touchpoints.insert.mock.calls[0]!;
+    expect(tenantArg).toBe(TENANT);
+    expect(tpData.channel).toBe("sms");
+    expect(tpData.contactId).toBe(validPayload.contact_id);
+    expect(tpData.metadata.provider_message_sid).toBe("SM_ACK");
+    expect(tpData.metadata.segments).toBe(2);
+
+    const ledgerEntry = deps.costLedger.record.mock.calls[0]![0];
+    expect(ledgerEntry.operation).toBe("sms.send");
+    expect(ledgerEntry.units).toBe(2);
+    // $0.0083/segment * 2 segments = $0.0166 = 16600 micros.
+    expect(ledgerEntry.costUsdMicros).toBe(16600);
+
+    expect(deps.approvals.markApplied).toHaveBeenCalledWith(
+      expect.anything(),
+      APPROVAL_ID,
+      "SM_ACK",
+    );
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("sms.sent");
+    expect(event.metadata.segments).toBe(2);
+  });
+
+  it("blocks outside quiet hours (recipient-local)", async () => {
+    const deps = buildDeps({
+      actionType: "sms.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    // 06:00 UTC = 02:00 America/New_York → outside 08:00–21:00.
+    deps.now = () => new Date("2026-04-18T06:00:00Z");
+
+    await runJob(deps);
+    expect(deps.twilio.sendSms).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toBe("quiet_hours");
+  });
+
+  it("fails closed with sms.send_not_configured when Twilio is absent", async () => {
+    const deps = buildDeps({
+      actionType: "sms.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    (deps as { twilio: unknown }).twilio = null;
+
+    await runJob(deps);
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toBe("sms.send_not_configured");
+  });
+
+  it("surfaces Twilio errors without marking applied or recording cost", async () => {
+    const deps = buildDeps({
+      actionType: "sms.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    deps.twilio.sendSms.mockResolvedValueOnce({
+      sid: null,
+      error: "21610: message cannot be sent because the recipient has opted out",
+      segments: null,
+    });
+    await runJob(deps);
+    expect(deps.approvals.markApplied).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toMatch(/opted out/);
+  });
+
+  it("short-circuits to replay when appliedObjectId is already set", async () => {
+    const deps = buildDeps({
+      actionType: "sms.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    deps.approvals.findById.mockResolvedValue({
+      id: APPROVAL_ID,
+      reviewerId: "01HSEEDPRS0000000000000001",
+      actionType: "sms.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+      appliedObjectId: "SM_PRIOR",
+    });
+    await runJob(deps);
+    expect(deps.twilio.sendSms).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.replayed");
+    expect(event.metadata.action_type).toBe("sms.send");
+  });
+});
+
+describe("approval executor — whatsapp.send", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const templatePayload = {
+    to: "+15555551234",
+    content_sid: "HX00000000000000000000000000000000",
+    content_variables: { "1": "Acme", "2": "Q3 ULSD" },
+    contact_id: "01HSEEDCNT0000000000000001",
+    timezone: "America/New_York",
+    rationale: "business-initiated outreach",
+  };
+
+  const freeFormPayload = {
+    to: "+15555551234",
+    body: "Got your reply — can we lock the 4.8M gal for June?",
+    in_session: true,
+    contact_id: "01HSEEDCNT0000000000000001",
+    timezone: "America/New_York",
+  };
+
+  it("dispatches a template message and charges the business-initiated rate", async () => {
+    const deps = buildDeps({
+      actionType: "whatsapp.send",
+      decision: "approved",
+      proposedPayload: templatePayload,
+    });
+    await runJob(deps);
+
+    expect(deps.twilio.sendWhatsApp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: templatePayload.to,
+        contentSid: templatePayload.content_sid,
+        contentVariables: templatePayload.content_variables,
+      }),
+    );
+    const ledgerEntry = deps.costLedger.record.mock.calls[0]![0];
+    expect(ledgerEntry.operation).toBe("whatsapp.send");
+    // $0.03 business-initiated.
+    expect(ledgerEntry.costUsdMicros).toBe(30000);
+    expect(deps.approvals.markApplied).toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("whatsapp.sent");
+    expect(event.metadata.template_sid).toBe(templatePayload.content_sid);
+  });
+
+  it("dispatches a free-form reply at the cheaper session rate when in_session=true", async () => {
+    const deps = buildDeps({
+      actionType: "whatsapp.send",
+      decision: "approved",
+      proposedPayload: freeFormPayload,
+    });
+    await runJob(deps);
+    const ledgerEntry = deps.costLedger.record.mock.calls[0]![0];
+    // $0.005 session.
+    expect(ledgerEntry.costUsdMicros).toBe(5000);
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.metadata.in_session).toBe(true);
+    expect(event.metadata.template_sid).toBe(null);
+  });
+
+  it("fails closed on free-form body without in_session=true (template required)", async () => {
+    const deps = buildDeps({
+      actionType: "whatsapp.send",
+      decision: "approved",
+      proposedPayload: { ...freeFormPayload, in_session: false },
+    });
+    await runJob(deps);
+    expect(deps.twilio.sendWhatsApp).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toBe("free_form_requires_open_session");
+  });
+
+  it("fails closed with whatsapp_not_configured when Twilio is absent", async () => {
+    const deps = buildDeps({
+      actionType: "whatsapp.send",
+      decision: "approved",
+      proposedPayload: templatePayload,
+    });
+    (deps as { twilio: unknown }).twilio = null;
+    await runJob(deps);
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toBe("whatsapp_not_configured");
+  });
+
+  it("blocks outside quiet hours", async () => {
+    const deps = buildDeps({
+      actionType: "whatsapp.send",
+      decision: "approved",
+      proposedPayload: templatePayload,
+    });
+    deps.now = () => new Date("2026-04-18T03:00:00Z");
+    await runJob(deps);
+    expect(deps.twilio.sendWhatsApp).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toBe("quiet_hours");
   });
 });

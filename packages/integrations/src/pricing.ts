@@ -30,6 +30,18 @@ export const pricing = {
       textOutputUsdPerMillion: 20,
     },
   },
+  /**
+   * Twilio messaging. US tier-1 pricing as of 2024: SMS is billed per
+   * 160-char segment; WhatsApp is billed per message with a business-
+   * initiated vs user-initiated split.
+   */
+  twilio: {
+    smsSegmentUsd: 0.0083,
+    /** User-initiated (within the 24h session window). */
+    whatsappSessionUsd: 0.005,
+    /** Business-initiated — template required, priced per category. */
+    whatsappBusinessInitiatedUsd: 0.03,
+  },
 } as const;
 
 /**

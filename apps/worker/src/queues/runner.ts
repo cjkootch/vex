@@ -43,12 +43,21 @@ import {
   createDb,
   type Db,
 } from "@vex/db";
-import { createId } from "@vex/domain";
-import { AnthropicAdapter, OpenAIAdapter, S3Uploader } from "@vex/integrations";
+import { createId, TenantId } from "@vex/domain";
+import {
+  AnthropicAdapter,
+  OpenAIAdapter,
+  S3Uploader,
+  createTwilioClient,
+  pricing,
+  type TwilioClient,
+} from "@vex/integrations";
+import { canContactNow } from "@vex/agents";
 import {
   InMemoryCostLedger,
   recordQueueBackpressure,
   recordQueueDepth,
+  type CostLedger,
 } from "@vex/telemetry";
 
 /** Interval at which the worker samples queue depths for telemetry. */
@@ -65,6 +74,19 @@ export interface QueueRunnerOptions {
     bucket: string;
     accessKeyId: string;
     secretAccessKey: string;
+  };
+  /**
+   * Twilio config — when present, the approval executor's sms.send /
+   * whatsapp.send branches dispatch real messages. When absent, both
+   * branches fail closed with `*_not_configured` reasons so nothing
+   * silently succeeds. `whatsappFrom` is independently optional: a
+   * workspace can have SMS live without WhatsApp.
+   */
+  twilio?: {
+    accountSid: string;
+    authToken: string;
+    fromNumber: string;
+    whatsappFrom?: string;
   };
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
@@ -149,6 +171,17 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   const agentWorker = createAgentWorker(buildAgentProcessor(runner), connection);
   await agentWorker.waitUntilReady();
 
+  const twilioMessagingClient: TwilioClient | null = options.twilio
+    ? createTwilioClient({
+        accountSid: options.twilio.accountSid,
+        authToken: options.twilio.authToken,
+        fromNumber: options.twilio.fromNumber,
+        ...(options.twilio.whatsappFrom
+          ? { whatsappFrom: options.twilio.whatsappFrom }
+          : {}),
+      })
+    : null;
+
   const approvalExecutorWorker = createApprovalExecutorWorker(
     buildApprovalExecutor({
       db,
@@ -157,7 +190,10 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       organizations: repos.organizations,
       contacts: repos.contacts,
       memberships: repos.memberships,
+      touchpoints: repos.touchpoints,
       events: repos.events,
+      twilio: twilioMessagingClient,
+      costLedger,
     }),
     connection,
   );
@@ -267,7 +303,21 @@ export interface ApprovalExecutorDeps {
   organizations: OrganizationRepository;
   contacts: ContactRepository;
   memberships: ContactOrgMembershipRepository;
+  touchpoints: TouchpointRepository;
   events: EventRepository;
+  /**
+   * Twilio messaging client for `sms.send` / `whatsapp.send`. When
+   * `null` (workspace hasn't configured Twilio), those branches fail
+   * closed with reason `sms.send_not_configured` /
+   * `whatsapp_not_configured` instead of silently succeeding.
+   */
+  twilio: TwilioClient | null;
+  costLedger: CostLedger;
+  /**
+   * Override the clock for tests. Also lets a replay scan simulate a
+   * prior window. Defaults to `() => new Date()`.
+   */
+  now?: () => Date;
 }
 
 /**
@@ -306,6 +356,14 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         }
         if (approval.actionType === "crm.create_deal") {
           await applyCreateDeal(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "sms.send") {
+          await applySmsSend(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "whatsapp.send") {
+          await applyWhatsAppSend(tx, deps, workspace_id, approval);
           return;
         }
       }
@@ -712,6 +770,291 @@ async function applyCreateDeal(
       buyer_org_id: payload.buyerOrgId,
       volume_usg: payload.volumeUsg,
       rationale: payload.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
+}
+
+/**
+ * Approved `sms.send` — dispatch through Twilio's Messages API.
+ *
+ * Enforces quiet hours (08:00–21:00 recipient-local, default) before
+ * touching the wire. Fails closed with a machine-readable reason in
+ * every error surface so retries and observability stay honest.
+ *
+ * Idempotency: `appliedObjectId` = Twilio message SID. A retry after
+ * a successful send short-circuits to a replay event — Twilio
+ * Messages.create is not idempotent on our side of the wire.
+ */
+async function applySmsSend(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    to?: string;
+    body?: string;
+    contact_id?: string;
+    org_id?: string;
+    campaign_id?: string;
+    timezone?: string;
+    rationale?: string;
+  } | null;
+
+  const to = typeof payload?.to === "string" ? payload.to : "";
+  const body = typeof payload?.body === "string" ? payload.body : "";
+  if (to.length === 0 || body.length === 0) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "sms.send", "missing to or body");
+    return;
+  }
+
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "sms.send");
+    return;
+  }
+
+  if (!deps.twilio) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "sms.send", "sms.send_not_configured");
+    return;
+  }
+
+  // Quiet-hours guard. Skipping this silently would let an agent
+  // mistime a 2am message — the quiet-hours helper defaults to a
+  // conservative 08:00–21:00 window in the recipient's timezone.
+  const clock = deps.now ?? (() => new Date());
+  const decision = canContactNow(clock(), payload?.timezone ?? null);
+  if (!decision.ok) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "sms.send",
+      decision.reason ?? "quiet_hours",
+    );
+    return;
+  }
+
+  const result = await deps.twilio.sendSms({ to, body });
+  if (result.error || !result.sid) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "sms.send",
+      result.error ?? "twilio returned no sid",
+    );
+    return;
+  }
+
+  // Cost ledger — billed per 160-char segment. Twilio reports the
+  // actual segment count on the response; fall back to a floor of 1
+  // when the SDK doesn't surface it.
+  const segments = Math.max(1, result.segments ?? 1);
+  const perSegmentMicros = Math.round(pricing.twilio.smsSegmentUsd * 1_000_000);
+  await deps.costLedger.record({
+    idempotencyKey: `sms.send:${approval.id}`,
+    tenantId: TenantId(tenantId),
+    operation: "sms.send",
+    provider: "twilio",
+    units: segments,
+    unitKind: "segments",
+    costUsdMicros: perSegmentMicros * segments,
+    occurredAt: clock(),
+  });
+
+  await deps.touchpoints.insert(tx, tenantId, {
+    channel: "sms",
+    actor: approval.reviewerId ?? "approval_executor",
+    occurredAt: clock(),
+    ...(payload?.contact_id ? { contactId: payload.contact_id } : {}),
+    ...(payload?.org_id ? { orgId: payload.org_id } : {}),
+    ...(payload?.campaign_id ? { campaignId: payload.campaign_id } : {}),
+    metadata: {
+      verb: "sms.sent",
+      approval_id: approval.id,
+      provider_message_sid: result.sid,
+      segments,
+      to,
+    },
+  });
+
+  await deps.approvals.markApplied(tx, approval.id, result.sid);
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "sms.sent",
+    subjectType: "approval",
+    subjectId: approval.id,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "sms",
+    objectId: result.sid,
+    occurredAt: clock(),
+    idempotencyKey: `sms.sent:via-approval:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      provider_message_sid: result.sid,
+      segments,
+      to,
+      contact_id: payload?.contact_id ?? null,
+      org_id: payload?.org_id ?? null,
+      campaign_id: payload?.campaign_id ?? null,
+      rationale: payload?.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
+}
+
+/**
+ * Approved `whatsapp.send` — same shape as SMS but with Meta's
+ * template-compliance rule. Outbound-initiated messages outside the
+ * 24h customer-service window REQUIRE a pre-approved template via
+ * `content_sid`; free-form `body` is only legal inside an open
+ * session (we mark that via `in_session: true` in the payload).
+ *
+ * Pricing follows Meta's split: session messages (user-initiated) are
+ * cheaper than business-initiated (template) messages.
+ */
+async function applyWhatsAppSend(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    to?: string;
+    body?: string;
+    content_sid?: string;
+    content_variables?: Record<string, string>;
+    in_session?: boolean;
+    contact_id?: string;
+    org_id?: string;
+    campaign_id?: string;
+    timezone?: string;
+    rationale?: string;
+  } | null;
+
+  const to = typeof payload?.to === "string" ? payload.to : "";
+  const hasTemplate = typeof payload?.content_sid === "string" && payload.content_sid.length > 0;
+  const hasBody = typeof payload?.body === "string" && payload.body.length > 0;
+  if (to.length === 0 || (!hasTemplate && !hasBody)) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "whatsapp.send", "missing to and (content_sid or body)");
+    return;
+  }
+
+  // Template-compliance rail: free-form body is only legal when the
+  // caller proves a session is open. Outbound-initiated templateless
+  // sends would be rejected by Meta AND could incur an opt-out
+  // penalty. Fail closed before Twilio even sees it.
+  if (!hasTemplate && !payload?.in_session) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "whatsapp.send",
+      "free_form_requires_open_session",
+    );
+    return;
+  }
+
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "whatsapp.send");
+    return;
+  }
+
+  if (!deps.twilio) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "whatsapp.send", "whatsapp_not_configured");
+    return;
+  }
+
+  const clock = deps.now ?? (() => new Date());
+  const decision = canContactNow(clock(), payload?.timezone ?? null);
+  if (!decision.ok) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "whatsapp.send",
+      decision.reason ?? "quiet_hours",
+    );
+    return;
+  }
+
+  const result = await deps.twilio.sendWhatsApp({
+    to,
+    ...(hasTemplate ? { contentSid: payload!.content_sid! } : {}),
+    ...(payload?.content_variables ? { contentVariables: payload.content_variables } : {}),
+    ...(hasBody ? { body: payload!.body! } : {}),
+  });
+  if (result.error || !result.sid) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "whatsapp.send",
+      result.error ?? "twilio returned no sid",
+    );
+    return;
+  }
+
+  const perMessageMicros = Math.round(
+    (hasTemplate
+      ? pricing.twilio.whatsappBusinessInitiatedUsd
+      : pricing.twilio.whatsappSessionUsd) * 1_000_000,
+  );
+  await deps.costLedger.record({
+    idempotencyKey: `whatsapp.send:${approval.id}`,
+    tenantId: TenantId(tenantId),
+    operation: "whatsapp.send",
+    provider: "twilio",
+    units: 1,
+    unitKind: "messages",
+    costUsdMicros: perMessageMicros,
+    occurredAt: clock(),
+  });
+
+  await deps.touchpoints.insert(tx, tenantId, {
+    channel: "whatsapp",
+    actor: approval.reviewerId ?? "approval_executor",
+    occurredAt: clock(),
+    ...(payload?.contact_id ? { contactId: payload.contact_id } : {}),
+    ...(payload?.org_id ? { orgId: payload.org_id } : {}),
+    ...(payload?.campaign_id ? { campaignId: payload.campaign_id } : {}),
+    metadata: {
+      verb: "whatsapp.sent",
+      approval_id: approval.id,
+      provider_message_sid: result.sid,
+      to,
+      template_sid: payload?.content_sid ?? null,
+      in_session: payload?.in_session ?? false,
+    },
+  });
+
+  await deps.approvals.markApplied(tx, approval.id, result.sid);
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "whatsapp.sent",
+    subjectType: "approval",
+    subjectId: approval.id,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "whatsapp",
+    objectId: result.sid,
+    occurredAt: clock(),
+    idempotencyKey: `whatsapp.sent:via-approval:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      provider_message_sid: result.sid,
+      to,
+      template_sid: payload?.content_sid ?? null,
+      in_session: payload?.in_session ?? false,
+      contact_id: payload?.contact_id ?? null,
+      org_id: payload?.org_id ?? null,
+      campaign_id: payload?.campaign_id ?? null,
+      rationale: payload?.rationale ?? null,
       applied_by: approval.reviewerId,
     },
   });

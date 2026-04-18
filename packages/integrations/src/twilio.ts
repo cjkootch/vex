@@ -4,6 +4,51 @@ export interface TwilioDeps {
   accountSid: string;
   authToken: string;
   fromNumber: string;
+  /**
+   * Optional WhatsApp sender in `whatsapp:+E164` form. When absent, the
+   * WhatsApp send method throws a typed "whatsapp_not_configured" error
+   * the executor converts to `approval.executor.failed`.
+   */
+  whatsappFrom?: string;
+}
+
+export interface SendMessageResult {
+  /** Twilio message SID — idempotency key for the approval row. */
+  sid: string | null;
+  /** Non-null when the provider rejected the send synchronously. */
+  error: string | null;
+  /** Outbound segment count Twilio reports for SMS; null for WhatsApp. */
+  segments: number | null;
+}
+
+export interface SendSmsParams {
+  /** E.164 destination phone number. */
+  to: string;
+  /** Plain-text body. Twilio auto-segments at 160 GSM-7 / 70 UCS-2 chars. */
+  body: string;
+  /** Optional status callback — if set, Twilio POSTs message lifecycle there. */
+  statusCallback?: string;
+}
+
+export interface SendWhatsAppParams {
+  /** E.164 destination phone number (no `whatsapp:` prefix — we add it). */
+  to: string;
+  /**
+   * Content SID for a pre-approved WhatsApp template. Required for
+   * business-initiated messages outside the 24h customer-service window.
+   * Omit when replying within an open session.
+   */
+  contentSid?: string;
+  /** Variables the template references (`{{1}}`, `{{2}}`, …). */
+  contentVariables?: Record<string, string>;
+  /**
+   * Free-form body. Allowed only when replying within Meta's 24h
+   * customer-service window — outbound-initiated messages MUST use a
+   * template. Callers that can't prove the window is open should set
+   * `contentSid` and skip `body`.
+   */
+  body?: string;
+  statusCallback?: string;
 }
 
 export interface CreateOutboundCallParams {
@@ -49,15 +94,97 @@ export interface CreateOutboundCallResult {
 export function createTwilioClient(deps: TwilioDeps) {
   const client = Twilio(deps.accountSid, deps.authToken);
 
+  const whatsappFrom = deps.whatsappFrom ?? null;
+
   return {
     client,
 
-    async sendSms(to: string, body: string) {
-      return client.messages.create({
-        from: deps.fromNumber,
-        to,
-        body,
-      });
+    /**
+     * Send an SMS through the configured `fromNumber`. Returns a
+     * normalised `SendMessageResult` — the executor doesn't touch the
+     * Twilio SDK type surface. Throws only on unexpected SDK errors;
+     * provider-level rejections (blacklist, invalid E.164) surface via
+     * `result.error` so callers can distinguish retry vs fail-closed.
+     */
+    async sendSms(params: SendSmsParams): Promise<SendMessageResult> {
+      try {
+        const message = await client.messages.create({
+          from: deps.fromNumber,
+          to: params.to,
+          body: params.body,
+          ...(params.statusCallback
+            ? { statusCallback: params.statusCallback }
+            : {}),
+        });
+        return {
+          sid: message.sid ?? null,
+          error: null,
+          segments: message.numSegments
+            ? Number.parseInt(String(message.numSegments), 10)
+            : null,
+        };
+      } catch (err) {
+        return {
+          sid: null,
+          error: describeTwilioError(err),
+          segments: null,
+        };
+      }
+    },
+
+    /**
+     * Send a WhatsApp message. Business-initiated sends outside the
+     * 24h customer-service window MUST specify `contentSid`; free-form
+     * `body` is allowed only inside an open session. Caller is
+     * responsible for enforcing that distinction — we surface the
+     * Twilio error intact if it rejects on that rule.
+     *
+     * Throws a typed `whatsapp_not_configured` error when the
+     * adapter was constructed without `whatsappFrom`.
+     */
+    async sendWhatsApp(
+      params: SendWhatsAppParams,
+    ): Promise<SendMessageResult> {
+      if (!whatsappFrom) {
+        return {
+          sid: null,
+          error: "whatsapp_not_configured",
+          segments: null,
+        };
+      }
+      if (!params.contentSid && !params.body) {
+        return {
+          sid: null,
+          error: "whatsapp_missing_template_or_body",
+          segments: null,
+        };
+      }
+      try {
+        const message = await client.messages.create({
+          from: whatsappFrom,
+          to: `whatsapp:${params.to}`,
+          ...(params.contentSid
+            ? { contentSid: params.contentSid }
+            : { body: params.body! }),
+          ...(params.contentVariables
+            ? { contentVariables: JSON.stringify(params.contentVariables) }
+            : {}),
+          ...(params.statusCallback
+            ? { statusCallback: params.statusCallback }
+            : {}),
+        });
+        return {
+          sid: message.sid ?? null,
+          error: null,
+          segments: null,
+        };
+      } catch (err) {
+        return {
+          sid: null,
+          error: describeTwilioError(err),
+          segments: null,
+        };
+      }
     },
 
     /**
@@ -129,7 +256,25 @@ export function createTwilioClient(deps: TwilioDeps) {
     recordingStorageKey(tenantId: string, callSid: string): string {
       return `recordings/${tenantId}/${callSid}.mp3`;
     },
+
+    /** Whether this client was configured with a WhatsApp sender. */
+    get whatsappConfigured(): boolean {
+      return whatsappFrom !== null;
+    },
   };
 }
 
 export type TwilioClient = ReturnType<typeof createTwilioClient>;
+
+function describeTwilioError(err: unknown): string {
+  if (err instanceof Error) {
+    // Twilio SDK errors carry a numeric `code` on top of `message`. Surface
+    // both so approval.executor.failed metadata is debuggable without
+    // grepping provider docs.
+    const code = (err as { code?: unknown }).code;
+    return typeof code === "number"
+      ? `${code}: ${err.message}`
+      : err.message;
+  }
+  return String(err);
+}
