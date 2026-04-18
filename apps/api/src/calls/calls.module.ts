@@ -8,6 +8,7 @@ import type {
   Db,
   EventRepository,
   SummaryRepository,
+  TouchpointRepository,
   WorkspaceRepository,
 } from "@vex/db";
 import type { S3Uploader, TwilioClient, TwilioVoiceSdkDeps } from "@vex/integrations";
@@ -25,6 +26,7 @@ import {
   CALLS_S3_UPLOADER,
   CALLS_SUMMARIES_REPO,
   CALLS_TASK_QUEUE,
+  CALLS_TOUCHPOINTS_REPO,
   CALLS_TEMPORAL_CLIENT,
   CALLS_TWILIO_CLIENT,
   CALLS_TWILIO_VERIFIER,
@@ -62,6 +64,7 @@ export interface CallsModuleConfig {
   agentRuns: AgentRunRepository;
   approvals: ApprovalRepository;
   activities: ActivityRepository;
+  touchpoints: TouchpointRepository;
   summaries: SummaryRepository;
   events: EventRepository;
   /**
@@ -95,6 +98,7 @@ export class CallsModule {
         { provide: CALLS_AGENT_RUNS_REPO, useFactory: () => config.agentRuns },
         { provide: CALLS_APPROVALS_REPO, useFactory: () => config.approvals },
         { provide: CALLS_ACTIVITIES_REPO, useFactory: () => config.activities },
+        { provide: CALLS_TOUCHPOINTS_REPO, useFactory: () => config.touchpoints },
         { provide: CALLS_SUMMARIES_REPO, useFactory: () => config.summaries },
         { provide: CALLS_EVENTS_REPO, useFactory: () => config.events },
         { provide: CALLS_TEMPORAL_CLIENT, useFactory: () => config.temporal },

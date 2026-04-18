@@ -117,6 +117,7 @@ async function bootstrap(): Promise<void> {
         accountSid: env.TWILIO_ACCOUNT_SID!,
         authToken: env.TWILIO_AUTH_TOKEN!,
         fromNumber: env.TWILIO_PHONE_NUMBER!,
+        whatsappFrom: env.TWILIO_WHATSAPP_FROM,
       })
     : null;
   const twilioVerifier = env.TWILIO_AUTH_TOKEN
@@ -247,6 +248,7 @@ async function bootstrap(): Promise<void> {
               agentRuns: agentRunRepository,
               approvals: approvalRepository,
               activities: activityRepository,
+              touchpoints: touchpointRepository,
               summaries: summaryRepository,
               events: eventRepository,
               temporal: temporal?.client ?? null,

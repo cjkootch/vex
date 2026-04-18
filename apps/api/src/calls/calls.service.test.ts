@@ -77,6 +77,7 @@ function buildService(overrides: {
     "vex-main", // taskQueue
     null, // voiceSdk
     "", // appBaseUrl
+    { insert: () => ({ id: "01HSTUBTP0" }) } as never, // touchpoints
   );
 
   return {
@@ -239,6 +240,7 @@ describe("CallsService.requestHumanBackup", () => {
       "vex-main",
       null,
       "",
+      { insert: () => ({ id: "01HSTUBTP0" }) } as never,
     );
     return {
       service,
@@ -439,6 +441,7 @@ describe("CallsService.mintJoinToken", () => {
       "vex-main",
       voiceSdk,
       "",
+      { insert: () => ({ id: "01HSTUBTP0" }) } as never,
     );
     return {
       service,

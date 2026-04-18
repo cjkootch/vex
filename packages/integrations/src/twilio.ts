@@ -4,6 +4,8 @@ export interface TwilioDeps {
   accountSid: string;
   authToken: string;
   fromNumber: string;
+  /** Full Twilio WhatsApp sender — `whatsapp:+E164`. */
+  whatsappFrom?: string;
 }
 
 /**
@@ -85,6 +87,26 @@ export function createTwilioClient(deps: TwilioDeps) {
       return client.messages.create({
         from: deps.fromNumber,
         to,
+        body,
+      });
+    },
+
+    /**
+     * Send a WhatsApp message via Twilio's Messages API. Requires
+     * `whatsappFrom` on deps (format `whatsapp:+E164`). The `to`
+     * number is automatically prefixed with `whatsapp:` if the
+     * caller passed a bare E.164 string.
+     */
+    async sendWhatsApp(to: string, body: string) {
+      if (!deps.whatsappFrom) {
+        throw new Error(
+          "twilio.sendWhatsApp: whatsappFrom not configured (set TWILIO_WHATSAPP_FROM)",
+        );
+      }
+      const toAddr = to.startsWith("whatsapp:") ? to : `whatsapp:${to}`;
+      return client.messages.create({
+        from: deps.whatsappFrom,
+        to: toAddr,
         body,
       });
     },
