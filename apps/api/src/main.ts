@@ -10,7 +10,9 @@ import {
   ActivityRepository,
   AgentRunRepository,
   ApprovalRepository,
+  CampaignEnrollmentRepository,
   CampaignRepository,
+  CampaignStepRepository,
   ContactOrgMembershipRepository,
   ContactRepository,
   EventRepository,
@@ -90,6 +92,8 @@ async function bootstrap(): Promise<void> {
   const workspaceRepository = new WorkspaceRepository();
   const fuelDealRepository = new FuelDealRepository();
   const campaignRepository = new CampaignRepository();
+  const campaignStepRepository = new CampaignStepRepository();
+  const campaignEnrollmentRepository = new CampaignEnrollmentRepository();
   const contactMembershipRepository = new ContactOrgMembershipRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
@@ -206,6 +210,8 @@ async function bootstrap(): Promise<void> {
         db,
         campaigns: campaignRepository,
         touchpoints: touchpointRepository,
+        steps: campaignStepRepository,
+        enrollments: campaignEnrollmentRepository,
       }),
       organizations: OrganizationsModule.register({
         db,
