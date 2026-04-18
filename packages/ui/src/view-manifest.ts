@@ -148,6 +148,47 @@ const RouteMapPanel = z.object({
 });
 
 /**
+ * Market intel tile — fuel market snapshot + recent crossings. Drives
+ * the MarketIntelPanel surface so Vex can answer "how's the diesel
+ * market looking?" without the model hand-formatting numbers. Each
+ * rate row carries per-unit prices (per-USG, per-bbl, per-metric-ton)
+ * plus a 30-day delta the agent computed; alerts surface the most
+ * recent threshold crossings the MarketAlertAgent flagged.
+ */
+const MarketIntelRateRow = z.object({
+  product: z.string().min(1),
+  benchmark: z.string().min(1),
+  pricePerUsg: z.number().nonnegative(),
+  pricePerBbl: z.number().nonnegative(),
+  pricePerMt: z.number().nonnegative(),
+  rateDate: z.string().min(1),
+  source: z.string().min(1),
+  /** Optional rolling-window delta vs baseline, as a percentage. */
+  changePct: z.number().nullable().optional(),
+});
+
+const MarketIntelAlertRow = z.object({
+  product: z.string().min(1),
+  benchmark: z.string().min(1),
+  direction: z.enum(["up", "down"]),
+  changePct: z.number(),
+  currentPriceUsg: z.number().nonnegative(),
+  baselinePriceUsg: z.number().nonnegative(),
+  baselineDays: z.number().int().positive(),
+  thresholdPct: z.number().positive(),
+  occurredAt: z.string().min(1),
+});
+
+const MarketIntelPanel = z.object({
+  type: z.literal("market_intel"),
+  title: z.string().min(1).optional(),
+  rates: z.array(MarketIntelRateRow).min(1),
+  alerts: z.array(MarketIntelAlertRow),
+  /** Baseline window label ("30d") used in the panel subtitle. */
+  baselineLabel: z.string().optional(),
+});
+
+/**
  * Single-deal scorecard — surfaces the calculator outputs (EBITDA,
  * margin, score, recommendation) plus compliance flags. Used when
  * the user asks about a specific deal's economics so the answer
@@ -187,6 +228,7 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   ConfirmEntityPanel,
   RouteMapPanel,
   DealScorecardPanel,
+  MarketIntelPanel,
   // Signal-only panel: ManifestCanvas intercepts it to switch workspace
   // mode and show a toast, never renders a concrete component.
   WorkspaceModeSwitchPanel,
