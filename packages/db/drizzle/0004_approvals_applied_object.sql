@@ -9,6 +9,5 @@
 -- timestamp it was applied, so the executor can short-circuit a
 -- retry that arrives after the create already succeeded.
 
-ALTER TABLE "approvals"
-  ADD COLUMN IF NOT EXISTS "applied_object_id" text,
-  ADD COLUMN IF NOT EXISTS "applied_at" timestamptz;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS applied_object_id text;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS applied_at timestamptz;
