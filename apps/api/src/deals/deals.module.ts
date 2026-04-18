@@ -38,11 +38,11 @@ export class DealsModule {
       module: DealsModule,
       controllers: [DealsController],
       providers: [
-        { provide: DEALS_DB_CLIENT, useValue: config.db },
-        { provide: DEALS_REPO, useValue: config.deals },
-        { provide: DEALS_EVENT_REPO, useValue: config.events },
-        { provide: DEALS_APPROVAL_REPO, useValue: config.approvals },
-        { provide: DEALS_ORGS_REPO, useValue: config.organizations },
+        { provide: DEALS_DB_CLIENT, useFactory: () => config.db },
+        { provide: DEALS_REPO, useFactory: () => config.deals },
+        { provide: DEALS_EVENT_REPO, useFactory: () => config.events },
+        { provide: DEALS_APPROVAL_REPO, useFactory: () => config.approvals },
+        { provide: DEALS_ORGS_REPO, useFactory: () => config.organizations },
       ],
     };
   }

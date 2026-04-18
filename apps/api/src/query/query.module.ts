@@ -24,10 +24,10 @@ export class QueryModule {
       module: QueryModule,
       controllers: [QueryController],
       providers: [
-        { provide: DB_CLIENT, useValue: config.db },
-        { provide: RETRIEVAL_SERVICE, useValue: config.retrieval },
-        { provide: OPENAI_ADAPTER, useValue: config.openai },
-        { provide: ANTHROPIC_ADAPTER, useValue: config.anthropic },
+        { provide: DB_CLIENT, useFactory: () => config.db },
+        { provide: RETRIEVAL_SERVICE, useFactory: () => config.retrieval },
+        { provide: OPENAI_ADAPTER, useFactory: () => config.openai },
+        { provide: ANTHROPIC_ADAPTER, useFactory: () => config.anthropic },
         QueryService,
       ],
     };

@@ -24,9 +24,9 @@ export class MarketingModule {
       module: MarketingModule,
       controllers: [MarketingController],
       providers: [
-        { provide: MARKETING_DB_CLIENT, useValue: config.db },
-        { provide: MARKETING_CAMPAIGNS_REPO, useValue: config.campaigns },
-        { provide: MARKETING_TOUCHPOINTS_REPO, useValue: config.touchpoints },
+        { provide: MARKETING_DB_CLIENT, useFactory: () => config.db },
+        { provide: MARKETING_CAMPAIGNS_REPO, useFactory: () => config.campaigns },
+        { provide: MARKETING_TOUCHPOINTS_REPO, useFactory: () => config.touchpoints },
       ],
     };
   }

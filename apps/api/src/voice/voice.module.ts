@@ -29,11 +29,11 @@ export class VoiceModule {
       module: VoiceModule,
       controllers: [VoiceController],
       providers: [
-        { provide: VOICE_DB_CLIENT, useValue: config.db },
-        { provide: VOICE_OPENAI_ADAPTER, useValue: config.openai },
-        { provide: VOICE_SESSION_STORE, useValue: config.sessionStore },
-        { provide: VOICE_CONTEXT_BUILDER, useValue: config.contextBuilder },
-        { provide: VOICE_TRANSCRIPT_QUEUE, useValue: config.transcriptQueue },
+        { provide: VOICE_DB_CLIENT, useFactory: () => config.db },
+        { provide: VOICE_OPENAI_ADAPTER, useFactory: () => config.openai },
+        { provide: VOICE_SESSION_STORE, useFactory: () => config.sessionStore },
+        { provide: VOICE_CONTEXT_BUILDER, useFactory: () => config.contextBuilder },
+        { provide: VOICE_TRANSCRIPT_QUEUE, useFactory: () => config.transcriptQueue },
         VoiceService,
       ],
     };

@@ -31,18 +31,18 @@ export class WebhooksModule {
       module: WebhooksModule,
       controllers: [WebhooksController],
       providers: [
-        { provide: DB_CLIENT, useValue: config.db },
-        { provide: RAW_EVENT_REPO, useValue: config.rawEventRepository },
-        { provide: NORMALIZATION_QUEUE, useValue: config.normalizationQueue },
+        { provide: DB_CLIENT, useFactory: () => config.db },
+        { provide: RAW_EVENT_REPO, useFactory: () => config.rawEventRepository },
+        { provide: NORMALIZATION_QUEUE, useFactory: () => config.normalizationQueue },
         {
           provide: RESEND_VERIFIER,
-          useValue: new ResendVerifier({ secret: config.resendSecret }),
+          useFactory: () => new ResendVerifier({ secret: config.resendSecret }),
         },
         {
           provide: TWILIO_VERIFIER,
-          useValue: new TwilioVerifier({ authToken: config.twilioAuthToken }),
+          useFactory: () => new TwilioVerifier({ authToken: config.twilioAuthToken }),
         },
-        { provide: WEBHOOK_TENANT_RESOLVER, useValue: config.resolveTenant },
+        { provide: WEBHOOK_TENANT_RESOLVER, useFactory: () => config.resolveTenant },
       ],
     };
   }

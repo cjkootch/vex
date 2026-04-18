@@ -26,10 +26,10 @@ export class HealthModule {
       module: HealthModule,
       controllers: [HealthController],
       providers: [
-        { provide: HEALTH_DB, useValue: config.db },
-        { provide: HEALTH_REDIS, useValue: config.redis },
-        { provide: HEALTH_TEMPORAL, useValue: config.temporal },
-        { provide: HEALTH_QUEUES, useValue: config.queues },
+        { provide: HEALTH_DB, useFactory: () => config.db },
+        { provide: HEALTH_REDIS, useFactory: () => config.redis },
+        { provide: HEALTH_TEMPORAL, useFactory: () => config.temporal },
+        { provide: HEALTH_QUEUES, useFactory: () => config.queues },
         HealthService,
       ],
     };

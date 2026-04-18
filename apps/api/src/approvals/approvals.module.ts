@@ -29,11 +29,11 @@ export class ApprovalsModule {
       module: ApprovalsModule,
       controllers: [ApprovalsController],
       providers: [
-        { provide: APPROVALS_DB_CLIENT, useValue: config.db },
-        { provide: APPROVALS_REPO, useValue: config.approvals },
-        { provide: APPROVALS_EVENTS_REPO, useValue: config.events },
-        { provide: APPROVAL_EXECUTOR_QUEUE, useValue: config.executorQueue },
-        { provide: TEMPORAL_CLIENT, useValue: config.temporal },
+        { provide: APPROVALS_DB_CLIENT, useFactory: () => config.db },
+        { provide: APPROVALS_REPO, useFactory: () => config.approvals },
+        { provide: APPROVALS_EVENTS_REPO, useFactory: () => config.events },
+        { provide: APPROVAL_EXECUTOR_QUEUE, useFactory: () => config.executorQueue },
+        { provide: TEMPORAL_CLIENT, useFactory: () => config.temporal },
         ApprovalsService,
       ],
     };

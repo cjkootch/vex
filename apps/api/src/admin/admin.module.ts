@@ -28,10 +28,10 @@ export class AdminModule {
       module: AdminModule,
       controllers: [AdminController],
       providers: [
-        { provide: ADMIN_DB_CLIENT, useValue: config.db },
-        { provide: ADMIN_WORKSPACES_REPO, useValue: config.workspaces },
-        { provide: ADMIN_EVENTS_REPO, useValue: config.events },
-        { provide: ADMIN_EVAL_RESULTS_PATH, useValue: config.evalResultsPath },
+        { provide: ADMIN_DB_CLIENT, useFactory: () => config.db },
+        { provide: ADMIN_WORKSPACES_REPO, useFactory: () => config.workspaces },
+        { provide: ADMIN_EVENTS_REPO, useFactory: () => config.events },
+        { provide: ADMIN_EVAL_RESULTS_PATH, useFactory: () => config.evalResultsPath },
         AdminService,
       ],
     };
