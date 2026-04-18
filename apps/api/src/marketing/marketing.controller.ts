@@ -1,13 +1,18 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Get,
+  HttpCode,
   Inject,
+  Logger,
   NotFoundException,
   Param,
+  Post,
   Query,
   UseGuards,
 } from "@nestjs/common";
+import { z } from "zod";
 import type { CampaignStatus } from "@vex/domain";
 import type {
   CampaignRepository,
@@ -41,6 +46,16 @@ const CAMPAIGN_STATUSES = new Set<CampaignStatus>([
   "completed",
   "archived",
 ]);
+
+const CreateCampaignBody = z.object({
+  channel: z.string().min(1).max(100),
+  source: z.string().min(1).max(100).optional(),
+  medium: z.string().min(1).max(100).optional(),
+  accountRef: z.string().min(1).max(200).optional(),
+  spend: z.number().nonnegative().optional(),
+  objective: z.string().min(1).max(500).optional(),
+  status: z.enum(["active", "paused", "completed", "archived"]).optional(),
+});
 
 export interface CampaignListRow {
   id: string;
@@ -80,6 +95,8 @@ export interface CampaignDetail extends CampaignListRow {
 @Controller("marketing")
 @UseGuards(JwtAuthGuard)
 export class MarketingController {
+  private readonly log = new Logger(MarketingController.name);
+
   constructor(
     @Inject(TenantContext) private readonly tenant: TenantContext,
     @Inject(MARKETING_DB_CLIENT) private readonly db: Db,
@@ -88,6 +105,44 @@ export class MarketingController {
     @Inject(MARKETING_TOUCHPOINTS_REPO)
     private readonly touchpoints: TouchpointRepository,
   ) {}
+
+  @Post("campaigns")
+  @HttpCode(201)
+  async create(@Body() raw: unknown): Promise<{ campaign: CampaignListRow }> {
+    const parsed = CreateCampaignBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const input = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    const campaign = await withTenant(this.db, tenantId, async (tx) => {
+      const created = await this.campaigns.create(tx, tenantId, {
+        channel: input.channel,
+        ...(input.source !== undefined ? { source: input.source } : {}),
+        ...(input.medium !== undefined ? { medium: input.medium } : {}),
+        ...(input.accountRef !== undefined ? { accountRef: input.accountRef } : {}),
+        ...(input.spend !== undefined ? { spend: input.spend } : {}),
+        ...(input.objective !== undefined ? { objective: input.objective } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+      });
+      // Rollups start at zero for a brand-new campaign; round-trip
+      // through the rollups query anyway so the shape matches list.
+      const hydrated = await this.campaigns.findByIdWithRollups(tx, created.id);
+      return hydrated ?? {
+        ...created,
+        touchpointCount: 0,
+        sent: 0,
+        delivered: 0,
+        opened: 0,
+        clicked: 0,
+        bounced: 0,
+      };
+    });
+
+    this.log.log(`campaign ${campaign.id} (${campaign.channel}) created by ${userId}`);
+    return { campaign: toListRow(campaign) };
+  }
 
   @Get("campaigns")
   async list(

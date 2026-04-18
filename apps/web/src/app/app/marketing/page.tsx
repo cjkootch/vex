@@ -40,6 +40,7 @@ export default function MarketingPage() {
   const [campaigns, setCampaigns] = useState<CampaignRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -180,12 +181,8 @@ export default function MarketingPage() {
           </Link>
           <button
             type="button"
-            title="Campaign creation isn't wired up yet — the next PR adds it."
-            onClick={() => {
-              // eslint-disable-next-line no-console
-              console.log("TODO");
-            }}
-            className="inline-flex h-9 cursor-not-allowed items-center rounded-md bg-accent/60 px-3 text-sm font-medium text-white/80"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex h-9 items-center rounded-md bg-accent px-3 text-sm font-medium text-white hover:bg-accent/80"
           >
             + New campaign
           </button>
@@ -236,7 +233,184 @@ export default function MarketingPage() {
           </div>
         </>
       )}
+
+      {createOpen && (
+        <NewCampaignModal
+          onClose={() => setCreateOpen(false)}
+          onCreated={(campaign) => {
+            setCampaigns((prev) => (prev ? [campaign, ...prev] : [campaign]));
+            setCreateOpen(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Modal form for POST /api/marketing/campaigns. Minimal surface:
+ * channel (required) + source/medium/objective (free text). Status
+ * defaults to `active` on the server. Submits as JSON; closes on 201
+ * and hands the created row back to the page so the list updates
+ * optimistically without a full refetch.
+ */
+function NewCampaignModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (campaign: CampaignRow) => void;
+}) {
+  const [channel, setChannel] = useState("email");
+  const [source, setSource] = useState("");
+  const [medium, setMedium] = useState("");
+  const [objective, setObjective] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const submit = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (channel.trim().length === 0) {
+      setFormError("Channel is required.");
+      return;
+    }
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      const body: Record<string, string> = { channel: channel.trim() };
+      if (source.trim()) body["source"] = source.trim();
+      if (medium.trim()) body["medium"] = medium.trim();
+      if (objective.trim()) body["objective"] = objective.trim();
+      const res = await fetch("/api/marketing/campaigns", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const errBody = (await res.json().catch(() => ({}))) as { message?: string };
+        throw new Error(
+          errBody.message ?? `Create failed: ${res.status} ${res.statusText}`,
+        );
+      }
+      const payload = (await res.json()) as { campaign: CampaignRow };
+      onCreated(payload.campaign);
+    } catch (err) {
+      setFormError((err as Error).message);
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="new-campaign-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      onClick={onClose}
+    >
+      <form
+        onSubmit={submit}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-lg border border-line bg-canvas p-5 shadow-xl"
+      >
+        <h2 id="new-campaign-title" className="text-lg font-semibold text-white">
+          New campaign
+        </h2>
+        <p className="mt-1 text-xs text-white/50">
+          Creates a campaign record your touchpoints can attribute against.
+          All fields except channel are optional.
+        </p>
+
+        <div className="mt-4 space-y-3">
+          <Field label="Channel" htmlFor="nc-channel" required>
+            <input
+              id="nc-channel"
+              type="text"
+              value={channel}
+              onChange={(e) => setChannel(e.target.value)}
+              placeholder="email, paid_search, outbound, …"
+              className="h-9 w-full rounded-md border border-line bg-muted/30 px-3 text-sm text-white focus:border-accent focus:outline-none"
+            />
+          </Field>
+          <Field label="Source" htmlFor="nc-source">
+            <input
+              id="nc-source"
+              type="text"
+              value={source}
+              onChange={(e) => setSource(e.target.value)}
+              placeholder="resend, google_ads, sdr_team"
+              className="h-9 w-full rounded-md border border-line bg-muted/30 px-3 text-sm text-white focus:border-accent focus:outline-none"
+            />
+          </Field>
+          <Field label="Medium" htmlFor="nc-medium">
+            <input
+              id="nc-medium"
+              type="text"
+              value={medium}
+              onChange={(e) => setMedium(e.target.value)}
+              placeholder="nurture, cpc, cold_email"
+              className="h-9 w-full rounded-md border border-line bg-muted/30 px-3 text-sm text-white focus:border-accent focus:outline-none"
+            />
+          </Field>
+          <Field label="Objective" htmlFor="nc-objective">
+            <input
+              id="nc-objective"
+              type="text"
+              value={objective}
+              onChange={(e) => setObjective(e.target.value)}
+              placeholder="reactivate cold leads"
+              className="h-9 w-full rounded-md border border-line bg-muted/30 px-3 text-sm text-white focus:border-accent focus:outline-none"
+            />
+          </Field>
+        </div>
+
+        {formError && (
+          <div className="mt-3 rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
+            {formError}
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="h-9 rounded-md border border-line px-3 text-sm text-white/70 hover:border-accent hover:text-white"
+            disabled={submitting}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="h-9 rounded-md bg-accent px-3 text-sm font-medium text-white hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={submitting}
+          >
+            {submitting ? "Creating…" : "Create campaign"}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  htmlFor,
+  required,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label htmlFor={htmlFor} className="block">
+      <span className="mb-1 block text-xs uppercase tracking-wider text-white/50">
+        {label}
+        {required && <span className="ml-0.5 text-accent">*</span>}
+      </span>
+      {children}
+    </label>
   );
 }
 
