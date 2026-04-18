@@ -1,6 +1,7 @@
-import { asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
 import type { Tx } from "../client.js";
 import { contacts, type Contact } from "../schema/contacts.js";
+import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
 
 export interface ContactCreateInput {
   id: string;
@@ -82,6 +83,37 @@ export class ContactRepository {
 
   async findByOrgId(tx: Tx, orgId: string): Promise<Contact[]> {
     return tx.select().from(contacts).where(eq(contacts.orgId, orgId));
+  }
+
+  /**
+   * Authoritative lookup for a contact's primary org. Reads from the
+   * m:n \`contact_org_memberships\` table (where \`is_primary\` is the
+   * one-at-a-time flag enforced by a partial unique index) and falls
+   * back to the legacy \`contacts.org_id\` column when no membership
+   * row exists — e.g. for contacts created before Sprint 14's
+   * backfill or by an ingestion path that never wrote memberships.
+   *
+   * Readers that currently reach for \`contact.orgId\` directly should
+   * migrate to this helper so we can eventually drop the column.
+   */
+  async getPrimaryOrgId(tx: Tx, contactId: string): Promise<string | null> {
+    const [row] = await tx
+      .select({ orgId: contactOrgMemberships.orgId })
+      .from(contactOrgMemberships)
+      .where(
+        and(
+          eq(contactOrgMemberships.contactId, contactId),
+          eq(contactOrgMemberships.isPrimary, true),
+        ),
+      )
+      .limit(1);
+    if (row) return row.orgId;
+    // Fallback: no membership row yet — read the legacy denormalised
+    // column so callers never observe a null when a primary actually
+    // exists. Once every writer routes through the memberships table
+    // this fallback becomes unreachable and the column can be dropped.
+    const contact = await this.findById(tx, contactId);
+    return contact?.orgId ?? null;
   }
 
   /**

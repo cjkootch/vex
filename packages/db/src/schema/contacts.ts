@@ -15,6 +15,16 @@ export const contacts = pgTable(
   {
     id: text("id").primaryKey(),
     tenantId: text("tenant_id").notNull(),
+    /**
+     * @deprecated Legacy denormalized pointer to the contact's primary
+     * org. Sprint 14 introduced `contact_org_memberships` as the
+     * real m:n model; every writer keeps this column in sync with the
+     * primary membership for backwards-compat, but new readers should
+     * prefer \`ContactRepository.getPrimaryOrgId()\` (or the
+     * memberships table directly) so we can drop the column once the
+     * remaining legacy readers (calls, resend normalizer, retrieval)
+     * migrate.
+     */
     orgId: text("org_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "cascade" }),
