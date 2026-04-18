@@ -161,7 +161,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   return (
-    <div className="flex h-dvh flex-col bg-canvas text-white">
+    <div className="fixed inset-0 flex flex-col overflow-hidden bg-canvas text-white [overscroll-behavior:none]">
       <TopBar
         pending={pending}
         onOpenMobileNav={() => setMobileNavOpen(true)}
