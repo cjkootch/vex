@@ -17,6 +17,7 @@ import {
 } from "@nestjs/common";
 import { z } from "zod";
 import type { CampaignStatus } from "@vex/domain";
+import type { Client as TemporalClient } from "@temporalio/client";
 import type {
   CampaignEnrollmentRepository,
   CampaignRepository,
@@ -24,6 +25,7 @@ import type {
   CampaignWithRollups,
   TouchpointRepository,
 } from "@vex/db";
+import { TEMPORAL_TASK_QUEUE, WorkflowId } from "@vex/integrations";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { withTenant, type Db } from "@vex/db";
 
@@ -46,6 +48,7 @@ export const MARKETING_CAMPAIGNS_REPO = Symbol("MARKETING_CAMPAIGNS_REPO");
 export const MARKETING_TOUCHPOINTS_REPO = Symbol("MARKETING_TOUCHPOINTS_REPO");
 export const MARKETING_STEPS_REPO = Symbol("MARKETING_STEPS_REPO");
 export const MARKETING_ENROLLMENTS_REPO = Symbol("MARKETING_ENROLLMENTS_REPO");
+export const MARKETING_TEMPORAL_CLIENT = Symbol("MARKETING_TEMPORAL_CLIENT");
 
 const CAMPAIGN_STATUSES = new Set<CampaignStatus>([
   "active",
@@ -166,6 +169,8 @@ export class MarketingController {
     private readonly steps: CampaignStepRepository,
     @Inject(MARKETING_ENROLLMENTS_REPO)
     private readonly enrollments: CampaignEnrollmentRepository,
+    @Inject(MARKETING_TEMPORAL_CLIENT)
+    private readonly temporal: TemporalClient | null,
   ) {}
 
   @Get("campaigns")
@@ -365,10 +370,40 @@ export class MarketingController {
       );
     });
 
+    // Kick off one CampaignEnrollmentWorkflow per new enrollment. The
+    // start is best-effort — if Temporal is down we still return 201
+    // so the enrollment rows land; a future reconciliation loop
+    // (Sprint E) will restart orphaned workflows.
+    let workflowsStarted = 0;
+    if (this.temporal && result.createdIds.length > 0) {
+      for (const enrollmentId of result.createdIds) {
+        try {
+          await this.temporal.workflow.start("campaignEnrollmentWorkflow", {
+            taskQueue: TEMPORAL_TASK_QUEUE,
+            workflowId: WorkflowId.campaignEnrollment(enrollmentId),
+            args: [{ tenantId, enrollmentId }],
+          });
+          workflowsStarted += 1;
+        } catch (err) {
+          // Duplicate workflow id is benign — the prior enroll already
+          // started it. Anything else bubbles as a warning.
+          const message = (err as Error).message ?? "";
+          if (!message.toLowerCase().includes("already")) {
+            this.log.warn(
+              `failed to start workflow for enrollment ${enrollmentId}: ${message}`,
+            );
+          }
+        }
+      }
+    }
+
     this.log.log(
-      `enroll campaign=${campaignId} created=${result.created} existing=${result.existing}`,
+      `enroll campaign=${campaignId} created=${result.createdIds.length} existing=${result.existingCount} workflows=${workflowsStarted}`,
     );
-    return result;
+    return {
+      created: result.createdIds.length,
+      existing: result.existingCount,
+    };
   }
 
   @Get("campaigns/:id/enrollments")

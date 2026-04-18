@@ -46,4 +46,7 @@ export const WorkflowId = {
   followUp: (agentRunId: string): string => `follow-up-${agentRunId}`,
   /** Sprint 12 — one workflow per outbound PSTN call attempt. */
   outboundCall: (agentRunId: string): string => `outbound-call-${agentRunId}`,
+  /** Sprint D — one workflow per contact enrollment in a campaign. */
+  campaignEnrollment: (enrollmentId: string): string =>
+    `campaign-enrollment-${enrollmentId}`,
 } as const;

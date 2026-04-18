@@ -112,15 +112,15 @@ export class CampaignEnrollmentRepository {
     tenantId: string,
     campaignId: string,
     contactIds: string[],
-  ): Promise<{ created: number; existing: number }> {
-    let created = 0;
-    let existing = 0;
+  ): Promise<{ createdIds: string[]; existingCount: number }> {
+    const createdIds: string[] = [];
+    let existingCount = 0;
     for (const contactId of contactIds) {
       const result = await this.enroll(tx, tenantId, { campaignId, contactId });
-      if (result.alreadyEnrolled) existing += 1;
-      else created += 1;
+      if (result.alreadyEnrolled) existingCount += 1;
+      else createdIds.push(result.enrollment.id);
     }
-    return { created, existing };
+    return { createdIds, existingCount };
   }
 
   /**

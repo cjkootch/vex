@@ -10,3 +10,8 @@ export type {
   OutboundCallWorkflowInput,
   OutboundCallOutcome,
 } from "./outbound-call-workflow.js";
+export { campaignEnrollmentWorkflow } from "./campaign-enrollment-workflow.js";
+export type {
+  CampaignEnrollmentWorkflowInput,
+  CampaignEnrollmentWorkflowResult,
+} from "./campaign-enrollment-workflow.js";

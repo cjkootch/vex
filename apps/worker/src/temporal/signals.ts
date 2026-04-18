@@ -62,3 +62,44 @@ export interface CallRecordingSignal {
 export const callRecordingSignal = defineSignal<[CallRecordingSignal]>(
   "call.recording.available",
 );
+
+// ---------------------------------------------------------------------------
+// Sprint D — campaign enrollment signals
+// ---------------------------------------------------------------------------
+
+/**
+ * Operator action — pause or resume a recipient mid-plan without
+ * unenrolling them. Paused enrollments halt at the next step gate.
+ */
+export interface EnrollmentControlSignal {
+  action: "pause" | "resume" | "unsubscribe";
+  /** Free-form note appended to branch_history so the reason survives. */
+  note?: string;
+}
+
+export const enrollmentControlSignal = defineSignal<[EnrollmentControlSignal]>(
+  "enrollment.control",
+);
+
+/**
+ * Surfaced by the ResendNormalizer + TwilioNormalizer when an inbound
+ * touchpoint lands on the enrolled contact. The workflow forwards
+ * this into its gate evaluation cache so `opened_in_last_days` etc.
+ * can see fresh events without a DB re-read.
+ */
+export interface EnrollmentTouchpointSignal {
+  kind:
+    | "email_open"
+    | "email_click"
+    | "email_bounce"
+    | "inbound_reply"
+    | "intent_classified";
+  /** ISO timestamp. */
+  occurredAt: string;
+  /** For `intent_classified`: the classifier's label. */
+  intent?: string;
+}
+
+export const enrollmentTouchpointSignal = defineSignal<[EnrollmentTouchpointSignal]>(
+  "enrollment.touchpoint",
+);
