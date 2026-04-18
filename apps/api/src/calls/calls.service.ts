@@ -117,7 +117,8 @@ export class CallsService {
     @Inject(CALLS_ACTIVITIES_REPO) private readonly activities: ActivityRepository,
     @Inject(CALLS_SUMMARIES_REPO) private readonly summaries: SummaryRepository,
     @Inject(CALLS_EVENTS_REPO) private readonly events: EventRepository,
-    @Inject(CALLS_TEMPORAL_CLIENT) private readonly temporal: TemporalClient,
+    @Inject(CALLS_TEMPORAL_CLIENT)
+    private readonly temporal: TemporalClient | null,
     @Inject(CALLS_TWILIO_CLIENT) private readonly twilio: TwilioClient,
     @Inject(CALLS_S3_UPLOADER) private readonly s3: S3Uploader,
     @Inject(CALLS_TASK_QUEUE) private readonly taskQueue: string,
@@ -177,6 +178,11 @@ export class CallsService {
         },
       });
 
+      if (!this.temporal) {
+        throw new ServiceUnavailableException(
+          "temporal_unavailable: OutboundCallWorkflow requires Temporal",
+        );
+      }
       await this.temporal.workflow.start("outboundCallWorkflow", {
         taskQueue: this.taskQueue,
         workflowId,
@@ -249,12 +255,14 @@ export class CallsService {
       // workflow terminates. Not fatal when Temporal is unreachable;
       // the DB view is still returned.
       let workflowStatus: string | null = null;
-      try {
-        const handle = this.temporal.workflow.getHandle(workflowId);
-        const desc = await handle.describe();
-        workflowStatus = desc.status.name;
-      } catch {
-        workflowStatus = null;
+      if (this.temporal) {
+        try {
+          const handle = this.temporal.workflow.getHandle(workflowId);
+          const desc = await handle.describe();
+          workflowStatus = desc.status.name;
+        } catch {
+          workflowStatus = null;
+        }
       }
 
       // Callee resolution — the approval payload carries the contact_id
@@ -555,6 +563,12 @@ export class CallsService {
       : undefined;
     const at = params["Timestamp"] ?? new Date().toISOString();
 
+    if (!this.temporal) {
+      this.log.warn(
+        `call-status signal skipped for ${workflowId}: temporal unavailable`,
+      );
+      return;
+    }
     const handle = this.temporal.workflow.getHandle(workflowId);
     try {
       await handle.signal("call.status.update", {
@@ -609,6 +623,12 @@ export class CallsService {
     const storageKey = this.twilio.recordingStorageKey(tenantId, callSid);
     await this.s3.putBuffer(storageKey, audio, "audio/mpeg");
 
+    if (!this.temporal) {
+      this.log.warn(
+        `call-recording signal skipped for ${workflowId}: temporal unavailable`,
+      );
+      return;
+    }
     const handle = this.temporal.workflow.getHandle(workflowId);
     try {
       await handle.signal("call.recording.available", {

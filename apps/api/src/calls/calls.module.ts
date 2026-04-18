@@ -64,7 +64,13 @@ export interface CallsModuleConfig {
   activities: ActivityRepository;
   summaries: SummaryRepository;
   events: EventRepository;
-  temporal: TemporalClient;
+  /**
+   * Temporal client — null when the Temporal cluster is unreachable at
+   * boot. Service methods that drive workflows (initiateCall,
+   * mintJoinToken status lookups) 503 in that case; demo-call and
+   * other non-workflow paths keep working.
+   */
+  temporal: TemporalClient | null;
   twilio: TwilioClient;
   twilioVerifier: TwilioVerifier;
   s3: S3Uploader;
