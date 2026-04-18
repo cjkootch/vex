@@ -12,6 +12,11 @@ export type { SummaryUpsertData } from "./summary-repository.js";
 export { EmbeddingChunkRepository } from "./embedding-chunk-repository.js";
 export type { EmbeddingChunkInsert } from "./embedding-chunk-repository.js";
 export { TouchpointRepository, type TouchpointInsert } from "./touchpoint-repository.js";
+export {
+  CampaignRepository,
+  type CampaignRollups,
+  type CampaignWithRollups,
+} from "./campaign-repository.js";
 export { ActivityRepository, type ActivityInsert } from "./activity-repository.js";
 export { EventRepository, type EventInsert } from "./event-repository.js";
 export { WorkspaceRepository } from "./workspace-repository.js";
