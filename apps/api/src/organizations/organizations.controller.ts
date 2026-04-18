@@ -9,6 +9,7 @@ import {
   Logger,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -41,6 +42,19 @@ const CreateOrganizationBody = z.object({
   domain: z.string().max(255).optional(),
   industry: z.string().max(120).optional(),
 });
+
+/**
+ * Editable fields on an organization — only the bits a human enters
+ * by hand. Merge metadata (externalKeys, fieldConfidence, fitScore)
+ * and status all have their own mutation paths.
+ */
+const UpdateOrganizationBody = z
+  .object({
+    legalName: z.string().min(1).max(200),
+    domain: z.string().max(255).nullable(),
+    industry: z.string().max(120).nullable(),
+  })
+  .partial();
 
 type RecordStatus = "active" | "archived" | "inactive";
 
