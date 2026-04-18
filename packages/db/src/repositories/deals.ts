@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type {
   CounterpartyRiskTier,
@@ -527,5 +527,105 @@ export class FuelMarketRateRepository {
       .returning();
     if (!row) throw new Error("fuel_market_rates insert returned no row");
     return row;
+  }
+
+  /**
+   * Idempotent upsert keyed on the unique index
+   * `(tenant_id, rate_date, product, benchmark)`. Safe to call on every
+   * market-data poll — re-ingesting the same day overwrites the prices
+   * and refreshes `source`, so switching feeds (EIA → Alpha Vantage →
+   * manual entry) never leaves a stale row behind.
+   */
+  async upsert(
+    tx: Tx,
+    tenantId: string,
+    data: FuelMarketRateInsert,
+  ): Promise<FuelMarketRate> {
+    const [row] = await tx
+      .insert(fuelMarketRates)
+      .values({
+        id: data.id ?? createId(),
+        tenantId,
+        rateDate: data.rateDate,
+        product: data.product,
+        benchmark: data.benchmark,
+        pricePerUsg: data.pricePerUsg,
+        pricePerBbl: data.pricePerBbl,
+        pricePerMt: data.pricePerMt,
+        currency: data.currency ?? "usd",
+        source: data.source,
+      })
+      .onConflictDoUpdate({
+        target: [
+          fuelMarketRates.tenantId,
+          fuelMarketRates.rateDate,
+          fuelMarketRates.product,
+          fuelMarketRates.benchmark,
+        ],
+        set: {
+          pricePerUsg: data.pricePerUsg,
+          pricePerBbl: data.pricePerBbl,
+          pricePerMt: data.pricePerMt,
+          currency: data.currency ?? "usd",
+          source: data.source,
+        },
+      })
+      .returning();
+    if (!row) throw new Error("fuel_market_rates upsert returned no row");
+    return row;
+  }
+
+  /** Batch upsert. Returns the inserted/updated rows in input order. */
+  async upsertMany(
+    tx: Tx,
+    tenantId: string,
+    rows: FuelMarketRateInsert[],
+  ): Promise<FuelMarketRate[]> {
+    if (rows.length === 0) return [];
+    const out: FuelMarketRate[] = [];
+    for (const r of rows) {
+      out.push(await this.upsert(tx, tenantId, r));
+    }
+    return out;
+  }
+
+  /**
+   * One most-recent row per (product, benchmark) pair. Drives the
+   * MarketIntelPanel dashboard tile — a single snapshot across every
+   * series we track, regardless of which source wrote it last.
+   */
+  async listLatestPerSeries(tx: Tx, limit = 50): Promise<FuelMarketRate[]> {
+    return tx
+      .select()
+      .from(fuelMarketRates)
+      .where(
+        sql`(${fuelMarketRates.product}, ${fuelMarketRates.benchmark}, ${fuelMarketRates.rateDate}) IN (
+          SELECT product, benchmark, MAX(rate_date)
+          FROM fuel_market_rates
+          GROUP BY product, benchmark
+        )`,
+      )
+      .orderBy(desc(fuelMarketRates.rateDate))
+      .limit(limit);
+  }
+
+  /** Time series for a product across all benchmarks since `since`. */
+  async listSince(
+    tx: Tx,
+    product: string,
+    since: string,
+    limit = 365,
+  ): Promise<FuelMarketRate[]> {
+    return tx
+      .select()
+      .from(fuelMarketRates)
+      .where(
+        and(
+          eq(fuelMarketRates.product, product),
+          gte(fuelMarketRates.rateDate, since),
+        ),
+      )
+      .orderBy(desc(fuelMarketRates.rateDate))
+      .limit(limit);
   }
 }
