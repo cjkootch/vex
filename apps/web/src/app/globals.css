@@ -20,4 +20,12 @@ body {
     Arial,
     sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* Lock the document to the visible viewport so no part of the
+     AppShell can scroll off-screen on iOS Safari. All in-app scrolling
+     happens inside `<main>` (or ConversationThread's messages div).
+     Without this, iOS's dynamic address bar can make body taller
+     than the viewport and scroll the chrome out of view. */
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
