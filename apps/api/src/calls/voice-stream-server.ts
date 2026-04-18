@@ -5,6 +5,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import {
   ESCALATION_LISTENER_INSTRUCTIONS,
   ESCALATION_TOOL,
+  FUEL_LEAD_QUALIFIER_INSTRUCTIONS,
   startVoiceBridge,
   type RealtimeClientEvent,
   type RealtimeServerEvent,
@@ -13,6 +14,13 @@ import {
   type TwilioStreamTransport,
   type VoiceBridgeHandle,
 } from "@vex/integrations";
+
+/** Supported WS paths. "listen" = Sprint K escalation monitor; "talkback" = Sprint L AI conversation. */
+type StreamMode = "listen" | "talkback";
+const STREAM_PATHS: Record<string, StreamMode> = {
+  "/calls/twilio/stream": "listen",
+  "/calls/twilio/ai-stream": "talkback",
+};
 
 /**
  * Sprint K — WebSocket server that bridges Twilio Media Streams
@@ -77,7 +85,8 @@ export class VoiceStreamServer {
           return null;
         }
       })();
-      if (!url || url.pathname !== "/calls/twilio/stream") return;
+      const streamMode = url ? STREAM_PATHS[url.pathname] : undefined;
+      if (!url || !streamMode) return;
 
       if (!this.config.enabled) {
         socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
@@ -85,27 +94,31 @@ export class VoiceStreamServer {
         return;
       }
 
-      const wf = url.searchParams.get("wf");
+      const wf = url.searchParams.get("wf") ?? "demo";
       const tenant = url.searchParams.get("tenant");
-      if (!wf || !tenant) {
+      if (!tenant) {
         socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
         socket.destroy();
         return;
       }
 
       this.wss.handleUpgrade(req, socket as Socket, head, (ws) => {
-        void this.handleConnection(ws, { workflowId: wf, tenantId: tenant }, req).catch(
-          (err) => {
-            this.config.log("error", `voice stream handle failed: ${(err as Error).message}`, {
-              workflowId: wf,
-            });
-            try {
-              ws.close(1011, "server_error");
-            } catch {
-              /* already closed */
-            }
-          },
-        );
+        void this.handleConnection(
+          ws,
+          { workflowId: wf, tenantId: tenant, mode: streamMode },
+          req,
+        ).catch((err) => {
+          this.config.log(
+            "error",
+            `voice stream handle failed: ${(err as Error).message}`,
+            { workflowId: wf },
+          );
+          try {
+            ws.close(1011, "server_error");
+          } catch {
+            /* already closed */
+          }
+        });
       });
     });
   }
@@ -125,7 +138,7 @@ export class VoiceStreamServer {
 
   private async handleConnection(
     ws: WebSocket,
-    args: { workflowId: string; tenantId: string },
+    args: { workflowId: string; tenantId: string; mode: StreamMode },
     _req: IncomingMessage,
   ): Promise<void> {
     const twilio = wrapTwilioWs(ws);
@@ -135,13 +148,20 @@ export class VoiceStreamServer {
 
     this.config.log("info", "voice bridge upgrade accepted", {
       workflowId: args.workflowId,
+      mode: args.mode,
     });
+
+    const instructions =
+      args.mode === "talkback"
+        ? FUEL_LEAD_QUALIFIER_INSTRUCTIONS
+        : (this.config.instructions ?? ESCALATION_LISTENER_INSTRUCTIONS);
 
     const handle = startVoiceBridge(twilio, realtime, {
       workflowId: args.workflowId,
       tenantId: args.tenantId,
-      instructions: this.config.instructions ?? ESCALATION_LISTENER_INSTRUCTIONS,
+      instructions,
       tools: [ESCALATION_TOOL],
+      mode: args.mode,
       onEscalate: async (payload) => {
         await this.config.onEscalate(payload);
       },

@@ -40,6 +40,12 @@ const DemoCallBody = z.object({
     .string()
     .regex(/^\+[1-9]\d{7,14}$/, "phone must be E.164 (e.g. +18324927169)"),
   script: z.string().min(1).max(1_500).optional(),
+  /**
+   * Sprint L — when true, dial into the AI talkback path (OpenAI
+   * Realtime bidirectional voice) instead of the static Polly script.
+   * Default false preserves the Sprint-L-predecessor demo behaviour.
+   */
+  mode: z.enum(["polly", "ai"]).default("polly"),
 });
 
 /**
@@ -211,11 +217,13 @@ export class CallsController {
       tenantId: string;
       userId: string;
       toNumber: string;
+      mode: "polly" | "ai";
       script?: string;
     } = {
       tenantId: this.tenant.tenantId,
       userId: this.tenant.userId,
       toNumber: parsed.data.phone,
+      mode: parsed.data.mode,
     };
     if (parsed.data.script !== undefined) args.script = parsed.data.script;
     return this.service.initiateDemoCall(args);
@@ -250,12 +258,51 @@ export class CallsController {
     return [
       '<?xml version="1.0" encoding="UTF-8"?>',
       "<Response>",
+      // 1s head pause so the callee has time to get the phone to
+      // their ear and say "hello" before the script starts.
+      '  <Pause length="1"/>',
       `  <Say voice="Polly.Joanna">${escapeXml(text)}</Say>`,
       // Pause gives the callee space to respond even though no one is
       // listening; keeps the call open long enough to feel like a
       // real conversation rather than a robocall.
       '  <Pause length="20"/>',
       '  <Say voice="Polly.Joanna">Thanks for your time. We will follow up by email. Goodbye.</Say>',
+      "</Response>",
+    ].join("\n");
+  }
+
+  /**
+   * Sprint L — TwiML for the AI talkback path. Twilio fetches this
+   * when the AI-demo call is answered; the response connects the
+   * call leg to our Media Stream WebSocket. OpenAI Realtime drives
+   * the conversation. Query param `tenant` is used by the WS server
+   * to scope tools (escalate_to_human) to the right workspace.
+   *
+   * Unauthenticated for the same reason as /calls/twilio/demo-twiml
+   * — URL-encoded query + Fastify normalization makes Twilio's
+   * signature check brittle, and the endpoint is side-effect-free.
+   */
+  @Post("twilio/ai-twiml")
+  @SkipThrottle()
+  @Header("content-type", "text/xml")
+  @HttpCode(200)
+  async aiTwiml(@Req() req: RawBodyRequest<FastifyRequest>): Promise<string> {
+    const query = (req.query ?? {}) as Record<string, unknown>;
+    const tenant =
+      typeof query["tenant"] === "string" ? (query["tenant"] as string) : "";
+    const wf =
+      typeof query["wf"] === "string" ? (query["wf"] as string) : "demo";
+    const streamUrl = `${this.voiceListener.streamUrl
+      .replace("/calls/twilio/stream", "/calls/twilio/ai-stream")}?wf=${encodeURIComponent(wf)}&tenant=${encodeURIComponent(tenant)}`;
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      "<Response>",
+      // Short pause so the callee has a moment after pick-up before
+      // the AI starts speaking.
+      '  <Pause length="1"/>',
+      "  <Connect>",
+      `    <Stream url="${escapeXml(streamUrl)}" />`,
+      "  </Connect>",
       "</Response>",
     ].join("\n");
   }
