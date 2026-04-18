@@ -193,25 +193,30 @@ export default function DealsPage() {
   );
 
   return (
-    <div className="mx-auto flex h-full max-w-6xl flex-col gap-4 px-6 py-6">
-      <header className="flex items-baseline justify-between">
-        <div>
+    <div className="mx-auto flex h-full max-w-6xl flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
+      <header className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold text-white">Deals</h1>
-          <p className="text-sm text-white/60">
+          <p className="mt-1 hidden text-sm text-white/60 md:block">
             Fuel deals, sortable and filterable. Click a row to open the deal detail.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-shrink-0 items-center gap-2">
           <Link
             href="/app/chat?ask=Show%20me%20all%20deals%20with%20compliance%20holds"
-            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
+            aria-label="Ask Vex about deals"
+            className="inline-flex h-9 items-center justify-center rounded-md border border-line px-3 text-sm text-white/80 hover:border-accent hover:text-white"
           >
-            Ask Vex →
+            {/* Icon-only below sm to save the width for the primary CTA. */}
+            <span className="hidden sm:inline">Ask Vex →</span>
+            <span className="sm:hidden" aria-hidden="true">
+              ✦
+            </span>
           </Link>
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+            className="inline-flex h-9 items-center rounded-md bg-accent px-3 text-sm font-medium text-white hover:bg-accent/90"
           >
             + New deal
           </button>
@@ -229,21 +234,28 @@ export default function DealsPage() {
         }}
       />
 
-      <div className="flex flex-wrap gap-1">
-        {STATUS_FILTERS.map((s) => (
-          <button
-            key={s.value}
-            type="button"
-            onClick={() => setStatusFilter(s.value)}
-            className={`rounded-md px-3 py-1 text-xs transition-colors ${
-              statusFilter === s.value
-                ? "bg-accent text-white"
-                : "bg-muted/40 text-white/70 hover:bg-muted/60"
-            }`}
-          >
-            {s.label}
-          </button>
-        ))}
+      {/*
+        Filter chips. On mobile we let them scroll horizontally so the
+        row never wraps — wrapping chips double the header chrome on a
+        phone. On md+ they wrap naturally as before.
+      */}
+      <div className="-mx-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+        <div className="flex gap-1 whitespace-nowrap md:flex-wrap">
+          {STATUS_FILTERS.map((s) => (
+            <button
+              key={s.value}
+              type="button"
+              onClick={() => setStatusFilter(s.value)}
+              className={`rounded-md px-3 py-1.5 text-xs transition-colors ${
+                statusFilter === s.value
+                  ? "bg-accent text-white"
+                  : "bg-muted/40 text-white/70 hover:bg-muted/60"
+              }`}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {error && (
@@ -274,14 +286,88 @@ export default function DealsPage() {
           Loading deals…
         </div>
       ) : (
-        <DataTable
-          data={deals}
-          columns={columns}
-          filterPlaceholder="Filter by ref, buyer, product…"
-          emptyState="No deals match the current filter. Try clearing status or adjusting search."
-        />
+        <>
+          {/* Mobile: card list. Tables get unreadable below ~640px. */}
+          <div className="md:hidden">
+            <DealCardList deals={deals} />
+          </div>
+          {/* Desktop: full table with sortable columns + inline actions. */}
+          <div className="hidden md:block">
+            <DataTable
+              data={deals}
+              columns={columns}
+              filterPlaceholder="Filter by ref, buyer, product…"
+              emptyState="No deals match the current filter. Try clearing status or adjusting search."
+            />
+          </div>
+        </>
       )}
     </div>
+  );
+}
+
+/**
+ * Mobile card list. One card per deal; the whole card routes to the
+ * detail page. Shows the fields you actually want at a glance —
+ * deal ref + status on top, buyer + product/volume underneath, plus
+ * any compliance/OFAC flag as an amber pill. No inline status
+ * dropdown on mobile (it doesn't fit usefully); status change still
+ * works from the detail page.
+ */
+function DealCardList({ deals }: { deals: DealRow[] }) {
+  if (deals.length === 0) {
+    return (
+      <div className="rounded-md border border-line bg-muted/20 px-3 py-6 text-center text-sm text-white/40">
+        No deals match the current filter.
+      </div>
+    );
+  }
+  return (
+    <ul className="flex flex-col gap-2">
+      {deals.map((d) => (
+        <li key={d.id}>
+          <Link
+            href={`/app/deals/${d.id}`}
+            className="block rounded-lg border border-line bg-muted/20 p-3 transition-colors hover:border-accent/60 hover:bg-muted/40"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <span className="font-mono text-sm text-accent">{d.dealRef}</span>
+              <StatusPill status={d.status} />
+            </div>
+            <div className="mt-1.5 truncate text-sm text-white">
+              {d.buyerName ?? "Unknown buyer"}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/60">
+              <span>{PRODUCT_LABELS[d.product] ?? d.product}</span>
+              <span aria-hidden="true" className="text-white/30">·</span>
+              <span>{formatVolume(d.volumeUsg)}</span>
+              <span aria-hidden="true" className="text-white/30">·</span>
+              <span className="uppercase">{d.incoterm}</span>
+              {d.laycanStart ? (
+                <>
+                  <span aria-hidden="true" className="text-white/30">·</span>
+                  <span>{formatLaycan(d.laycanStart, d.laycanEnd)}</span>
+                </>
+              ) : null}
+            </div>
+            {(d.complianceHold || d.ofacStatus !== "cleared") && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {d.complianceHold && (
+                  <span className="rounded bg-bad/20 px-1.5 py-0.5 text-[10px] text-bad">
+                    compliance hold
+                  </span>
+                )}
+                {d.ofacStatus !== "cleared" && (
+                  <span className="rounded bg-warn/20 px-1.5 py-0.5 text-[10px] text-warn">
+                    ofac: {d.ofacStatus.replace("_", " ")}
+                  </span>
+                )}
+              </div>
+            )}
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
