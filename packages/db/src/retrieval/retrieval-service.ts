@@ -6,6 +6,7 @@ import {
   type EvidencePack,
 } from "@vex/domain";
 import type { Tx } from "../client.js";
+import { agentRuns } from "../schema/agent-runs.js";
 import { campaigns } from "../schema/campaigns.js";
 import { contacts } from "../schema/contacts.js";
 import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
@@ -215,13 +216,25 @@ export class RetrievalService {
       fallbackItems = await this.nameMatchFallback(tx, queryText);
     }
 
+    // Agent-status hydration — independent of the other branches. When
+    // the user asks about agents / cron / last run, always include the
+    // most recent agent_runs rows. Agents are first-party operational
+    // facts, so the items carry a higher confidence score than fallback.
+    const agentIntent = detectAgentIntent(queryText);
+    const agentItems = agentIntent.triggered
+      ? await this.fetchAgentStatus(tx, agentIntent.specificAgents)
+      : [];
+
+    const primaryItems = items.length > 0 ? items : fallbackItems;
+    const mergedItems = [...agentItems, ...primaryItems];
+
     const cap = options.tokenCap ?? DEFAULT_TOKEN_CAP;
     let pack: EvidencePack = {
       summaries: summariesItems,
-      items: items.length > 0 ? items : fallbackItems,
+      items: mergedItems,
       estimated_tokens: packTokens({
         summaries: summariesItems,
-        items: items.length > 0 ? items : fallbackItems,
+        items: mergedItems,
       }),
     };
 
@@ -546,6 +559,68 @@ export class RetrievalService {
   }
 
   /**
+   * Latest N agent runs for the current tenant, projected as
+   * `EvidenceItem`s. When `specificAgents` is non-empty, filters to
+   * those agent names only — lets the chat answer "how is the analyst
+   * agent doing?" without the pack swelling with every agent's history.
+   *
+   * confidence_score is 0.7 (between fallback 0.4 and summary 0.85) —
+   * these are first-party facts, but the caller asked an operational
+   * question so the answer lives at chat-confidence, not audit-grade.
+   */
+  async fetchAgentStatus(
+    tx: Tx,
+    specificAgents: Set<string>,
+    limit = 12,
+  ): Promise<EvidenceItem[]> {
+    const filter = specificAgents.size > 0
+      ? inArray(agentRuns.agentName, Array.from(specificAgents))
+      : undefined;
+    const rows = await (filter
+      ? tx.select().from(agentRuns).where(filter)
+      : tx.select().from(agentRuns))
+      .orderBy(desc(agentRuns.createdAt))
+      .limit(limit);
+
+    const now = Date.now();
+    return rows.map((row) => {
+      const occurredAt = row.finishedAt ?? row.startedAt ?? row.createdAt;
+      const ageMs = now - occurredAt.getTime();
+      const refs = row.outputRefs;
+      let rationale = "";
+      for (const key of ["rationale", "summary", "answer"]) {
+        const v = refs[key];
+        if (typeof v === "string" && v.length > 0) {
+          rationale = v.slice(0, 160);
+          break;
+        }
+      }
+      const parts = [
+        `Agent ${row.agentName}`,
+        `status ${row.status}`,
+        `cost $${row.costUsd.toFixed(4)}`,
+        row.error ? `error: ${row.error.slice(0, 120)}` : null,
+        rationale ? `— ${rationale}` : null,
+      ].filter(Boolean);
+      return {
+        chunk_id: row.id,
+        object_type: "agent_run",
+        object_id: row.id,
+        chunk_text: parts.join(" · "),
+        source_ref: `agent_run / ${row.agentName} ${row.id}`,
+        source_type: "event",
+        occurred_at: occurredAt,
+        freshness_hours: Math.max(0, ageMs / 3_600_000),
+        confidence_score: 0.7,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      } satisfies EvidenceItem;
+    });
+  }
+
+  /**
    * Collect the latest summary row for every (subjectType, subjectId) pair
    * implied by the resolved scope, projected as `EvidenceItem`s.
    */
@@ -601,6 +676,61 @@ export class RetrievalService {
       } satisfies EvidenceItem;
     });
   }
+}
+
+/**
+ * Known agent names as stored in `agent_runs.agent_name`. The detector
+ * walks this list so a user can type either "analyst" or "follow up"
+ * and we hydrate the right rows. Mirror the IAgent.name values in
+ * packages/agents.
+ */
+const KNOWN_AGENT_NAMES = [
+  "daily_brief",
+  "follow_up",
+  "research",
+  "analyst",
+  "call_prep",
+  "market_data",
+  "market_alert",
+  "deal_evaluator",
+  "outbound_call",
+  "qualifier",
+  "composer",
+] as const;
+
+/**
+ * Rough phrase set that signals the user is asking for operational
+ * agent health rather than business data. Combined with the per-agent
+ * name list, these are the triggers that cause `buildEvidencePack` to
+ * hydrate agent_runs rows.
+ */
+const AGENT_INTENT_PHRASE = /\b(agents?|cron|last run|status check|health check|heartbeat|orchestrator)\b/i;
+
+export interface AgentIntent {
+  triggered: boolean;
+  /** When the user named specific agents, the detector reports them. */
+  specificAgents: Set<string>;
+}
+
+/**
+ * Detect whether the query is asking about agent operational status.
+ * Exported so the UI layer / tests can reuse the classifier without
+ * re-grepping the query.
+ */
+export function detectAgentIntent(queryText: string): AgentIntent {
+  const lower = queryText.toLowerCase();
+  const specific = new Set<string>();
+  for (const name of KNOWN_AGENT_NAMES) {
+    const withSpace = name.replace(/_/g, " ");
+    // Match either the exact identifier or its space-separated form.
+    const re = new RegExp(`\\b(${name}|${withSpace})\\b`, "i");
+    if (re.test(lower)) specific.add(name);
+  }
+  const mentionsPhrase = AGENT_INTENT_PHRASE.test(lower);
+  return {
+    triggered: mentionsPhrase || specific.size > 0,
+    specificAgents: specific,
+  };
 }
 
 function collectScopedIds(scope: ResolvedScope): string[] {
