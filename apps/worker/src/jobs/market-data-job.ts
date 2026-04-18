@@ -1,5 +1,8 @@
 import {
+  ApprovalGate,
+  MarketAlertAgent,
   MarketDataAgent,
+  type MarketAlertAgentInput,
   type MarketDataAgentInput,
   type MarketDataProvider,
   type MarketDataSeries,
@@ -11,7 +14,9 @@ import {
   AgentRunRepository,
   ApprovalRepository,
   ContactRepository,
+  CounterpartyRiskRepository,
   EventRepository,
+  FuelDealRepository,
   FuelMarketRateRepository,
   LeadRepository,
   OrganizationRepository,
@@ -52,13 +57,37 @@ export interface MarketDataJobDeps {
   tenantId?: string;
   /** How many days of history to request each tick. Default 7. */
   lookbackDays?: number;
+  /** Override the default rate-product → deal-product map. */
+  productMap?: Record<string, string[]>;
+  /** Override the alert baseline window (days). */
+  baselineDays?: number;
+  /** Override the alert threshold (percentage). */
+  thresholdPct?: number;
 }
 
 export interface MarketDataJobTick {
   status: "ran" | "failed";
   output?: AgentOutput;
+  /** Output from the MarketAlertAgent chained after ingestion. */
+  alert?: AgentOutput;
+  /** Approval rows the alert agent's T2 proposals materialised into. */
+  approvalsCreated?: number;
   error?: string;
 }
+
+/**
+ * Default rate-product → deal-product mapping. The EIA feed uses coarse
+ * labels ("diesel") while the deal enum has fine-grained SKUs ("ulsd",
+ * "jet_a", "jet_a1", "gasoline_87", "gasoline_91"). A single market
+ * label may match several deal products.
+ */
+export const DEFAULT_MARKET_PRODUCT_MAP: Record<string, string[]> = {
+  crude: [],
+  gasoline: ["gasoline_87", "gasoline_91"],
+  diesel: ["ulsd"],
+  jet: ["jet_a", "jet_a1"],
+  natural_gas: ["lng"],
+};
 
 /**
  * Default series config — WTI + Brent daily crude, NY ULSD + US regular
@@ -106,33 +135,52 @@ export const FUEL_SERIES_CONFIG: MarketDataSeries[] = [
 ];
 
 /**
- * Run a single market-data tick. Opens `withTenant`, builds the minimum
- * {@link AgentContext} the MarketDataAgent needs, and invokes
- * `agent.run`. Errors are swallowed and returned so the timer that wraps
- * this job never crashes the worker.
+ * Run a single market-data tick:
+ *   1. MarketDataAgent ingests fresh rates for every configured series.
+ *   2. MarketAlertAgent scans the updated table, identifies threshold
+ *      crossings, and proposes T2 market.outreach actions for hot/warm
+ *      buyers. Its T2 proposals are gated through ApprovalGate inside
+ *      the same transaction so no outreach fires inline.
+ *
+ * Errors are swallowed and returned so the timer that wraps this job
+ * never crashes the worker.
  */
 export async function runMarketDataTick(deps: MarketDataJobDeps): Promise<MarketDataJobTick> {
   const tenantId = deps.tenantId ?? deps.workspaceId;
   const rates = new FuelMarketRateRepository();
+  const dealsRepo = new FuelDealRepository();
+  const counterpartyRepo = new CounterpartyRiskRepository();
 
-  const agentInput: MarketDataAgentInput = {
+  const dataAgentInput: MarketDataAgentInput = {
     provider: deps.provider,
     rates,
     series: deps.series,
     ...(deps.lookbackDays !== undefined ? { lookbackDays: deps.lookbackDays } : {}),
   };
-  const agent = new MarketDataAgent(agentInput);
+  const dataAgent = new MarketDataAgent(dataAgentInput);
+
+  const alertAgentInput: MarketAlertAgentInput = {
+    rates,
+    deals: dealsRepo,
+    counterparty: counterpartyRepo,
+    productMap: deps.productMap ?? DEFAULT_MARKET_PRODUCT_MAP,
+    ...(deps.baselineDays !== undefined ? { baselineDays: deps.baselineDays } : {}),
+    ...(deps.thresholdPct !== undefined ? { thresholdPct: deps.thresholdPct } : {}),
+  };
+  const alertAgent = new MarketAlertAgent(alertAgentInput);
+  const gate = new ApprovalGate();
 
   try {
-    const output = await withTenant(deps.db, tenantId, async (tx) => {
+    const result = await withTenant(deps.db, tenantId, async (tx) => {
       const ctx: AgentContext = {
         tenantId,
         workspaceId: deps.workspaceId,
-        // Infrastructure runs don't create an agent_runs row — the agent
-        // writes its own ingestion events instead. The `agentRunId` is
-        // only consulted by ApprovalGate (T2+ path), which this T1 agent
-        // never touches.
-        agentRunId: "",
+        // Infrastructure runs don't create an agent_runs row per tick —
+        // the agents write their own ingestion + alert events. The
+        // ApprovalGate uses this string as the actor on `approval.created`
+        // audit events, so it's fine for it to be the stable pseudo-run
+        // id for the market-data pipeline.
+        agentRunId: `market_data:${deps.workspaceId}`,
         tx,
         anthropic: deps.anthropic,
         openai: deps.openai,
@@ -150,9 +198,23 @@ export async function runMarketDataTick(deps: MarketDataJobDeps): Promise<Market
         agentRuns: new AgentRunRepository(),
         workspaces: new WorkspaceRepository(),
       };
-      return agent.run(ctx);
+      const ingest = await dataAgent.run(ctx);
+      const alert = await alertAgent.run(ctx);
+      let approvalsCreated = 0;
+      for (const action of alert.proposedActions) {
+        if (action.tier === "T2" || action.tier === "T3") {
+          await gate.create(ctx, action, ctx.agentRunId);
+          approvalsCreated += 1;
+        }
+      }
+      return { ingest, alert, approvalsCreated };
     });
-    return { status: "ran", output };
+    return {
+      status: "ran",
+      output: result.ingest,
+      alert: result.alert,
+      approvalsCreated: result.approvalsCreated,
+    };
   } catch (err) {
     return {
       status: "failed",
