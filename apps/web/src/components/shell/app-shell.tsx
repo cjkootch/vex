@@ -161,7 +161,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   return (
-    <div className="flex h-screen flex-col bg-canvas text-white">
+    <div className="flex h-dvh flex-col bg-canvas text-white">
       <TopBar
         pending={pending}
         onOpenMobileNav={() => setMobileNavOpen(true)}
