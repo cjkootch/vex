@@ -210,17 +210,46 @@ jobs:
             echo "recreated branch as $BRANCH_ID"
           fi
 
-          # The API returns the connection URI on the connection_uris array.
-          conn=$(
+          # Don't hardcode neondb/neondb_owner — the parent branch's
+          # database + role names may differ (confirmed: fresh branch
+          # returned 404 with the hardcoded names). Query the branch
+          # for its actual database + role, then pass those to
+          # connection_uri.
+          db_name=$(
             curl -fsS --noproxy '*' \
               -H "Authorization: Bearer $NEON_API_KEY" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/databases" \
+              | jq -r '.databases[0].name // empty'
+          )
+          role_name=$(
+            curl -fsS --noproxy '*' \
+              -H "Authorization: Bearer $NEON_API_KEY" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/roles" \
+              | jq -r '.roles[0].name // empty'
+          )
+          if [ -z "$db_name" ] || [ -z "$role_name" ]; then
+            echo "::error::branch has no database or role — db=$db_name role=$role_name"
+            exit 1
+          fi
+          echo "using database=$db_name role=$role_name"
+
+          # The API returns the connection URI on the connection_uris array.
+          conn=$(
+            curl -fsS --noproxy '*' -G \
+              -H "Authorization: Bearer $NEON_API_KEY" \
+              --data-urlencode "database_name=$db_name" \
+              --data-urlencode "role_name=$role_name" \
+              --data-urlencode "pooled=true" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri" \
               | jq -r '.uri'
           )
           conn_direct=$(
-            curl -fsS --noproxy '*' \
+            curl -fsS --noproxy '*' -G \
               -H "Authorization: Bearer $NEON_API_KEY" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=false" \
+              --data-urlencode "database_name=$db_name" \
+              --data-urlencode "role_name=$role_name" \
+              --data-urlencode "pooled=false" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri" \
               | jq -r '.uri'
           )
 
