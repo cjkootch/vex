@@ -238,7 +238,7 @@ async function bootstrap(): Promise<void> {
           process.env["EVAL_RESULTS_PATH"] ??
           resolve(process.cwd(), "evals/results/latest.json"),
       }),
-      ...(temporal && twilio && twilioVerifier
+      ...(twilio && twilioVerifier
         ? {
             calls: CallsModule.register({
               db,
@@ -249,7 +249,7 @@ async function bootstrap(): Promise<void> {
               activities: activityRepository,
               summaries: summaryRepository,
               events: eventRepository,
-              temporal: temporal.client,
+              temporal: temporal?.client ?? null,
               twilio,
               twilioVerifier,
               s3,
