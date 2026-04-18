@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -162,6 +163,20 @@ export class ContactsService {
 
     const id = createId();
     const result = await withTenant(this.db, args.tenantId, async (tx) => {
+      // Dedupe guard: if any supplied email is already attached to a
+      // contact in this tenant, refuse with a 409 Conflict pointing at
+      // the existing row. Prevents the hand-entry path from seeding
+      // duplicate people for the same address — the approval executor
+      // has its own idempotency guard (appliedObjectId).
+      for (const email of args.emails ?? []) {
+        const existing = await this.contacts.findByEmail(tx, email);
+        if (existing) {
+          throw new ConflictException({
+            message: `contact with email ${email} already exists`,
+            existingContactId: existing.id,
+          });
+        }
+      }
       // `contacts.org_id` points at the primary for backwards-compat
       // with readers that predate the memberships table.
       const contact = await this.contacts.create(tx, args.tenantId, {
@@ -383,7 +398,11 @@ export class ContactsService {
         objectType: "organization",
         objectId: args.orgId,
         occurredAt: new Date(),
-        idempotencyKey: `contact.primary_changed:${args.contactId}:${args.orgId}:${Date.now()}`,
+        // Stable key: retrying the same primary-change request should
+        // dedupe in the audit trail, matching the rest of the codebase.
+        // The previous \`Date.now()\` suffix made every replay mint a
+        // fresh audit row.
+        idempotencyKey: `contact.primary_changed:${args.contactId}:${args.orgId}`,
         metadata: {
           from_org_id: contact.orgId,
           to_org_id: args.orgId,
@@ -430,7 +449,12 @@ export class ContactsService {
         objectType: "organization",
         objectId: args.orgId,
         occurredAt: new Date(),
-        idempotencyKey: `contact.membership_removed:${args.contactId}:${args.orgId}:${Date.now()}`,
+        // Stable key — same reasoning as \`contact.primary_changed\`
+        // above. Re-adding the same membership after a remove creates
+        // a fresh row with a new \`since\` timestamp; if that second
+        // membership is ever removed we'd emit the same key again
+        // (currently a limitation, not a bug).
+        idempotencyKey: `contact.membership_removed:${args.contactId}:${args.orgId}`,
         metadata: { actor_user_id: args.actorUserId },
       });
       const memberships = await this.memberships.listByContact(tx, args.contactId);
