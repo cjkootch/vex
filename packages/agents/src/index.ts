@@ -87,6 +87,13 @@ export {
 } from "./agent-runner.js";
 export { ApprovalGate } from "./approval-gate.js";
 export {
+  scoreBuyerReadiness,
+  type BuyerReadinessSignals,
+  type BuyerReadinessResult,
+  type BuyerReadinessContribution,
+  type RiskTier,
+} from "./scoring/buyer-readiness.js";
+export {
   DailyBriefAgent,
   FollowUpAgent,
   ResearchAgent,
