@@ -55,6 +55,22 @@ async function main(): Promise<void> {
       secretAccessKey: env.S3_SECRET_ACCESS_KEY,
       ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
     },
+    // Twilio messaging — wired only when credentials are present.
+    // Otherwise sms.send / whatsapp.send fail closed at the executor
+    // with `*_not_configured` reasons. WhatsApp requires a separate
+    // approved sender; we pass it through when set.
+    ...(env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER
+      ? {
+          twilio: {
+            accountSid: env.TWILIO_ACCOUNT_SID,
+            authToken: env.TWILIO_AUTH_TOKEN,
+            fromNumber: env.TWILIO_PHONE_NUMBER,
+            ...(env.TWILIO_WHATSAPP_FROM
+              ? { whatsappFrom: env.TWILIO_WHATSAPP_FROM }
+              : {}),
+          },
+        }
+      : {}),
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
   // Sprint 12 — the OutboundCallWorkflow needs Twilio + S3 + reachable

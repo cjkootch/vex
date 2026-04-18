@@ -45,10 +45,17 @@ export const EnvSchema = z.object({
   /** Voice context token budget — hard ceiling enforced by VoiceContextBuilder. */
   VOICE_CONTEXT_TOKEN_BUDGET: z.coerce.number().int().positive().default(10_000),
 
-  // PSTN / email
+  // PSTN / email / messaging
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+  /**
+   * WhatsApp sender, format `whatsapp:+E164`. Optional — when absent
+   * the whatsapp.send approval branch fails closed with
+   * `whatsapp_not_configured`. Requires the Twilio WhatsApp sender to
+   * be approved on the account.
+   */
+  TWILIO_WHATSAPP_FROM: z.string().optional(),
   /**
    * Public base URL Twilio hits for TwiML + status + recording webhooks.
    * Required whenever the Twilio credentials above are set — the

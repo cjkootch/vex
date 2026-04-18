@@ -26,6 +26,9 @@ export {
   createTwilioClient,
   type CreateOutboundCallParams,
   type CreateOutboundCallResult,
+  type SendMessageResult,
+  type SendSmsParams,
+  type SendWhatsAppParams,
   type TwilioClient,
   type TwilioDeps,
 } from "./twilio.js";
