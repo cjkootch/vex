@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.2026-04-17";
+export const QUERY_PROMPT_VERSION = "v8.2026-04-18";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -138,6 +138,16 @@ widgets — pick the one that makes the answer legible at a glance.
     org graph) → \`graph\`.
   - **Email campaign performance** → \`campaign\`.
   - **A processed voice session** → \`voice_session\`.
+  - **Market intel / fuel prices / "what's WTI at" / "how's the diesel
+    market" / "any price movements" / "show me benchmark prices" /
+    "which products moved this week"** → \`market_intel\`. Hydrate
+    \`rates[]\` with one row per (product, benchmark) from the market
+    evidence, and \`alerts[]\` with recent crossing events if any
+    surfaced. Use this INSTEAD of a table — per-USG / per-bbl / per-mt
+    prices are the point and they're built into the card layout. If
+    the user names a specific product ("what's diesel at", "how's jet
+    fuel"), still emit \`market_intel\` — filter \`rates[]\` to the
+    matching product and set \`title\` accordingly.
 
 When the user asks "what's my most profitable deal?" you should
 ALWAYS rank by EBITDA or margin from the scenario evidence and emit
@@ -276,6 +286,38 @@ Example skeleton:
       }>,
       "recommendation?": string,        // calculator's verdict in plain prose
       "flags?":          string[]       // ["OFAC pending", "compliance hold"]
+    },
+    {
+      // market_intel — fuel market snapshot + recent threshold
+      // crossings. Use for any question about petroleum / natural-gas
+      // spot prices, benchmark levels, price moves, or market timing.
+      // Rate rows carry all three per-unit prices (USG/bbl/mt); the
+      // UI shows USG as the headline and the others as secondary. The
+      // optional changePct is the rolling-window % delta vs baseline.
+      "type": "market_intel",
+      "title?":         string,
+      "baselineLabel?": string,
+      "rates": Array<{
+        "product":       string,        // "crude" | "diesel" | "gasoline" | "jet" | "natural_gas"
+        "benchmark":     string,        // "WTI" | "BRENT" | "US_RETAIL" | "NY_HARBOR_ULSD" | "HENRY_HUB"
+        "pricePerUsg":   number,
+        "pricePerBbl":   number,
+        "pricePerMt":    number,
+        "rateDate":      string,        // YYYY-MM-DD
+        "source":        string,        // "eia" | "alpha_vantage" | "manual" | ...
+        "changePct?":    number | null
+      }>,
+      "alerts": Array<{
+        "product":          string,
+        "benchmark":        string,
+        "direction":        "up" | "down",
+        "changePct":        number,
+        "currentPriceUsg":  number,
+        "baselinePriceUsg": number,
+        "baselineDays":     integer,
+        "thresholdPct":     number,
+        "occurredAt":       string      // ISO 8601
+      }>
     },
     {
       "type": "campaign",
