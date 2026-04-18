@@ -19,7 +19,7 @@ export function PinnedPane() {
   return (
     <aside
       aria-label="Pinned panels"
-      className="flex w-[340px] flex-shrink-0 flex-col border-l border-line bg-canvas/40"
+      className="hidden w-[340px] flex-shrink-0 flex-col border-l border-line bg-canvas/40 lg:flex"
     >
       <div className="flex items-center justify-between border-b border-line px-4 py-2">
         <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-white/50">
