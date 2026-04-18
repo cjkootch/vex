@@ -409,6 +409,17 @@ interface EnrollmentRow {
   lastEventAt: string | null;
   error: string | null;
   createdAt: string;
+  /** Sprint G — per-step narrative from the workflow. */
+  branchHistoryJson?: Array<Record<string, unknown>>;
+}
+
+interface BranchHistoryEntry {
+  step_id?: string;
+  position?: number;
+  outcome?: string;
+  gate_reason?: string;
+  skip_reason?: string;
+  approval_id?: string;
 }
 
 function EnrollmentsTab({ campaignId }: { campaignId: string }) {
@@ -478,26 +489,124 @@ function EnrollmentsTab({ campaignId }: { campaignId: string }) {
       ) : (
         <ul className="flex flex-col gap-1.5">
           {rows.map((r) => (
-            <li
-              key={r.id}
-              className="flex items-baseline justify-between gap-3 rounded-md border border-line/60 bg-muted/20 px-3 py-2 text-sm"
-            >
-              <span className="font-mono text-xs text-accent">
-                {r.contactId.slice(0, 12)}…
-              </span>
-              <span className="text-xs text-white/70">
-                step {r.currentStep} · {r.state}
-              </span>
-              <span className="text-xs text-white/40">
-                {r.lastEventAt ? new Date(r.lastEventAt).toLocaleString() : "—"}
-              </span>
-              {r.error && <span className="text-xs text-bad">{r.error}</span>}
-            </li>
+            <EnrollmentRowItem key={r.id} row={r} />
           ))}
         </ul>
       )}
     </div>
   );
+}
+
+function EnrollmentRowItem({ row }: { row: EnrollmentRow }) {
+  const [open, setOpen] = useState(false);
+  const history = Array.isArray(row.branchHistoryJson)
+    ? (row.branchHistoryJson as BranchHistoryEntry[])
+    : [];
+  const hasHistory = history.length > 0;
+
+  return (
+    <li className="rounded-md border border-line/60 bg-muted/20 text-sm">
+      <button
+        type="button"
+        onClick={() => hasHistory && setOpen(!open)}
+        disabled={!hasHistory}
+        className={`flex w-full items-baseline justify-between gap-3 px-3 py-2 text-left ${
+          hasHistory ? "cursor-pointer hover:bg-muted/30" : "cursor-default"
+        }`}
+        aria-expanded={open}
+        data-testid="enrollment-row"
+      >
+        <span className="flex items-baseline gap-2 text-xs">
+          {hasHistory && (
+            <span className="inline-block w-3 text-white/40">
+              {open ? "▾" : "▸"}
+            </span>
+          )}
+          <span className="font-mono text-accent">
+            {row.contactId.slice(0, 12)}…
+          </span>
+        </span>
+        <span className="text-xs text-white/70">
+          step {row.currentStep} · {row.state}
+        </span>
+        <span className="text-xs text-white/40">
+          {hasHistory ? `${history.length} step${history.length === 1 ? "" : "s"}` : "—"}
+          {" · "}
+          {row.lastEventAt ? new Date(row.lastEventAt).toLocaleString() : "—"}
+        </span>
+        {row.error && (
+          <span className="truncate text-xs text-bad">{row.error}</span>
+        )}
+      </button>
+      {open && hasHistory && (
+        <BranchHistoryTimeline history={history} />
+      )}
+    </li>
+  );
+}
+
+/**
+ * Sprint G — renders `branchHistoryJson` as a vertical step timeline.
+ * Each entry is one of:
+ *   outcome=auto_approved | approved     → green badge
+ *   outcome=rejected                     → red badge
+ *   outcome=skipped_gate                 → muted + gate_reason
+ *   outcome=skipped_dispatch             → muted + skip_reason
+ *   outcome=approval_timed_out           → warn badge + approval_id
+ */
+function BranchHistoryTimeline({ history }: { history: BranchHistoryEntry[] }) {
+  const sorted = [...history].sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  return (
+    <ol
+      data-testid="branch-history-timeline"
+      className="border-t border-line/40 bg-canvas/30 px-4 py-3"
+    >
+      {sorted.map((entry, i) => {
+        const palette = outcomePalette(entry.outcome);
+        return (
+          <li
+            key={`${entry.step_id ?? i}:${i}`}
+            className="flex items-baseline gap-3 py-1 text-xs"
+          >
+            <span className="font-mono text-accent">
+              #{entry.position ?? i}
+            </span>
+            <span className={`rounded px-1.5 py-0.5 font-mono ${palette}`}>
+              {entry.outcome ?? "unknown"}
+            </span>
+            {entry.gate_reason && (
+              <span className="text-white/60">gate: {entry.gate_reason}</span>
+            )}
+            {entry.skip_reason && (
+              <span className="text-white/60">skip: {entry.skip_reason}</span>
+            )}
+            {entry.approval_id && (
+              <span className="font-mono text-[10px] text-white/40">
+                approval {entry.approval_id.slice(0, 12)}…
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function outcomePalette(outcome?: string): string {
+  switch (outcome) {
+    case "approved":
+    case "auto_approved":
+      return "bg-good/20 text-good";
+    case "rejected":
+      return "bg-bad/20 text-bad";
+    case "approval_timed_out":
+      return "bg-warn/20 text-warn";
+    case "skipped_gate":
+    case "skipped_dispatch":
+      return "bg-muted/60 text-white/50";
+    default:
+      return "bg-muted/60 text-white/70";
+  }
 }
 
 function KpiRail({ campaign }: { campaign: CampaignDetail }) {

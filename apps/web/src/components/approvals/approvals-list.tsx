@@ -132,11 +132,32 @@ function ApprovalCard({
   item: ApprovalRow;
   onDecide: (id: string, action: "approve" | "reject") => void | Promise<void>;
 }) {
-  const subject = stringField(item.proposedPayload, "subject_line") ?? "(no subject)";
-  const opening = stringField(item.proposedPayload, "opening_line") ?? "";
   const tier = stringField(item.proposedPayload, "tier") ?? "T?";
-  const subjectId = stringField(item.proposedPayload, "subject_id");
   const created = new Date(item.createdAt);
+
+  // Per-actionType body renderer. Defaults to the Sprint-6 suggestion
+  // shape (subject / opening) so existing follow_up.suggestion rows
+  // keep working. New campaign.enroll_batch shape from Sprint F gets
+  // a dedicated summary panel — plan steps + recipient count beat
+  // raw JSON for reviewer comprehension.
+  let body: JSX.Element;
+  if (item.actionType === "campaign.enroll_batch") {
+    body = <EnrollBatchBody payload={item.proposedPayload} />;
+  } else {
+    const subject =
+      stringField(item.proposedPayload, "subject_line") ?? "(no subject)";
+    const opening = stringField(item.proposedPayload, "opening_line") ?? "";
+    const subjectId = stringField(item.proposedPayload, "subject_id");
+    body = (
+      <>
+        <div className="mt-2 text-sm font-semibold text-white">{subject}</div>
+        {opening && <p className="text-sm text-white/70">{opening}</p>}
+        {subjectId && (
+          <p className="mt-1 text-xs text-white/40">subject: {subjectId}</p>
+        )}
+      </>
+    );
+  }
 
   return (
     <li
@@ -144,7 +165,7 @@ function ApprovalCard({
       className="rounded-lg border border-line bg-muted/40 p-4"
     >
       <header className="mb-2 flex items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-xs text-white/50">
             <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono">{item.actionType}</span>
             <span className="rounded bg-warn/20 px-1.5 py-0.5 text-warn">{tier}</span>
@@ -152,11 +173,7 @@ function ApprovalCard({
               {relativeTime(created)}
             </span>
           </div>
-          <div className="mt-2 text-sm font-semibold text-white">{subject}</div>
-          {opening && <p className="text-sm text-white/70">{opening}</p>}
-          {subjectId && (
-            <p className="mt-1 text-xs text-white/40">subject: {subjectId}</p>
-          )}
+          {body}
         </div>
         <div className="flex flex-none gap-2">
           <button
@@ -179,6 +196,110 @@ function ApprovalCard({
       </header>
     </li>
   );
+}
+
+interface PlanStepSummary {
+  position: number;
+  channel: string;
+  tier: string;
+  auto_approve: boolean;
+  delay_after_prior_ms?: number;
+}
+
+/**
+ * Sprint F — renders campaign.enroll_batch payloads. The reviewer
+ * needs the recipient count + the plan shape (channels, delays,
+ * which steps auto-approve) at a glance — raw JSON hides all of it.
+ */
+function EnrollBatchBody({
+  payload,
+}: {
+  payload: Record<string, unknown>;
+}) {
+  const campaignId = stringField(payload, "campaign_id");
+  const recipientCount = numberField(payload, "recipient_count") ?? 0;
+  const planSummary = Array.isArray(payload["plan_summary"])
+    ? (payload["plan_summary"] as unknown[]).filter(isPlanStepSummary)
+    : [];
+  const rationale = stringField(payload, "rationale");
+
+  return (
+    <div className="mt-2 space-y-2">
+      <div
+        data-testid="enroll-batch-heading"
+        className="flex items-baseline gap-2 text-sm font-semibold text-white"
+      >
+        <span>Enroll</span>
+        <span className="rounded bg-accent/20 px-1.5 py-0.5 font-mono text-accent">
+          {recipientCount} contact{recipientCount === 1 ? "" : "s"}
+        </span>
+        {campaignId && (
+          <span className="truncate font-mono text-xs text-white/50">
+            · campaign {campaignId.slice(0, 12)}…
+          </span>
+        )}
+      </div>
+      {planSummary.length > 0 ? (
+        <ol className="flex flex-col gap-1 border-l-2 border-line/60 pl-3">
+          {planSummary.map((s) => (
+            <li
+              key={s.position}
+              data-testid="enroll-batch-step"
+              className="flex items-baseline gap-2 text-xs"
+            >
+              <span className="font-mono text-accent">#{s.position}</span>
+              <span className="text-white/80">{s.channel}</span>
+              <span className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[10px] text-white/60">
+                {s.tier}
+              </span>
+              {s.auto_approve && (
+                <span className="rounded bg-good/20 px-1 py-0.5 text-[10px] text-good">
+                  auto-approve
+                </span>
+              )}
+              {typeof s.delay_after_prior_ms === "number" && s.delay_after_prior_ms > 0 && (
+                <span className="text-white/40">
+                  wait {formatDelay(s.delay_after_prior_ms)}
+                </span>
+              )}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="text-xs text-white/40">plan summary unavailable</p>
+      )}
+      {rationale && (
+        <p className="border-t border-line/40 pt-2 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function isPlanStepSummary(value: unknown): value is PlanStepSummary {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v["position"] === "number" &&
+    typeof v["channel"] === "string" &&
+    typeof v["tier"] === "string" &&
+    typeof v["auto_approve"] === "boolean"
+  );
+}
+
+function formatDelay(ms: number): string {
+  if (ms <= 0) return "immediately";
+  const hours = ms / 3600_000;
+  if (hours < 1) return `${Math.round(ms / 60_000)}m`;
+  if (hours < 48) return `${hours.toFixed(1)}h`;
+  const days = hours / 24;
+  return `${days.toFixed(0)}d`;
+}
+
+function numberField(payload: Record<string, unknown>, key: string): number | null {
+  const v = payload[key];
+  return typeof v === "number" ? v : null;
 }
 
 function stringField(payload: Record<string, unknown>, key: string): string | null {

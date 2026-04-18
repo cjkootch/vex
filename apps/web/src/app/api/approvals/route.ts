@@ -63,6 +63,46 @@ export async function GET(req: NextRequest): Promise<Response> {
           tier: "T1",
         },
       },
+      {
+        id: "01HSEEDAPV0000000000000003",
+        actionType: "campaign.enroll_batch",
+        decision: "pending",
+        createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        proposedPayload: {
+          tier: "T2",
+          campaign_id: "01HSEEDCPN0000000000000001",
+          contact_ids: [
+            "01HSEEDCNT0000000000000001",
+            "01HSEEDCNT0000000000000002",
+            "01HSEEDCNT0000000000000003",
+          ],
+          recipient_count: 3,
+          plan_summary: [
+            {
+              position: 0,
+              channel: "email",
+              tier: "T2",
+              auto_approve: true,
+              delay_after_prior_ms: 0,
+            },
+            {
+              position: 1,
+              channel: "sms",
+              tier: "T2",
+              auto_approve: false,
+              delay_after_prior_ms: 3 * 86_400_000,
+            },
+            {
+              position: 2,
+              channel: "voice",
+              tier: "T3",
+              auto_approve: false,
+              delay_after_prior_ms: 7 * 86_400_000,
+            },
+          ],
+          rationale: "spring nurture batch — Acme lookalikes",
+        },
+      },
     ],
   });
 }
