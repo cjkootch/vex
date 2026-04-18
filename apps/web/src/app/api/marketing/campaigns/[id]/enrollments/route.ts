@@ -39,8 +39,58 @@ export async function GET(
       );
     }
   }
+  // Local-dev stub — two synthetic enrollments so the branch-history
+  // timeline has something to render without a running API.
+  const now = new Date();
+  const iso = (mins: number): string =>
+    new Date(now.getTime() - mins * 60_000).toISOString();
   return NextResponse.json({
-    enrollments: [],
-    counts: { enrolled: 0, completed: 0, paused: 0, unsubscribed: 0, errored: 0 },
+    enrollments: [
+      {
+        id: "01HSTUBENR0000000000000001",
+        campaignId: params.id,
+        contactId: "01HSEEDCNT0000000000000001",
+        currentStep: 2,
+        state: "enrolled",
+        lastEventAt: iso(30),
+        branchHistoryJson: [
+          {
+            step_id: "s0",
+            position: 0,
+            outcome: "auto_approved",
+            approval_id: "01HAPP0000000000000000001A",
+          },
+          {
+            step_id: "s1",
+            position: 1,
+            outcome: "skipped_gate",
+            gate_reason: "opened_in_last_days: no hit in last 7d",
+          },
+        ],
+        error: null,
+        createdAt: iso(240),
+        updatedAt: iso(30),
+      },
+      {
+        id: "01HSTUBENR0000000000000002",
+        campaignId: params.id,
+        contactId: "01HSEEDCNT0000000000000002",
+        currentStep: 1,
+        state: "paused",
+        lastEventAt: iso(90),
+        branchHistoryJson: [
+          {
+            step_id: "s0",
+            position: 0,
+            outcome: "approved",
+            approval_id: "01HAPP0000000000000000001B",
+          },
+        ],
+        error: "reviewer rejected step approval",
+        createdAt: iso(180),
+        updatedAt: iso(90),
+      },
+    ],
+    counts: { enrolled: 1, completed: 0, paused: 1, unsubscribed: 0, errored: 0 },
   });
 }
