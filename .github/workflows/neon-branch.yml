@@ -169,6 +169,47 @@ jobs:
             BRANCH_ID=$(echo "$response" | jq -r '.branch.id')
           fi
 
+          # Probe the connection_uri endpoint with its HTTP status
+          # visible. If 404, the branch is stale beyond endpoint-
+          # creation repair (database_name/role_name on the branch
+          # don't match the pooler defaults) — delete and recreate.
+          probe_uri() {
+            curl -sS --noproxy '*' -w '\n%{http_code}' \
+              -H "Authorization: Bearer $NEON_API_KEY" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true"
+          }
+          probe=$(probe_uri)
+          probe_status=$(echo "$probe" | tail -n1)
+          if [ "$probe_status" = "404" ]; then
+            echo "connection_uri 404 for $BRANCH_ID — deleting the stale branch and recreating"
+            curl -fsS --noproxy '*' -X DELETE \
+              -H "Authorization: Bearer $NEON_API_KEY" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID" \
+              > /dev/null || true
+            # Poll until delete completes — the API is async and POST
+            # right after sometimes 409s on the name collision.
+            for _ in 1 2 3 4 5; do
+              still_exists=$(
+                curl -fsS --noproxy '*' \
+                  -H "Authorization: Bearer $NEON_API_KEY" \
+                  "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+                  | jq -r --arg n "$BRANCH_NAME" \
+                      '[.branches[] | select(.name == $n)] | length'
+              )
+              [ "$still_exists" = "0" ] && break
+              sleep 3
+            done
+            response=$(
+              curl -fsS --noproxy '*' -X POST \
+                -H "Authorization: Bearer $NEON_API_KEY" \
+                -H "Content-Type: application/json" \
+                "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+                -d "{\"branch\":{\"name\":\"$BRANCH_NAME\"},\"endpoints\":[{\"type\":\"read_write\"}]}"
+            )
+            BRANCH_ID=$(echo "$response" | jq -r '.branch.id')
+            echo "recreated branch as $BRANCH_ID"
+          fi
+
           # The API returns the connection URI on the connection_uris array.
           conn=$(
             curl -fsS --noproxy '*' \
