@@ -206,7 +206,12 @@ export class OrganizationRepository {
 // one expression.
 // ---------------------------------------------------------------------------
 
-const LEGAL_SUFFIX_RE = /\b(llc|l\.l\.c|inc|incorporated|corp|corporation|co|ltd|limited|plc|gmbh|ag|sa|bv|spa)\.?$/i;
+// Whitespace-before-suffix. MUST stay in lockstep with the SQL
+// normalizer (normalizeLegalNameSql) which uses \s+ too — a prior
+// \b form stripped suffixes on punctuation boundaries in JS but
+// not in SQL, so "Acme-LLC" produced "acme-" client-side vs
+// "acme-llc" in the WHERE clause and the dedupe lookup missed.
+const LEGAL_SUFFIX_RE = /\s+(llc|l\.l\.c|inc|incorporated|corp|corporation|co|ltd|limited|plc|gmbh|ag|sa|bv|spa)\.?$/i;
 
 export function normalizeLegalName(raw: string): string {
   return raw

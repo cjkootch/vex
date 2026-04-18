@@ -398,11 +398,16 @@ export class ContactsService {
         objectType: "organization",
         objectId: args.orgId,
         occurredAt: new Date(),
-        // Stable key: retrying the same primary-change request should
-        // dedupe in the audit trail, matching the rest of the codebase.
-        // The previous \`Date.now()\` suffix made every replay mint a
-        // fresh audit row.
-        idempotencyKey: `contact.primary_changed:${args.contactId}:${args.orgId}`,
+        // Per-request key. A stable \`${contactId}:${orgId}\` suffix
+        // silently dropped audit history for legitimate A→B→A→B
+        // cycles (insertIfNotExists finds the old key and skips).
+        // Real retry dedupe needs a client \`Idempotency-Key\` header;
+        // until that lands, mint a fresh \`createId()\` per call so
+        // every service invocation audits. Trade-off: an HTTP-level
+        // retry of the same mutation creates a second audit row —
+        // less bad than dropping the third primary change in a
+        // cycle of re-promotions.
+        idempotencyKey: `contact.primary_changed:${args.contactId}:${args.orgId}:${createId()}`,
         metadata: {
           from_org_id: contact.orgId,
           to_org_id: args.orgId,
@@ -449,12 +454,10 @@ export class ContactsService {
         objectType: "organization",
         objectId: args.orgId,
         occurredAt: new Date(),
-        // Stable key — same reasoning as \`contact.primary_changed\`
-        // above. Re-adding the same membership after a remove creates
-        // a fresh row with a new \`since\` timestamp; if that second
-        // membership is ever removed we'd emit the same key again
-        // (currently a limitation, not a bug).
-        idempotencyKey: `contact.membership_removed:${args.contactId}:${args.orgId}`,
+        // Per-request key — see primary_changed above. A
+        // \`${contactId}:${orgId}\` suffix would dedupe a
+        // legitimate remove-after-readd cycle.
+        idempotencyKey: `contact.membership_removed:${args.contactId}:${args.orgId}:${createId()}`,
         metadata: { actor_user_id: args.actorUserId },
       });
       const memberships = await this.memberships.listByContact(tx, args.contactId);
