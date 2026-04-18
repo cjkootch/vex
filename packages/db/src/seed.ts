@@ -331,21 +331,184 @@ async function main(): Promise<void> {
     ]);
 
     const campaignIds = Object.values(SEED_CAMPAIGN_IDS);
-    const channels = ["email", "paid_search", "outbound", "organic", "referral"];
+    // 15 realistic touchpoints that mirror what the Resend + Twilio
+    // normalizers write in production: channel encodes the provider
+    // event verb (sent / delivered / opened / clicked / bounced /
+    // received / failed) and metadata carries direction + preview so
+    // the inbox UI renders meaningful rows on a fresh seed.
+    const touchpointFixtures: Array<{
+      channel: string;
+      direction: "inbound" | "outbound";
+      preview: string;
+      actor: string;
+      offsetMinutes: number;
+    }> = [
+      {
+        channel: "email.sent",
+        direction: "outbound",
+        preview: "Quick check-in on the Acme proposal",
+        actor: "agent.composer",
+        offsetMinutes: 5,
+      },
+      {
+        channel: "email.delivered",
+        direction: "outbound",
+        preview: "Quick check-in on the Acme proposal",
+        actor: "provider.resend",
+        offsetMinutes: 6,
+      },
+      {
+        channel: "email.opened",
+        direction: "inbound",
+        preview: "Quick check-in on the Acme proposal",
+        actor: "provider.resend",
+        offsetMinutes: 42,
+      },
+      {
+        channel: "email.clicked",
+        direction: "inbound",
+        preview: "https://app.vex.ai/brief/today",
+        actor: "provider.resend",
+        offsetMinutes: 47,
+      },
+      {
+        channel: "sms.sent",
+        direction: "outbound",
+        preview:
+          "Hey — quick follow-up on the trade you mentioned last week. Free to chat tomorrow?",
+        actor: "agent.composer",
+        offsetMinutes: 120,
+      },
+      {
+        channel: "sms.delivered",
+        direction: "outbound",
+        preview: "Hey — quick follow-up on the trade you mentioned last week.",
+        actor: "provider.twilio",
+        offsetMinutes: 121,
+      },
+      {
+        channel: "sms.received",
+        direction: "inbound",
+        preview: "can you send over the deck? interested to learn more",
+        actor: "provider.twilio",
+        offsetMinutes: 180,
+      },
+      {
+        channel: "whatsapp.sent",
+        direction: "outbound",
+        preview: "Heads-up on the batch pricing you asked about earlier",
+        actor: "agent.composer",
+        offsetMinutes: 360,
+      },
+      {
+        channel: "whatsapp.delivered",
+        direction: "outbound",
+        preview: "Heads-up on the batch pricing you asked about earlier",
+        actor: "provider.twilio",
+        offsetMinutes: 361,
+      },
+      {
+        channel: "whatsapp.read",
+        direction: "inbound",
+        preview: "Heads-up on the batch pricing you asked about earlier",
+        actor: "provider.twilio",
+        offsetMinutes: 402,
+      },
+      {
+        channel: "email.bounced",
+        direction: "inbound",
+        preview: "Mailbox does not exist — 550 5.1.1",
+        actor: "provider.resend",
+        offsetMinutes: 540,
+      },
+      {
+        channel: "email.sent",
+        direction: "outbound",
+        preview: "Did you have any questions on the pricing?",
+        actor: "agent.composer",
+        offsetMinutes: 720,
+      },
+      {
+        channel: "email.replied",
+        direction: "inbound",
+        preview:
+          "Thanks — yes, one thing: how does onboarding handle our Salesforce data?",
+        actor: "provider.resend",
+        offsetMinutes: 905,
+      },
+      {
+        channel: "sms.failed",
+        direction: "outbound",
+        preview: "Unknown destination (error 30003)",
+        actor: "provider.twilio",
+        offsetMinutes: 1_080,
+      },
+      {
+        channel: "email.opened",
+        direction: "inbound",
+        preview: "Welcome to Vex — here's your first daily brief",
+        actor: "provider.resend",
+        offsetMinutes: 1_440,
+      },
+    ];
     await db.insert(schema.touchpoints).values(
-      SEED_TOUCHPOINT_IDS.map((id, i) => ({
-        id,
-        tenantId,
-        channel: channels[i % channels.length]!,
-        actor: i % 2 === 0 ? "agent.composer" : "human.sdr",
-        occurredAt: new Date(now.getTime() - i * 3_600_000),
-        campaignId: campaignIds[i % campaignIds.length]!,
-        leadId: null,
-        contactId: SEED_CONTACT_IDS[i % SEED_CONTACT_IDS.length]!,
-        orgId: orgIds[i % orgIds.length]!,
-        metadata: { subject: `Touch #${i + 1}` },
-      })),
+      SEED_TOUCHPOINT_IDS.map((id, i) => {
+        const fx = touchpointFixtures[i]!;
+        return {
+          id,
+          tenantId,
+          channel: fx.channel,
+          actor: fx.actor,
+          occurredAt: new Date(now.getTime() - fx.offsetMinutes * 60_000),
+          campaignId: campaignIds[i % campaignIds.length]!,
+          leadId: null,
+          contactId: SEED_CONTACT_IDS[i % SEED_CONTACT_IDS.length]!,
+          orgId: orgIds[i % orgIds.length]!,
+          metadata: {
+            direction: fx.direction,
+            subject: fx.channel.startsWith("email.") ? fx.preview : undefined,
+            text: fx.channel.startsWith("email.") ? undefined : fx.preview,
+            preview: fx.preview,
+          },
+        };
+      }),
     );
+
+    // A couple of voice_call activities so /app/inbox shows calls
+    // alongside messages. One live, one completed-with-recording.
+    await db.delete(schema.activities);
+    await db.insert(schema.activities).values([
+      {
+        id: "01HSEEDACT0000000000000001",
+        tenantId,
+        type: "voice_call",
+        relatedObjectIds: { contact_id: SEED_CONTACT_IDS[0]! },
+        occurredAt: new Date(now.getTime() - 3 * 60_000),
+        result: "in-progress",
+        durationSeconds: null,
+        transcriptRef: null,
+        metadata: {
+          session_id: "outbound-call-01HSEEDRUN0000000000000099",
+          call_sid: "CASEED0000000000000000000000000001",
+          status: "in-progress",
+        },
+      },
+      {
+        id: "01HSEEDACT0000000000000002",
+        tenantId,
+        type: "voice_call",
+        relatedObjectIds: { contact_id: SEED_CONTACT_IDS[1]! },
+        occurredAt: new Date(now.getTime() - 4 * 3_600_000),
+        result: "recorded",
+        durationSeconds: 247,
+        transcriptRef: `recordings/${tenantId}/CASEED0000000000000000000000000002.mp3`,
+        metadata: {
+          session_id: "outbound-call-01HSEEDRUN0000000000000098",
+          call_sid: "CASEED0000000000000000000000000002",
+          status: "completed",
+        },
+      },
+    ]);
 
     await db.insert(schema.summaries).values([
       {
