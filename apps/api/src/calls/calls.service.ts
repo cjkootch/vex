@@ -318,6 +318,7 @@ export class CallsService {
     tenantId: string;
     userId: string;
     toNumber: string;
+    mode?: "polly" | "ai";
     script?: string;
   }): Promise<{ callSid: string; status: string; activityId: string }> {
     if (!this.appBaseUrl) {
@@ -325,17 +326,19 @@ export class CallsService {
         "demo_call_unconfigured: APP_BASE_URL must be set",
       );
     }
+    const mode = args.mode ?? "polly";
+    const baseUrl = this.appBaseUrl.replace(/\/$/, "");
     const script = args.script ?? DEFAULT_DEMO_SCRIPT;
-    const twimlUrl = `${this.appBaseUrl.replace(/\/$/, "")}/calls/twilio/demo-twiml?text=${encodeURIComponent(script)}`;
-    const statusCallback = `${this.appBaseUrl.replace(/\/$/, "")}/calls/twilio/demo-status`;
+    const twimlUrl =
+      mode === "ai"
+        ? `${baseUrl}/calls/twilio/ai-twiml?tenant=${encodeURIComponent(args.tenantId)}&wf=demo-${Date.now()}`
+        : `${baseUrl}/calls/twilio/demo-twiml?text=${encodeURIComponent(script)}`;
+    const statusCallback = `${baseUrl}/calls/twilio/demo-status`;
 
     const { callSid, status } = await this.twilio.createOutboundCall({
       to: args.toNumber,
       twimlUrl,
       statusCallback,
-      // Status callback requires a wf= param in the real flow but the
-      // demo path doesn't drive a workflow; omit it here. The demo
-      // status handler short-circuits when no wf is present.
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
       record: false,
       timeout: 30,
@@ -349,17 +352,18 @@ export class CallsService {
         result: status,
         metadata: {
           demo_call: true,
+          demo_mode: mode,
           call_sid: callSid,
           status,
           initiated_by: args.userId,
           to_number: args.toNumber,
-          script,
+          ...(mode === "polly" ? { script } : {}),
         },
       });
     });
 
     this.log.log(
-      `demo call initiated: sid=${callSid} to=${args.toNumber} activity=${activity.id}`,
+      `demo call initiated: sid=${callSid} mode=${mode} to=${args.toNumber} activity=${activity.id}`,
     );
     return { callSid, status, activityId: activity.id };
   }

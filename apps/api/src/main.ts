@@ -297,7 +297,7 @@ async function bootstrap(): Promise<void> {
   // attempts against /calls/twilio/stream receive an immediate 503
   // so the call transparently falls back to conference-only.
   let voiceStreamServer: VoiceStreamServer | null = null;
-  if (env.VEX_AI_VOICE_ENABLED && temporal && twilio && twilioVerifier) {
+  if (env.VEX_AI_VOICE_ENABLED && twilio && twilioVerifier) {
     try {
       const callsService = app.get(CallsService, { strict: false });
       voiceStreamServer = new VoiceStreamServer({

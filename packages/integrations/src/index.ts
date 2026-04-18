@@ -37,6 +37,7 @@ export {
   startVoiceBridge,
   ESCALATION_LISTENER_INSTRUCTIONS,
   ESCALATION_TOOL,
+  FUEL_LEAD_QUALIFIER_INSTRUCTIONS,
   type RealtimeClientEvent,
   type RealtimeServerEvent,
   type RealtimeToolDefinition,

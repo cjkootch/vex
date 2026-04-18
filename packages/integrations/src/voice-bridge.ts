@@ -65,7 +65,18 @@ export type TwilioStreamMessage =
       streamSid: string;
     }
   | { event: "stop"; streamSid: string; stop: { accountSid: string; callSid: string } }
-  | { event: "mark"; streamSid: string; mark: { name: string } };
+  | { event: "mark"; streamSid: string; mark: { name: string } }
+  // Outbound messages we send TO Twilio when running in talkback
+  // mode — inject base64-encoded audio back into the call leg so the
+  // AI's speech is heard by the caller. The `media.payload` format
+  // matches Twilio's expected shape (different from the inbound
+  // `media` variant above which also carries track/chunk/timestamp).
+  | {
+      event: "media";
+      streamSid: string;
+      media: { payload: string };
+    }
+  | { event: "clear"; streamSid: string };
 
 // ---------------------------------------------------------------------------
 // OpenAI Realtime events — minimal slice we actually emit/consume.
@@ -87,9 +98,20 @@ export type RealtimeClientEvent =
         tools?: RealtimeToolDefinition[];
         tool_choice?: "auto" | "none" | "required";
         modalities?: readonly ("audio" | "text")[];
+        /** Voice preset for audio output. Only used in talkback mode. */
+        voice?:
+          | "alloy"
+          | "ash"
+          | "ballad"
+          | "coral"
+          | "echo"
+          | "sage"
+          | "shimmer"
+          | "verse";
       };
     }
   | { type: "input_audio_buffer.append"; audio: string }
+  | { type: "response.cancel" }
   | { type: "input_audio_buffer.commit" }
   | {
       type: "conversation.item.create";
@@ -127,6 +149,15 @@ export type RealtimeServerEvent =
       arguments: string;
       response_id: string;
     }
+  // Talkback audio response — `delta` is base64 g711_ulaw audio that
+  // we forward directly to Twilio as an outbound media message.
+  | { type: "response.audio.delta"; delta: string; response_id: string }
+  | { type: "response.audio.done"; response_id: string }
+  // Speech-started fires when OpenAI's VAD detects the callee
+  // speaking mid-response; we use it to cancel the in-flight AI
+  // response and clear Twilio's buffered outbound audio so the
+  // callee doesn't hear the AI talk over them.
+  | { type: "input_audio_buffer.speech_started" }
   | {
       type: "error";
       error: { type: string; message: string; code?: string };
@@ -152,6 +183,25 @@ export interface VoiceBridgeConfig {
     tenantId: string;
     callId: string;
   }) => Promise<void> | void;
+  /**
+   * Sprint K was listen-only; Sprint L adds `"talkback"` — the AI
+   * speaks back into the call via Twilio Stream's outbound media
+   * messages. In talkback mode the session is configured with audio
+   * modality + a voice preset, and the bridge forwards OpenAI's
+   * audio deltas to Twilio. Default is `"listen"` for backwards
+   * compatibility with Sprint K's escalation listener.
+   */
+  mode?: "listen" | "talkback";
+  /** Voice preset used when mode = "talkback". Default `"shimmer"`. */
+  voice?:
+    | "alloy"
+    | "ash"
+    | "ballad"
+    | "coral"
+    | "echo"
+    | "sage"
+    | "shimmer"
+    | "verse";
   /** Optional logger — defaults to no-op. */
   log?: (level: "info" | "warn" | "error", msg: string, meta?: object) => void;
 }
@@ -160,7 +210,12 @@ export interface VoiceBridgeHandle {
   /** Close both transports. Safe to call more than once. */
   close(): void;
   /** Stats for diagnostics / tests. */
-  stats(): { framesForwarded: number; escalations: number; closed: boolean };
+  stats(): {
+    framesForwarded: number;
+    framesReturned: number;
+    escalations: number;
+    closed: boolean;
+  };
 }
 
 /**
@@ -191,10 +246,14 @@ export function startVoiceBridge(
       /* no-op */
     });
 
+  const mode = config.mode ?? "listen";
+  const voice = config.voice ?? "shimmer";
   let framesForwarded = 0;
+  let framesReturned = 0;
   let escalations = 0;
   let closed = false;
   let callId: string | null = null;
+  let streamSid: string | null = null;
   let started = false;
 
   function cleanup(): void {
@@ -221,13 +280,15 @@ export function startVoiceBridge(
         if (started) return;
         started = true;
         callId = msg.start.callSid;
+        streamSid = msg.streamSid;
         realtime.send({
           type: "session.update",
           session: {
             instructions: config.instructions,
             input_audio_format: "g711_ulaw",
             output_audio_format: "g711_ulaw",
-            modalities: ["text"],
+            modalities: mode === "talkback" ? ["audio", "text"] : ["text"],
+            ...(mode === "talkback" ? { voice } : {}),
             turn_detection: {
               type: "server_vad",
               threshold: 0.5,
@@ -238,9 +299,23 @@ export function startVoiceBridge(
             tool_choice: "auto",
           },
         });
+        // Kick off AI speech first so the callee hears a greeting
+        // immediately instead of dead silence on pick-up. The
+        // greeting comes from the system instructions (we append it
+        // in the service layer) — response.create without specific
+        // instructions just asks the AI to speak based on its system
+        // prompt.
+        if (mode === "talkback") {
+          realtime.send({
+            type: "response.create",
+            response: { modalities: ["audio", "text"] },
+          });
+        }
         log("info", "voice bridge started", {
           workflowId: config.workflowId,
           callId,
+          streamSid,
+          mode,
         });
         return;
       case "media":
@@ -277,6 +352,27 @@ export function startVoiceBridge(
     switch (event.type) {
       case "session.created":
       case "session.updated":
+      case "response.audio.done":
+        return;
+      case "response.audio.delta":
+        if (mode === "talkback" && streamSid) {
+          twilio.send({
+            event: "media",
+            streamSid,
+            media: { payload: event.delta },
+          });
+          framesReturned += 1;
+        }
+        return;
+      case "input_audio_buffer.speech_started":
+        // Callee started talking — in talkback mode, barge-in: cancel
+        // any in-flight AI response and clear Twilio's buffered
+        // outbound audio so the callee hears themselves, not the AI
+        // still speaking over them.
+        if (mode === "talkback" && streamSid) {
+          realtime.send({ type: "response.cancel" });
+          twilio.send({ event: "clear", streamSid });
+        }
         return;
       case "error":
         log("error", `realtime error: ${event.error.message}`, {
@@ -360,7 +456,7 @@ export function startVoiceBridge(
 
   return {
     close: cleanup,
-    stats: () => ({ framesForwarded, escalations, closed }),
+    stats: () => ({ framesForwarded, framesReturned, escalations, closed }),
   };
 }
 
@@ -411,3 +507,31 @@ export const ESCALATION_TOOL: RealtimeToolDefinition = {
     required: ["reason"],
   },
 };
+
+/**
+ * Sprint L — talkback persona for the outbound fuel-lead qualifier.
+ * The AI actively converses with the callee as a Vex sales agent.
+ * Kept short so per-minute token cost stays predictable; specific
+ * sub-questions live in the AI's working memory, not the system prompt.
+ */
+export const FUEL_LEAD_QUALIFIER_INSTRUCTIONS = `
+You are Vex, an AI sales assistant for Vector Trade Capital, a fuel trading company. You are on a live phone call with a lead who submitted an inquiry on the company's website.
+
+Your job: have a natural, warm, concise conversation to qualify the lead. Learn:
+- Approximate monthly fuel volume (gallons or barrels)
+- Product grades of interest (diesel, gasoline, jet, renewables, etc.)
+- Current supplier situation and any pain points
+- Timeline — when are they looking to start buying?
+
+Guidelines:
+- Start with a brief greeting and confirm they submitted the inquiry.
+- Ask ONE question at a time. Listen — don't monologue.
+- Keep every response under 15 seconds.
+- Match their energy: if they're curt, be curt; if they're chatty, be warm.
+- If they ask a question you don't know the answer to, say "I'll flag that for our team to follow up" — don't make up specifics about pricing or contracts.
+- If the caller asks to speak to a human, say "Let me connect you right now" and fire the escalate_to_human tool.
+- If the call goes quiet for 8+ seconds, gently check: "Are you still there?"
+- Close with a clear next step: "I'll have someone from our team send you a follow-up email within the hour. Sound good?" — then say goodbye.
+
+Never repeat the full phrase "Vector Trade Capital" more than once. Never read a script verbatim.
+`.trim();
