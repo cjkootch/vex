@@ -135,8 +135,10 @@ export function panelLabel(panel: unknown): string {
   const title =
     typeof p["title"] === "string"
       ? (p["title"] as string)
-      : typeof p["objectId"] === "string"
-        ? (p["objectId"] as string).slice(-6)
-        : null;
+      : typeof p["dealRef"] === "string"
+        ? (p["dealRef"] as string)
+        : typeof p["objectId"] === "string"
+          ? (p["objectId"] as string).slice(-6)
+          : null;
   return title ? `${t} · ${title}` : t;
 }

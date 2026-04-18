@@ -131,10 +131,16 @@ export function ManifestCanvas({ manifest, rawAnswer }: Props) {
       {visible.map((panel, i) => (
         <motion.div
           key={i}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.2, delay: i * 0.05 }}
-          className="relative"
+          initial={{ opacity: 0, y: 14, scale: 0.97, filter: "blur(4px)" }}
+          animate={{ opacity: 1, y: 0, scale: 1, filter: "blur(0px)" }}
+          transition={{
+            type: "spring",
+            stiffness: 220,
+            damping: 26,
+            mass: 0.7,
+            delay: i * 0.07,
+          }}
+          className="relative origin-top"
         >
           <PinButton panel={panel} />
           <PanelErrorBoundary panelType={panel.type}>

@@ -80,10 +80,40 @@ jobs:
           set -euo pipefail
           BRANCH_NAME="pr-${PR_NUMBER}"
 
-          existing=$(
-            curl -sf \
+          # Diagnostics for a persistent CI failure where curl seemed
+          # to exit 5 but was actually jq tripping on a non-JSON body.
+          # Print any proxy env vars (they've been empty so far; kept
+          # for belt-and-suspenders) and assert the project id is
+          # populated — an empty id would send us to a /projects//...
+          # URL that returns HTML, exactly the "Invalid numeric literal"
+          # jq signature we saw.
+          echo "proxy env snapshot:"
+          env | grep -iE '^(http|https|no)_proxy=' || echo "  (none set)"
+          if [ -z "${NEON_PROJECT_ID:-}" ]; then
+            echo "::error::NEON_PROJECT_ID secret is empty or unset"
+            exit 1
+          fi
+          echo "NEON_PROJECT_ID length: ${#NEON_PROJECT_ID}"
+
+          # Fetch once, print a short prefix of the body, THEN pipe
+          # into jq — otherwise a non-JSON body like an HTML error
+          # page or Neon's "branch not found" text blows up with an
+          # opaque "parse error" and we can't tell why.
+          http_status=0
+          branches_body=$(
+            curl -sS --noproxy '*' -w '\n%{http_code}' \
               -H "Authorization: Bearer $NEON_API_KEY" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches"
+          ) || true
+          http_status=$(echo "$branches_body" | tail -n1)
+          branches_json=$(echo "$branches_body" | sed '$d')
+          echo "GET /branches http_status=$http_status body_prefix=$(echo "$branches_json" | head -c 200)"
+          if [ "$http_status" != "200" ]; then
+            echo "::error::Neon /branches returned HTTP $http_status"
+            exit 1
+          fi
+          existing=$(
+            echo "$branches_json" \
               | jq -r --arg n "$BRANCH_NAME" '.branches[] | select(.name == $n) | .id' \
               | head -n1
           )
@@ -91,9 +121,46 @@ jobs:
           if [ -n "$existing" ]; then
             echo "branch already exists: $existing"
             BRANCH_ID="$existing"
+            # Belt-and-suspenders: branches created by the older
+            # workflow (before the \`endpoints\` key was added to the
+            # POST body) have no compute endpoint, so the
+            # /connection_uri call returns 404. The authoritative
+            # endpoint list lives at /projects/{pid}/endpoints —
+            # GET /branches/{bid} does not always include it. Query
+            # that, filter by branch_id, and only create if truly
+            # absent. Endpoint create is idempotent-ish: 409 means
+            # one already exists (response body prints via -sS) so
+            # we log the body and carry on rather than exit-fail.
+            endpoint_count=$(
+              curl -fsS --noproxy '*' \
+                -H "Authorization: Bearer $NEON_API_KEY" \
+                "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/endpoints" \
+                | jq --arg b "$BRANCH_ID" \
+                    '[.endpoints[] | select(.branch_id == $b)] | length'
+            )
+            echo "endpoints attached to $BRANCH_ID: $endpoint_count"
+            if [ "$endpoint_count" = "0" ]; then
+              echo "creating a read_write endpoint"
+              create_body=$(
+                curl -sS --noproxy '*' -X POST \
+                  -w '\n%{http_code}' \
+                  -H "Authorization: Bearer $NEON_API_KEY" \
+                  -H "Content-Type: application/json" \
+                  "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/endpoints" \
+                  -d "{\"endpoint\":{\"branch_id\":\"$BRANCH_ID\",\"type\":\"read_write\"}}"
+              )
+              create_status=$(echo "$create_body" | tail -n1)
+              create_json=$(echo "$create_body" | sed '$d')
+              echo "POST /endpoints http_status=$create_status body=$create_json"
+              # 409 = already exists. Anything else non-2xx = fail.
+              case "$create_status" in
+                2??|409) : ;;
+                *) echo "::error::endpoint create returned $create_status"; exit 1 ;;
+              esac
+            fi
           else
             response=$(
-              curl -sf -X POST \
+              curl -fsS --noproxy '*' -X POST \
                 -H "Authorization: Bearer $NEON_API_KEY" \
                 -H "Content-Type: application/json" \
                 "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
@@ -102,19 +169,126 @@ jobs:
             BRANCH_ID=$(echo "$response" | jq -r '.branch.id')
           fi
 
-          # The API returns the connection URI on the connection_uris array.
-          conn=$(
-            curl -sf \
+          # Probe the connection_uri endpoint with its HTTP status
+          # visible. If 404, the branch is stale beyond endpoint-
+          # creation repair (database_name/role_name on the branch
+          # don't match the pooler defaults) — delete and recreate.
+          probe_uri() {
+            curl -sS --noproxy '*' -w '\n%{http_code}' \
               -H "Authorization: Bearer $NEON_API_KEY" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true" \
-              | jq -r '.uri'
-          )
-          conn_direct=$(
-            curl -sf \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=true"
+          }
+          probe=$(probe_uri)
+          probe_status=$(echo "$probe" | tail -n1)
+          if [ "$probe_status" = "404" ]; then
+            echo "connection_uri 404 for $BRANCH_ID — deleting the stale branch and recreating"
+            curl -fsS --noproxy '*' -X DELETE \
               -H "Authorization: Bearer $NEON_API_KEY" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri?database_name=neondb&role_name=neondb_owner&pooled=false" \
-              | jq -r '.uri'
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID" \
+              > /dev/null || true
+            # Poll until delete completes — the API is async and POST
+            # right after sometimes 409s on the name collision.
+            for _ in 1 2 3 4 5; do
+              still_exists=$(
+                curl -fsS --noproxy '*' \
+                  -H "Authorization: Bearer $NEON_API_KEY" \
+                  "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+                  | jq -r --arg n "$BRANCH_NAME" \
+                      '[.branches[] | select(.name == $n)] | length'
+              )
+              [ "$still_exists" = "0" ] && break
+              sleep 3
+            done
+            response=$(
+              curl -fsS --noproxy '*' -X POST \
+                -H "Authorization: Bearer $NEON_API_KEY" \
+                -H "Content-Type: application/json" \
+                "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
+                -d "{\"branch\":{\"name\":\"$BRANCH_NAME\"},\"endpoints\":[{\"type\":\"read_write\"}]}"
+            )
+            BRANCH_ID=$(echo "$response" | jq -r '.branch.id')
+            echo "recreated branch as $BRANCH_ID"
+          fi
+
+          # Don't hardcode neondb/neondb_owner — the parent branch's
+          # database + role names may differ (confirmed: fresh branch
+          # returned 404 with the hardcoded names). Query the branch
+          # for its actual database + role, then pass those to
+          # connection_uri.
+          # Prefer the database owner's role. `authenticator` is
+          # Neon's system role for connection pooling and can't
+          # authenticate against the DB directly, so
+          # /connection_uri?role_name=authenticator returns 404.
+          # The /databases response lists each db with its owner_name;
+          # use that as the role for connection_uri.
+          databases_json=$(
+            curl -fsS --noproxy '*' \
+              -H "Authorization: Bearer $NEON_API_KEY" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/databases"
           )
+          roles_json=$(
+            curl -fsS --noproxy '*' \
+              -H "Authorization: Bearer $NEON_API_KEY" \
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/roles"
+          )
+          echo "databases: $(echo "$databases_json" | jq -c '[.databases[] | {name, owner_name}]')"
+          echo "roles: $(echo "$roles_json" | jq -c '[.roles[].name]')"
+          db_name=$(echo "$databases_json" | jq -r '.databases[0].name // empty')
+          role_name=$(echo "$databases_json" | jq -r '.databases[0].owner_name // empty')
+          if [ -z "$role_name" ]; then
+            # Fallback: first non-authenticator role.
+            role_name=$(
+              echo "$roles_json" \
+                | jq -r 'first(.roles[] | select(.name != "authenticator") | .name) // empty'
+            )
+          fi
+          if [ -z "$db_name" ] || [ -z "$role_name" ]; then
+            echo "::error::branch has no usable database/role — db=$db_name role=$role_name"
+            exit 1
+          fi
+          echo "using database=$db_name role=$role_name"
+
+          # Neon endpoint provisioning is async — on a freshly
+          # recreated branch, /connection_uri can 404 for up to
+          # ~20s while the compute warms. Retry a few times and log
+          # the response body on every attempt so a persistent
+          # non-warmup failure (bad role/db, wrong API path, etc.)
+          # is immediately diagnosable.
+          # The branch-level /connection_uri route is gone in the
+          # current Neon API ("this route does not exist"). The
+          # project-level endpoint takes branch_id as a query param.
+          fetch_conn() {
+            local pooled="$1"
+            for attempt in 1 2 3 4 5 6; do
+              body=$(
+                curl -sS --noproxy '*' -G \
+                  -w '\n%{http_code}' \
+                  -H "Authorization: Bearer $NEON_API_KEY" \
+                  --data-urlencode "branch_id=$BRANCH_ID" \
+                  --data-urlencode "database_name=$db_name" \
+                  --data-urlencode "role_name=$role_name" \
+                  --data-urlencode "pooled=$pooled" \
+                  "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/connection_uri"
+              )
+              status=$(echo "$body" | tail -n1)
+              json=$(echo "$body" | sed '$d')
+              if [ "$status" = "200" ]; then
+                echo "$json" | jq -r '.uri'
+                return 0
+              fi
+              echo "connection_uri pooled=$pooled attempt $attempt http=$status body=$json" >&2
+              sleep $((attempt * 3))
+            done
+            return 1
+          }
+          conn=$(fetch_conn true) || {
+            echo "::error::connection_uri (pooled) never returned 200"
+            exit 1
+          }
+          conn_direct=$(fetch_conn false) || {
+            echo "::error::connection_uri (direct) never returned 200"
+            exit 1
+          }
 
           echo "branch_id=$BRANCH_ID" >> "$GITHUB_OUTPUT"
           echo "::add-mask::$conn"
@@ -123,10 +297,27 @@ jobs:
           echo "MIGRATION_DATABASE_URL=$conn_direct" >> "$GITHUB_ENV"
           echo "NEON_BRANCH_URL=$conn" >> "$GITHUB_ENV"
 
+      # Migrator + eval runner both import compiled package output
+      # (@vex/config → dist/index.js, etc). Without dist/ the eval
+      # ends with ERR_MODULE_NOT_FOUND before a fixture runs.
+      - name: Build workspace packages
+        run: pnpm -r --filter="./packages/*" run build
+
       - name: Run migrations against the PR branch
+        # @vex/db's migrate uses loadEnv() from @vex/config, which
+        # validates the full env surface — not just the DB URL it
+        # actually touches. Pass placeholders for the rest so the
+        # validator doesn't reject the migration run.
         run: pnpm --filter @vex/db run migrate
         env:
           MIGRATION_DATABASE_URL: ${{ env.MIGRATION_DATABASE_URL }}
+          APPLICATION_DATABASE_URL: ${{ env.APPLICATION_DATABASE_URL }}
+          REDIS_URL: redis://localhost:6379
+          S3_BUCKET: vex-eval
+          S3_ACCESS_KEY_ID: test
+          S3_SECRET_ACCESS_KEY: test
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       - name: Run eval suite against the PR branch
         if: ${{ needs.preflight.outputs.has_anthropic == 'true' }}
@@ -188,7 +379,7 @@ jobs:
           BRANCH_NAME="pr-${PR_NUMBER}"
 
           BRANCH_ID=$(
-            curl -sf \
+            curl -fsS --noproxy '*' \
               -H "Authorization: Bearer $NEON_API_KEY" \
               "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches" \
               | jq -r --arg n "$BRANCH_NAME" '.branches[] | select(.name == $n) | .id' \

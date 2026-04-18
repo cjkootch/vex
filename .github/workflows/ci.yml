@@ -91,6 +91,33 @@ jobs:
           cache: pnpm
       - name: Install
         run: pnpm install --frozen-lockfile
+      # The eval runner imports compiled package output (@vex/config
+      # points at dist/index.js, etc). On a fresh CI install dist/ is
+      # missing, which ends the suite with ERR_MODULE_NOT_FOUND before
+      # a single fixture runs. Build the workspace packages first so
+      # the runner resolves its own imports.
+      - name: Build workspace packages
+        run: pnpm -r --filter="./packages/*" run build
+      # NEON_DEV_URL is a long-lived Neon branch shared across CI
+      # runs. New migrations (e.g. Sprint 11's fuel_deals) only land
+      # here if we explicitly apply them. Without this step, the
+      # eval suite fails ~80% of fixtures with
+      # `relation "fuel_deals" does not exist`. drizzle-kit's migrate
+      # is idempotent (checks the ledger) so re-running is cheap.
+      - name: Apply migrations to dev branch
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
+        run: pnpm --filter @vex/db run migrate
+      # The eval fixtures reference the seeded tenant's record ids
+      # (SEED_FUEL_DEAL_IDS, SEED_ORG_IDS, etc). Migrations alone
+      # leave the DB with only schema — expected_evidence_object_ids
+      # then all miss with `evidence 0/N`. The seed script wipes and
+      # re-inserts every row matching `id LIKE '01HSEED%'` so it is
+      # effectively idempotent and safe to re-run on every push.
+      - name: Seed demo tenant on dev branch
+        env:
+          MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
+        run: pnpm --filter @vex/db run seed
       # Runner enforces the 85% gate + fails on any regression vs
       # evals/results/latest.json. See packages/agents/src/evals/runner.ts.
       - name: Run eval suite

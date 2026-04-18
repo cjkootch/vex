@@ -14,8 +14,19 @@ import { createId } from "@vex/domain";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { QueryService } from "./query.service.js";
 
+const HistoryTurn = z.object({
+  role: z.enum(["user", "assistant"]),
+  text: z.string(),
+});
+
 const QueryBody = z.object({
   message: z.string().min(1),
+  /**
+   * Up to a handful of prior turns from the same chat thread. The
+   * service uses them to disambiguate follow-ups ("change this status
+   * to won") that reference an entity from the previous answer.
+   */
+  history: z.array(HistoryTurn).max(20).optional(),
   context: z
     .object({
       org_id: z.string().optional(),
@@ -45,6 +56,7 @@ export class QueryController {
       tenantId: this.tenant.tenantId,
       idempotencyKey,
       message: body.message,
+      ...(body.history ? { history: body.history } : {}),
     });
     return {
       answer: result.answer,

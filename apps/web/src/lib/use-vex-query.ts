@@ -11,6 +11,11 @@ export interface ManifestEvent {
   manifest_valid?: boolean;
 }
 
+export interface HistoryTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
 export interface VexQueryState {
   text: string;
   manifest: ManifestEvent | null;
@@ -57,7 +62,7 @@ export function useVexQuery() {
     setState(INITIAL);
   }, []);
 
-  const send = useCallback(async (message: string) => {
+  const send = useCallback(async (message: string, history?: HistoryTurn[]) => {
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -74,7 +79,7 @@ export function useVexQuery() {
       fetch("/api/query/stream", {
         method: "POST",
         headers: { "content-type": "application/json", accept: "text/event-stream" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ message, history: history ?? [] }),
         signal: controller.signal,
       });
 
