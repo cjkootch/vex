@@ -1,4 +1,4 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, lt } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { touchpoints, type Touchpoint } from "../schema/touchpoints.js";
@@ -41,6 +41,30 @@ export class TouchpointRepository {
       .select()
       .from(touchpoints)
       .where(gte(touchpoints.occurredAt, since))
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(limit);
+  }
+
+  /**
+   * Touchpoints with \`start <= occurred_at < end\`. Bounded on both
+   * sides so the AnalystAgent's week-over-week windows don't steal
+   * rows from each other when the tenant exceeds the per-query limit.
+   */
+  async listBetween(
+    tx: Tx,
+    start: Date,
+    end: Date,
+    limit = 2000,
+  ): Promise<Touchpoint[]> {
+    return tx
+      .select()
+      .from(touchpoints)
+      .where(
+        and(
+          gte(touchpoints.occurredAt, start),
+          lt(touchpoints.occurredAt, end),
+        ),
+      )
       .orderBy(desc(touchpoints.occurredAt))
       .limit(limit);
   }
