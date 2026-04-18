@@ -87,7 +87,7 @@ export function ConversationThread({ turns, onTurns }: Props) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex-1 overflow-y-auto px-6 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         <div className="mx-auto flex max-w-3xl flex-col gap-6">
           {turns.length === 0 && (
             <p className="text-center text-sm text-white/40">
@@ -132,7 +132,7 @@ export function ConversationThread({ turns, onTurns }: Props) {
 
       <form
         onSubmit={handleSubmit}
-        className="border-t border-line bg-canvas/80 px-6 py-4"
+        className="flex-shrink-0 border-t border-line bg-canvas/95 px-6 py-4 backdrop-blur"
       >
         <div className="mx-auto flex max-w-3xl items-end gap-2">
           <textarea

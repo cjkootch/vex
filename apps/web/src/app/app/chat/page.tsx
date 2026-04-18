@@ -97,7 +97,7 @@ function ChatPageInner() {
             onClearContext={() => setMode(mode)}
           />
         ) : null}
-        <header className="flex items-center justify-between border-b border-line px-6 py-3">
+        <header className="flex flex-shrink-0 items-center justify-between border-b border-line bg-canvas/95 px-6 py-3 backdrop-blur">
           <input
             value={active.title}
             onChange={(e) =>
