@@ -73,7 +73,7 @@ function ChatPageInner() {
   const showBreadcrumb = mode !== WorkspaceMode.Global;
 
   return (
-    <div className="flex h-full w-full overflow-hidden">
+    <div className="flex h-[calc(100dvh-3rem)] w-full overflow-hidden md:h-full">
       <ConversationSidebar
         items={sidebarItems}
         activeId={activeId}
@@ -110,7 +110,7 @@ function ChatPageInner() {
               )
             }
             aria-label="Conversation title"
-            className="bg-transparent text-sm font-semibold text-white outline-none focus:underline"
+            className="bg-transparent text-base font-semibold text-white outline-none focus:underline md:text-sm"
           />
         </header>
         <div
