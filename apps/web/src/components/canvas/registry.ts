@@ -13,6 +13,7 @@ import { CampaignPanel } from "./panels/campaign-panel";
 import { VoiceSessionPanel } from "./panels/voice-session-panel";
 import { RouteMapPanel } from "./panels/route-map-panel";
 import { DealScorecardPanel } from "./panels/deal-scorecard-panel";
+import { MarketIntelPanel } from "./panels/market-intel-panel";
 import {
   ConfirmEntityPanel,
   DisambiguationPanel,
@@ -58,6 +59,7 @@ registry.register("disambiguation", DisambiguationPanel);
 registry.register("confirm_entity", ConfirmEntityPanel);
 registry.register("route_map", RouteMapPanel);
 registry.register("deal_scorecard", DealScorecardPanel);
+registry.register("market_intel", MarketIntelPanel);
 // Signal panel: ManifestCanvas handles the side effect (setMode + toast);
 // the registry entry just prevents FallbackPanel from showing stray JSON.
 registry.register("workspace_mode_switch", () => null);
