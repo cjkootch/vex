@@ -24,7 +24,7 @@ export function ConversationSidebar({ items, activeId, onSelect, onNew }: Props)
   }, [items, filter]);
 
   return (
-    <aside className="flex h-full w-60 flex-none flex-col border-r border-line bg-canvas/60">
+    <aside className="hidden h-full w-60 flex-none flex-col border-r border-line bg-canvas/60 md:flex">
       <div className="border-b border-line p-3">
         <button
           type="button"

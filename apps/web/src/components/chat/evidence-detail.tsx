@@ -21,14 +21,14 @@ export function EvidenceDetail({ evidenceRefs, costUsd, cacheHit }: Props) {
       <button
         type="button"
         onClick={() => setCollapsed(false)}
-        className="absolute right-0 top-4 rounded-l-md border border-r-0 border-line bg-muted/80 px-2 py-3 text-xs text-white/60"
+        className="absolute right-0 top-4 hidden rounded-l-md border border-r-0 border-line bg-muted/80 px-2 py-3 text-xs text-white/60 lg:block"
       >
         ◀ Evidence
       </button>
     );
   }
   return (
-    <aside className="flex h-full w-80 flex-none flex-col border-l border-line bg-canvas/60">
+    <aside className="hidden h-full w-80 flex-none flex-col border-l border-line bg-canvas/60 lg:flex">
       <header className="flex items-center justify-between border-b border-line p-3">
         <h3 className="text-sm font-semibold text-white">Evidence</h3>
         <button
