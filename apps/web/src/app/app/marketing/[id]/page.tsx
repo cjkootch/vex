@@ -124,6 +124,16 @@ export default function CampaignDetailPage({
             content: <OverviewTab campaign={campaign} />,
           },
           {
+            id: "plan",
+            label: "Plan",
+            content: <PlanTab campaignId={campaign.id} />,
+          },
+          {
+            id: "enrollments",
+            label: "Enrollments",
+            content: <EnrollmentsTab campaignId={campaign.id} />,
+          },
+          {
             id: "touchpoints",
             label: "Touchpoints",
             count: campaign.touchpoints.length,
@@ -131,6 +141,361 @@ export default function CampaignDetailPage({
           },
         ]}
       />
+    </div>
+  );
+}
+
+interface CampaignStepRow {
+  id: string;
+  campaignId: string;
+  position: number;
+  channel: string;
+  delayAfterPriorMs: number;
+  templateRef: string | null;
+  gateConditionJson: Record<string, unknown>;
+  tier: string;
+  autoApprove: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function PlanTab({ campaignId }: { campaignId: string }) {
+  const [steps, setSteps] = useState<CampaignStepRow[] | null>(null);
+  const [validation, setValidation] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const refresh = (): void => {
+    setFetchError(null);
+    fetch(`/api/marketing/campaigns/${campaignId}/steps`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.json();
+      })
+      .then((body: { steps: CampaignStepRow[]; validation: string | null }) => {
+        setSteps(body.steps);
+        setValidation(body.validation);
+      })
+      .catch((err: Error) => setFetchError(err.message));
+  };
+  useEffect(refresh, [campaignId]);
+
+  if (fetchError) {
+    return (
+      <div className="rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
+        Couldn&apos;t load plan: {fetchError}
+      </div>
+    );
+  }
+  if (steps === null) {
+    return <div className="text-sm text-white/40">Loading plan…</div>;
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {validation && (
+        <div className="rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+          {validation}
+        </div>
+      )}
+      {steps.length === 0 ? (
+        <div className="rounded-md border border-line bg-muted/20 px-3 py-6 text-center text-sm text-white/50">
+          No steps yet. Add the first step to define the plan.
+        </div>
+      ) : (
+        <ol className="flex flex-col gap-2">
+          {steps.map((s) => (
+            <li
+              key={s.id}
+              className="rounded-lg border border-line/60 bg-muted/20 px-3 py-3"
+            >
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="font-mono text-sm text-accent">
+                  #{s.position}
+                </span>
+                <span className="text-sm font-semibold text-white">
+                  {s.channel}
+                </span>
+                <span className="text-xs uppercase tracking-wide text-white/50">
+                  {s.tier}
+                  {s.autoApprove ? " · auto-approve" : ""}
+                </span>
+                <span className="text-xs text-white/40">
+                  wait {formatDelay(s.delayAfterPriorMs)}
+                </span>
+              </div>
+              {s.templateRef && (
+                <div className="mt-1 text-xs text-white/60">
+                  template: <span className="font-mono">{s.templateRef}</span>
+                </div>
+              )}
+              {Object.keys(s.gateConditionJson ?? {}).length > 0 && (
+                <pre className="mt-1 overflow-x-auto rounded bg-canvas/40 px-2 py-1 text-[11px] text-white/70">
+                  {JSON.stringify(s.gateConditionJson, null, 2)}
+                </pre>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+      <AddStepForm
+        campaignId={campaignId}
+        nextPosition={steps.length}
+        onCreated={refresh}
+      />
+    </div>
+  );
+}
+
+const CHANNELS = ["email", "sms", "whatsapp", "voice", "manual"] as const;
+const TIERS = ["T0", "T1", "T2", "T3"] as const;
+
+function AddStepForm({
+  campaignId,
+  nextPosition,
+  onCreated,
+}: {
+  campaignId: string;
+  nextPosition: number;
+  onCreated: () => void;
+}) {
+  const [channel, setChannel] = useState<(typeof CHANNELS)[number]>("email");
+  const [tier, setTier] = useState<(typeof TIERS)[number]>("T2");
+  const [delayHours, setDelayHours] = useState("0");
+  const [templateRef, setTemplateRef] = useState("");
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    setSubmitting(true);
+    setErr(null);
+    try {
+      const hours = Number.parseFloat(delayHours);
+      const body = {
+        position: nextPosition,
+        channel,
+        tier,
+        autoApprove,
+        delayAfterPriorMs: Number.isFinite(hours)
+          ? Math.round(hours * 3600_000)
+          : 0,
+        ...(templateRef.trim() ? { templateRef: templateRef.trim() } : {}),
+      };
+      const res = await fetch(
+        `/api/marketing/campaigns/${campaignId}/steps`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as {
+          message?: string;
+        };
+        throw new Error(payload.message ?? `${res.status} ${res.statusText}`);
+      }
+      setTemplateRef("");
+      setAutoApprove(false);
+      onCreated();
+    } catch (error) {
+      setErr((error as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <form
+      onSubmit={submit}
+      className="rounded-lg border border-line bg-muted/10 p-3"
+    >
+      <div className="mb-2 text-xs uppercase tracking-wider text-white/50">
+        Add step #{nextPosition}
+      </div>
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+        <label className="text-xs text-white/60">
+          Channel
+          <select
+            value={channel}
+            onChange={(e) =>
+              setChannel(e.target.value as (typeof CHANNELS)[number])
+            }
+            className="mt-1 h-9 w-full rounded-md border border-line bg-canvas/40 px-2 text-sm text-white"
+          >
+            {CHANNELS.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-white/60">
+          Wait (hours)
+          <input
+            type="number"
+            step="0.5"
+            min="0"
+            value={delayHours}
+            onChange={(e) => setDelayHours(e.target.value)}
+            className="mt-1 h-9 w-full rounded-md border border-line bg-canvas/40 px-2 text-sm text-white"
+          />
+        </label>
+        <label className="text-xs text-white/60">
+          Tier
+          <select
+            value={tier}
+            onChange={(e) => setTier(e.target.value as (typeof TIERS)[number])}
+            className="mt-1 h-9 w-full rounded-md border border-line bg-canvas/40 px-2 text-sm text-white"
+          >
+            {TIERS.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-white/60">
+          Template ref
+          <input
+            type="text"
+            value={templateRef}
+            onChange={(e) => setTemplateRef(e.target.value)}
+            placeholder="(email template id / whatsapp content_sid)"
+            className="mt-1 h-9 w-full rounded-md border border-line bg-canvas/40 px-2 text-sm text-white"
+          />
+        </label>
+      </div>
+      <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
+        <input
+          type="checkbox"
+          checked={autoApprove}
+          onChange={(e) => setAutoApprove(e.target.checked)}
+        />
+        Auto-approve this step (skip ApprovalGate — use sparingly)
+      </label>
+      {err && (
+        <div className="mt-2 rounded-md border border-bad/40 bg-bad/10 px-2 py-1 text-xs text-bad">
+          {err}
+        </div>
+      )}
+      <div className="mt-3 flex justify-end">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="h-8 rounded-md bg-accent px-3 text-xs font-medium text-white hover:bg-accent/80 disabled:opacity-60"
+        >
+          {submitting ? "Adding…" : "Add step"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function formatDelay(ms: number): string {
+  if (ms <= 0) return "immediately";
+  const hours = ms / 3600_000;
+  if (hours < 1) return `${Math.round(ms / 60_000)}m`;
+  if (hours < 48) return `${hours.toFixed(1)}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+interface EnrollmentRow {
+  id: string;
+  contactId: string;
+  currentStep: number;
+  state: string;
+  lastEventAt: string | null;
+  error: string | null;
+  createdAt: string;
+}
+
+function EnrollmentsTab({ campaignId }: { campaignId: string }) {
+  const [rows, setRows] = useState<EnrollmentRow[] | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/marketing/campaigns/${campaignId}/enrollments`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        return res.json();
+      })
+      .then(
+        (body: {
+          enrollments: EnrollmentRow[];
+          counts: Record<string, number>;
+        }) => {
+          if (!cancelled) {
+            setRows(body.enrollments);
+            setCounts(body.counts ?? {});
+          }
+        },
+      )
+      .catch((e: Error) => {
+        if (!cancelled) setErr(e.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId]);
+
+  if (err) {
+    return (
+      <div className="rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
+        Couldn&apos;t load enrollments: {err}
+      </div>
+    );
+  }
+  if (rows === null) {
+    return <div className="text-sm text-white/40">Loading enrollments…</div>;
+  }
+  const stateBadges: { state: string; label: string; palette: string }[] = [
+    { state: "enrolled", label: "Enrolled", palette: "bg-good/20 text-good" },
+    { state: "paused", label: "Paused", palette: "bg-warn/20 text-warn" },
+    { state: "completed", label: "Completed", palette: "bg-muted/60 text-white/70" },
+    { state: "unsubscribed", label: "Unsubscribed", palette: "bg-muted/60 text-white/50" },
+    { state: "errored", label: "Errored", palette: "bg-bad/20 text-bad" },
+  ];
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap gap-2">
+        {stateBadges.map((b) => (
+          <span
+            key={b.state}
+            className={`inline-flex items-center gap-1 rounded px-2 py-1 text-xs ${b.palette}`}
+          >
+            {b.label}: <span className="font-mono">{counts[b.state] ?? 0}</span>
+          </span>
+        ))}
+      </div>
+      {rows.length === 0 ? (
+        <div className="rounded-md border border-line bg-muted/20 px-3 py-6 text-center text-sm text-white/50">
+          No contacts enrolled yet.
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {rows.map((r) => (
+            <li
+              key={r.id}
+              className="flex items-baseline justify-between gap-3 rounded-md border border-line/60 bg-muted/20 px-3 py-2 text-sm"
+            >
+              <span className="font-mono text-xs text-accent">
+                {r.contactId.slice(0, 12)}…
+              </span>
+              <span className="text-xs text-white/70">
+                step {r.currentStep} · {r.state}
+              </span>
+              <span className="text-xs text-white/40">
+                {r.lastEventAt ? new Date(r.lastEventAt).toLocaleString() : "—"}
+              </span>
+              {r.error && <span className="text-xs text-bad">{r.error}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

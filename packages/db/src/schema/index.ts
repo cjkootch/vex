@@ -5,6 +5,8 @@ export * from "./contacts.js";
 export * from "./contact-org-memberships.js";
 export * from "./leads.js";
 export * from "./campaigns.js";
+export * from "./campaign-steps.js";
+export * from "./campaign-enrollments.js";
 export * from "./touchpoints.js";
 export * from "./threads.js";
 export * from "./messages.js";
