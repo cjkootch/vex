@@ -47,6 +47,8 @@ import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
 import { AdminModule } from "./admin/admin.module.js";
 import { BriefModule } from "./brief/brief.module.js";
 import { CallsModule } from "./calls/calls.module.js";
+import { CallsService } from "./calls/calls.service.js";
+import { VoiceStreamServer } from "./calls/voice-stream-server.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
 import { EventsModule } from "./events/events.module.js";
@@ -254,6 +256,12 @@ async function bootstrap(): Promise<void> {
                       twimlAppSid: env.TWILIO_TWIML_APP_SID,
                     }
                   : null,
+              voiceListener: {
+                enabled: env.VEX_AI_VOICE_ENABLED && Boolean(env.APP_BASE_URL),
+                streamUrl: env.APP_BASE_URL
+                  ? `${env.APP_BASE_URL.replace(/^http/i, "ws").replace(/\/$/, "")}/calls/twilio/stream`
+                  : "",
+              },
               taskQueue: TEMPORAL_TASK_QUEUE,
             }),
           }
@@ -276,7 +284,47 @@ async function bootstrap(): Promise<void> {
     { rawBody: true },
   );
 
+  // Sprint K — voice-bridge WS server. Only instantiated when the
+  // feature flag is on AND CallsModule is registered (which requires
+  // Twilio creds + Temporal reachable). When disabled, Twilio upgrade
+  // attempts against /calls/twilio/stream receive an immediate 503
+  // so the call transparently falls back to conference-only.
+  let voiceStreamServer: VoiceStreamServer | null = null;
+  if (env.VEX_AI_VOICE_ENABLED && temporal && twilio && twilioVerifier) {
+    try {
+      const callsService = app.get(CallsService, { strict: false });
+      voiceStreamServer = new VoiceStreamServer({
+        enabled: true,
+        openaiApiKey: env.OPENAI_API_KEY,
+        model: env.OPENAI_REALTIME_CALL_MODEL,
+        log: (level, msg, meta) => {
+          const logger = app.getHttpAdapter().getInstance().log;
+          const fn = level === "error" ? logger.error.bind(logger) : logger.info.bind(logger);
+          fn({ ...meta, msg });
+        },
+        onEscalate: async ({ workflowId, tenantId, reason }) => {
+          await callsService.requestHumanBackup({
+            tenantId,
+            workflowId,
+            reason,
+          });
+        },
+      });
+      voiceStreamServer.attach(
+        app.getHttpAdapter().getInstance().server,
+      );
+    } catch (err) {
+      // Non-fatal: without the bridge the call falls back to the
+      // conference-only TwiML, which still works end-to-end.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `voice bridge mount failed: ${(err as Error).message} — continuing without AI listener`,
+      );
+    }
+  }
+
   const shutdown = async (): Promise<void> => {
+    if (voiceStreamServer) voiceStreamServer.close();
     await app.close();
     await queues.close();
     redis.disconnect();

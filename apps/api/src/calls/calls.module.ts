@@ -27,9 +27,22 @@ import {
   CALLS_TEMPORAL_CLIENT,
   CALLS_TWILIO_CLIENT,
   CALLS_TWILIO_VERIFIER,
+  CALLS_VOICE_LISTENER_CONFIG,
   CALLS_VOICE_SDK_CONFIG,
   CALLS_WORKSPACES_REPO,
 } from "./tokens.js";
+
+/**
+ * Sprint K — AI escalation-listener wiring. `enabled: false` (the
+ * default) keeps the Sprint J TwiML unchanged. When enabled the
+ * TwiML emits `<Start><Stream url={streamUrl}/>` before the
+ * conference so the callee-leg audio forks to our WS bridge.
+ */
+export interface VoiceListenerConfig {
+  enabled: boolean;
+  /** Full wss:// URL Twilio hits for the Media Stream. */
+  streamUrl: string;
+}
 
 /**
  * Sprint J — Twilio Voice SDK creds resolved at boot. `null` signals
@@ -55,6 +68,7 @@ export interface CallsModuleConfig {
   twilioVerifier: TwilioVerifier;
   s3: S3Uploader;
   voiceSdk: VoiceSdkConfig;
+  voiceListener: VoiceListenerConfig;
   /** Temporal task queue the outbound-call workflow runs on. */
   taskQueue: string;
 }
@@ -80,6 +94,7 @@ export class CallsModule {
         { provide: CALLS_S3_UPLOADER, useFactory: () => config.s3 },
         { provide: CALLS_TASK_QUEUE, useFactory: () => config.taskQueue },
         { provide: CALLS_VOICE_SDK_CONFIG, useFactory: () => config.voiceSdk },
+        { provide: CALLS_VOICE_LISTENER_CONFIG, useFactory: () => config.voiceListener },
         CallsService,
       ],
     };

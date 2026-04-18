@@ -17,3 +17,12 @@ export const CALLS_TASK_QUEUE = Symbol("CALLS_TASK_QUEUE");
  * endpoint returns 503 in that case instead of misconfiguring silently.
  */
 export const CALLS_VOICE_SDK_CONFIG = Symbol("CALLS_VOICE_SDK_CONFIG");
+
+/**
+ * Sprint K — AI voice listener config. `{ enabled, streamUrl }` — the
+ * TwiML driver injects `<Start><Stream url={streamUrl}/>` when
+ * enabled. The stream URL is derived from APP_BASE_URL + the tenant,
+ * so the raw websocket path is constructed once at boot and passed
+ * in rather than rebuilt on every webhook.
+ */
+export const CALLS_VOICE_LISTENER_CONFIG = Symbol("CALLS_VOICE_LISTENER_CONFIG");

@@ -33,6 +33,19 @@ export {
   type TwilioDeps,
   type TwilioVoiceSdkDeps,
 } from "./twilio.js";
+export {
+  startVoiceBridge,
+  ESCALATION_LISTENER_INSTRUCTIONS,
+  ESCALATION_TOOL,
+  type RealtimeClientEvent,
+  type RealtimeServerEvent,
+  type RealtimeToolDefinition,
+  type RealtimeTransport,
+  type TwilioStreamMessage,
+  type TwilioStreamTransport,
+  type VoiceBridgeConfig,
+  type VoiceBridgeHandle,
+} from "./voice-bridge.js";
 export { createResendClient } from "./resend.js";
 export { pricing } from "./pricing.js";
 export {

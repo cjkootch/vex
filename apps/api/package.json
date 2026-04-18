@@ -13,10 +13,12 @@
     "clean": "rm -rf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@auth/core": "0.34.2",
     "@nestjs/common": "10.3.10",
     "@nestjs/core": "10.3.10",
     "@nestjs/platform-fastify": "10.3.10",
     "@nestjs/throttler": "6.0.0",
+    "@temporalio/client": "1.11.1",
     "@vex/agents": "workspace:*",
     "@vex/config": "workspace:*",
     "@vex/db": "workspace:*",
@@ -24,18 +26,18 @@
     "@vex/integrations": "workspace:*",
     "@vex/telemetry": "workspace:*",
     "@vex/ui": "workspace:*",
-    "@auth/core": "0.34.2",
-    "@temporalio/client": "1.11.1",
-    "zod": "3.23.8",
     "bullmq": "5.12.0",
     "drizzle-orm": "0.32.0",
     "fastify": "4.28.1",
     "ioredis": "5.4.1",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.1",
-    "twilio": "5.2.2"
+    "twilio": "5.2.2",
+    "ws": "8.18.0",
+    "zod": "3.23.8"
   },
   "devDependencies": {
+    "@types/ws": "8.5.10",
     "tsx": "4.16.2",
     "typescript": "5.5.3",
     "vitest": "1.6.0"
