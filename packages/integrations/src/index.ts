@@ -29,7 +29,13 @@ export {
   type TwilioClient,
   type TwilioDeps,
 } from "./twilio.js";
-export { createResendClient } from "./resend.js";
+export {
+  createResendClient,
+  type ResendClient,
+  type ResendDeps,
+  type SendEmailRequest,
+  type SendEmailResult,
+} from "./resend.js";
 export { pricing } from "./pricing.js";
 export {
   ResendNormalizer,

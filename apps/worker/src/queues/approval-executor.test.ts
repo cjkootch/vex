@@ -88,8 +88,19 @@ function buildDeps(
     memberships: {
       create: vi.fn().mockResolvedValue(undefined),
     },
+    touchpoints: {
+      insert: vi.fn().mockResolvedValue({ id: "tp-1" }),
+    },
     events: {
       insertIfNotExists: vi.fn().mockResolvedValue(undefined),
+    },
+    // Default: email.send branch succeeds. Individual tests override
+    // `send` to simulate provider errors or the null-client path.
+    resend: {
+      send: vi.fn().mockResolvedValue({ id: "resend-msg-1", error: null }),
+    },
+    costLedger: {
+      record: vi.fn().mockResolvedValue(undefined),
     },
   };
 
@@ -387,9 +398,9 @@ describe("approval executor — unknown action types", () => {
 
   it("logs the received event without side effects", async () => {
     const deps = buildDeps({
-      actionType: "email.send",
+      actionType: "lead.close",
       decision: "approved",
-      proposedPayload: { to: ["x@test"], subject: "s", body: "b" },
+      proposedPayload: { leadId: "x", outcome: "won", reason: "y" },
     });
     await runJob(deps);
     expect(deps.deals.create).not.toHaveBeenCalled();
@@ -397,12 +408,161 @@ describe("approval executor — unknown action types", () => {
     expect(deps.organizations.create).not.toHaveBeenCalled();
     const event = deps.events.insertIfNotExists.mock.calls[0]![2];
     expect(event.verb).toBe("approval.executor.received");
-    expect(event.metadata.action_type).toBe("email.send");
+    expect(event.metadata.action_type).toBe("lead.close");
   });
 
   it("noops when the approval doesn't exist", async () => {
     const deps = buildDeps(null);
     await runJob(deps);
     expect(deps.events.insertIfNotExists).not.toHaveBeenCalled();
+  });
+});
+
+describe("approval executor — email.send", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const validPayload = {
+    to: ["buyer@acme.test"],
+    subject: "Spring program check-in",
+    body: "Wanted to see if timing has shifted on your Q3 ULSD plan.",
+    contact_id: "01HSEEDCNT0000000000000001",
+    org_id: "01HSEEDCRP0000000000000001",
+    campaign_id: "01HSEEDCPN0000000000000001",
+    rationale: "buyer readiness: hot",
+  };
+
+  it("dispatches through Resend, lands a touchpoint, records cost, emits email.sent", async () => {
+    const deps = buildDeps({
+      actionType: "email.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    await runJob(deps);
+
+    expect(deps.resend.send).toHaveBeenCalledOnce();
+    const [sendArgs] = deps.resend.send.mock.calls[0]!;
+    expect(sendArgs.to).toEqual(["buyer@acme.test"]);
+    expect(sendArgs.subject).toBe("Spring program check-in");
+    expect(sendArgs.text).toBe(validPayload.body);
+
+    expect(deps.touchpoints.insert).toHaveBeenCalledOnce();
+    const [, tenantArg, tpData] = deps.touchpoints.insert.mock.calls[0]!;
+    expect(tenantArg).toBe(TENANT);
+    expect(tpData.channel).toBe("email");
+    expect(tpData.contactId).toBe(validPayload.contact_id);
+    expect(tpData.orgId).toBe(validPayload.org_id);
+    expect(tpData.campaignId).toBe(validPayload.campaign_id);
+    expect(tpData.metadata.provider_message_id).toBe("resend-msg-1");
+
+    expect(deps.costLedger.record).toHaveBeenCalledOnce();
+    const ledgerEntry = deps.costLedger.record.mock.calls[0]![0];
+    expect(ledgerEntry.operation).toBe("email.send");
+    expect(ledgerEntry.units).toBe(1);
+    expect(ledgerEntry.costUsdMicros).toBeGreaterThan(0);
+    expect(ledgerEntry.idempotencyKey).toBe(`email.send:${APPROVAL_ID}`);
+
+    expect(deps.approvals.markApplied).toHaveBeenCalledWith(
+      expect.anything(),
+      APPROVAL_ID,
+      "resend-msg-1",
+    );
+
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("email.sent");
+    expect(event.metadata.provider_message_id).toBe("resend-msg-1");
+    expect(event.metadata.recipient_count).toBe(1);
+  });
+
+  it("emits approval.executor.failed when `to` is empty", async () => {
+    const deps = buildDeps({
+      actionType: "email.send",
+      decision: "approved",
+      proposedPayload: { ...validPayload, to: [] },
+    });
+    await runJob(deps);
+    expect(deps.resend.send).not.toHaveBeenCalled();
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toBe("missing to, subject, or body");
+  });
+
+  it("fails closed with email.send_not_configured when Resend is absent", async () => {
+    const deps = buildDeps({
+      actionType: "email.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    // Override — workspace without Resend credentials.
+    (deps as { resend: unknown }).resend = null;
+    await runJob(deps);
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    expect(deps.approvals.markApplied).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toBe("email.send_not_configured");
+  });
+
+  it("surfaces provider errors without marking applied or recording cost", async () => {
+    const deps = buildDeps({
+      actionType: "email.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    deps.resend.send.mockResolvedValueOnce({
+      id: null,
+      error: "validation_error: From address not verified",
+    });
+    await runJob(deps);
+    expect(deps.approvals.markApplied).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toMatch(/From address not verified/);
+  });
+
+  it("short-circuits to a replay event when appliedObjectId is already set", async () => {
+    const deps = buildDeps({
+      actionType: "email.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    // Simulate a prior successful run that stamped the approval with
+    // the provider message id. The executor must NOT re-send.
+    deps.approvals.findById.mockResolvedValue({
+      id: APPROVAL_ID,
+      reviewerId: "01HSEEDPRS0000000000000001",
+      actionType: "email.send",
+      decision: "approved",
+      proposedPayload: validPayload,
+      appliedObjectId: "resend-msg-prior",
+    });
+
+    await runJob(deps);
+    expect(deps.resend.send).not.toHaveBeenCalled();
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    expect(deps.costLedger.record).not.toHaveBeenCalled();
+    expect(deps.approvals.markApplied).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.replayed");
+    expect(event.metadata.action_type).toBe("email.send");
+  });
+
+  it("charges Resend cost per recipient", async () => {
+    const deps = buildDeps({
+      actionType: "email.send",
+      decision: "approved",
+      proposedPayload: { ...validPayload, to: ["a@t", "b@t", "c@t"] },
+    });
+    await runJob(deps);
+    const ledgerEntry = deps.costLedger.record.mock.calls[0]![0];
+    expect(ledgerEntry.units).toBe(3);
+    // $0.0004/msg * 3 = $0.0012 = 1200 micros.
+    expect(ledgerEntry.costUsdMicros).toBe(1200);
   });
 });

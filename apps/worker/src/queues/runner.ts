@@ -43,12 +43,20 @@ import {
   createDb,
   type Db,
 } from "@vex/db";
-import { createId } from "@vex/domain";
-import { AnthropicAdapter, OpenAIAdapter, S3Uploader } from "@vex/integrations";
+import { createId, TenantId } from "@vex/domain";
+import {
+  AnthropicAdapter,
+  OpenAIAdapter,
+  S3Uploader,
+  createResendClient,
+  pricing,
+  type ResendClient,
+} from "@vex/integrations";
 import {
   InMemoryCostLedger,
   recordQueueBackpressure,
   recordQueueDepth,
+  type CostLedger,
 } from "@vex/telemetry";
 
 /** Interval at which the worker samples queue depths for telemetry. */
@@ -65,6 +73,16 @@ export interface QueueRunnerOptions {
     bucket: string;
     accessKeyId: string;
     secretAccessKey: string;
+  };
+  /**
+   * Resend config — when provided, the approval executor's email.send
+   * branch dispatches real emails. When absent, approved email.send
+   * rows land `approval.executor.failed` with reason
+   * `email.send_not_configured` so nothing silently succeeds.
+   */
+  resend?: {
+    apiKey: string;
+    defaultFrom: string;
   };
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
@@ -149,6 +167,13 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   const agentWorker = createAgentWorker(buildAgentProcessor(runner), connection);
   await agentWorker.waitUntilReady();
 
+  const resendClient: ResendClient | null = options.resend
+    ? createResendClient({
+        apiKey: options.resend.apiKey,
+        defaultFrom: options.resend.defaultFrom,
+      })
+    : null;
+
   const approvalExecutorWorker = createApprovalExecutorWorker(
     buildApprovalExecutor({
       db,
@@ -157,7 +182,10 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       organizations: repos.organizations,
       contacts: repos.contacts,
       memberships: repos.memberships,
+      touchpoints: repos.touchpoints,
       events: repos.events,
+      resend: resendClient,
+      costLedger,
     }),
     connection,
   );
@@ -267,7 +295,16 @@ export interface ApprovalExecutorDeps {
   organizations: OrganizationRepository;
   contacts: ContactRepository;
   memberships: ContactOrgMembershipRepository;
+  touchpoints: TouchpointRepository;
   events: EventRepository;
+  /**
+   * Resend client for the `email.send` branch. When `null` (the workspace
+   * hasn't configured Resend), the executor records an
+   * `approval.executor.failed` event with reason `email.send_not_configured`
+   * instead of pretending to send.
+   */
+  resend: ResendClient | null;
+  costLedger: CostLedger;
 }
 
 /**
@@ -306,6 +343,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         }
         if (approval.actionType === "crm.create_deal") {
           await applyCreateDeal(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "email.send") {
+          await applyEmailSend(tx, deps, workspace_id, approval);
           return;
         }
       }
@@ -712,6 +753,135 @@ async function applyCreateDeal(
       buyer_org_id: payload.buyerOrgId,
       volume_usg: payload.volumeUsg,
       rationale: payload.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
+}
+
+/**
+ * Approved `email.send` → dispatch through Resend + land a touchpoint
+ * so the send shows up in the contact / org / campaign timelines.
+ *
+ * Idempotency: on retry, `approval.appliedObjectId` carries the Resend
+ * message id from the first successful dispatch. The executor emits a
+ * replay event and skips the network call — critical because email
+ * sends are not themselves idempotent on the provider side.
+ *
+ * Failure surface:
+ *   - missing fields → `approval.executor.failed` with reason
+ *   - Resend returns an error → `approval.executor.failed` with the
+ *     provider message, no cost recorded, approval NOT marked applied
+ *     so a retry can try again once the underlying issue is fixed.
+ */
+async function applyEmailSend(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    to?: string[];
+    subject?: string;
+    body?: string;
+    reply_to?: string;
+    contact_id?: string;
+    org_id?: string;
+    campaign_id?: string;
+    rationale?: string;
+  } | null;
+
+  const to = Array.isArray(payload?.to) ? payload.to.filter((s): s is string => typeof s === "string" && s.length > 0) : [];
+  const subject = typeof payload?.subject === "string" ? payload.subject : "";
+  const body = typeof payload?.body === "string" ? payload.body : "";
+  if (to.length === 0 || subject.length === 0 || body.length === 0) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "email.send", "missing to, subject, or body");
+    return;
+  }
+
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "email.send");
+    return;
+  }
+
+  if (!deps.resend) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "email.send", "email.send_not_configured");
+    return;
+  }
+
+  const result = await deps.resend.send({
+    to,
+    subject,
+    text: body,
+    ...(payload?.reply_to ? { replyTo: payload.reply_to } : {}),
+  });
+  if (result.error || !result.id) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "email.send",
+      result.error ?? "resend returned no message id",
+    );
+    return;
+  }
+
+  // Cost ledger: Resend bills per delivered recipient, so multiply the
+  // per-message price by the TO-count. Idempotency key pins the approval
+  // id so a replay doesn't double-charge.
+  const perMessageMicros = Math.round(pricing.resend.perMessageUsd * 1_000_000);
+  await deps.costLedger.record({
+    idempotencyKey: `email.send:${approval.id}`,
+    tenantId: TenantId(tenantId),
+    operation: "email.send",
+    provider: "resend",
+    units: to.length,
+    unitKind: "messages",
+    costUsdMicros: perMessageMicros * to.length,
+    occurredAt: new Date(),
+  });
+
+  // One touchpoint per recipient — channel `email`, verb `email.sent`,
+  // metadata links back to the approval + provider id. Downstream the
+  // Resend webhook will land sibling touchpoints for delivered / opened
+  // / clicked events keyed on the same provider id so the lifecycle
+  // stitches together cleanly.
+  await deps.touchpoints.insert(tx, tenantId, {
+    channel: "email",
+    actor: approval.reviewerId ?? "approval_executor",
+    occurredAt: new Date(),
+    ...(payload?.contact_id ? { contactId: payload.contact_id } : {}),
+    ...(payload?.org_id ? { orgId: payload.org_id } : {}),
+    ...(payload?.campaign_id ? { campaignId: payload.campaign_id } : {}),
+    metadata: {
+      verb: "email.sent",
+      approval_id: approval.id,
+      provider_message_id: result.id,
+      recipient_count: to.length,
+      subject,
+    },
+  });
+
+  await deps.approvals.markApplied(tx, approval.id, result.id);
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "email.sent",
+    subjectType: "approval",
+    subjectId: approval.id,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "email",
+    objectId: result.id,
+    occurredAt: new Date(),
+    idempotencyKey: `email.sent:via-approval:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      provider_message_id: result.id,
+      recipient_count: to.length,
+      subject,
+      contact_id: payload?.contact_id ?? null,
+      org_id: payload?.org_id ?? null,
+      campaign_id: payload?.campaign_id ?? null,
+      rationale: payload?.rationale ?? null,
       applied_by: approval.reviewerId,
     },
   });
