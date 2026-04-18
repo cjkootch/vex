@@ -45,11 +45,15 @@ export function TablePanel({ title, columns, rows }: TableProps) {
   // Click → lookup dealRef → push. Keeping the resolution in the
   // panel (rather than e.g. a by-ref route) is one click + one API
   // call and avoids a flash of the landing-on-a-redirector page.
+  // \`limit=500\` matches the list endpoint's clamp ceiling so chat
+  // can still navigate to a deal that's outside the default 100
+  // newest-first window. A dedicated /deals/by-ref endpoint would
+  // be cleaner at 500+ deals per workspace — follow-up.
   const openDeal = useCallback(
     async (dealRef: string): Promise<void> => {
       if (!DEAL_REF_RE.test(dealRef)) return;
       try {
-        const res = await fetch("/api/deals", {
+        const res = await fetch("/api/deals?limit=500", {
           credentials: "include",
           cache: "no-store",
         });
