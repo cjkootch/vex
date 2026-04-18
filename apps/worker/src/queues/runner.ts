@@ -157,6 +157,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       organizations: repos.organizations,
       contacts: repos.contacts,
       memberships: repos.memberships,
+      touchpoints: repos.touchpoints,
       events: repos.events,
     }),
     connection,
@@ -267,6 +268,7 @@ export interface ApprovalExecutorDeps {
   organizations: OrganizationRepository;
   contacts: ContactRepository;
   memberships: ContactOrgMembershipRepository;
+  touchpoints: TouchpointRepository;
   events: EventRepository;
 }
 
@@ -306,6 +308,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         }
         if (approval.actionType === "crm.create_deal") {
           await applyCreateDeal(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "market.outreach") {
+          await applyMarketOutreach(tx, deps, workspace_id, approval);
           return;
         }
       }
@@ -575,6 +581,81 @@ async function applyCreateDeal(
       buyer_org_id: payload.buyerOrgId,
       volume_usg: payload.volumeUsg,
       rationale: payload.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
+}
+
+async function applyMarketOutreach(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    org_id?: string;
+    org_name?: string;
+    product?: string;
+    benchmark?: string;
+    change_pct?: number;
+    direction?: string;
+    current_price_usg?: number;
+    baseline_price_usg?: number;
+    rate_date?: string;
+    readiness_score?: number;
+    readiness_band?: string;
+  } | null;
+
+  if (!payload?.org_id) {
+    await recordExecutorFailure(tx, deps, tenantId, approval.id, "market.outreach", "missing org_id");
+    return;
+  }
+
+  // Land a touchpoint on the buyer so the commitment shows up in their
+  // timeline even before the email/voice draft ships. Channel is
+  // `vex_outreach_scheduled` so downstream counts can distinguish Vex-
+  // initiated outreach from human-authored channels like `email` /
+  // `voice`. The metadata carries the full crossing + readiness state
+  // so the drafting endpoint can reconstruct the prompt context without
+  // re-reading the approval row.
+  await deps.touchpoints.insert(tx, tenantId, {
+    channel: "vex_outreach_scheduled",
+    actor: approval.reviewerId ?? "approval_executor",
+    occurredAt: new Date(),
+    orgId: payload.org_id,
+    metadata: {
+      approval_id: approval.id,
+      product: payload.product ?? null,
+      benchmark: payload.benchmark ?? null,
+      change_pct: payload.change_pct ?? null,
+      direction: payload.direction ?? null,
+      current_price_usg: payload.current_price_usg ?? null,
+      baseline_price_usg: payload.baseline_price_usg ?? null,
+      rate_date: payload.rate_date ?? null,
+      readiness_score: payload.readiness_score ?? null,
+      readiness_band: payload.readiness_band ?? null,
+    },
+  });
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "market.outreach_scheduled",
+    subjectType: "organization",
+    subjectId: payload.org_id,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `market.outreach_scheduled:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      org_name: payload.org_name ?? null,
+      product: payload.product ?? null,
+      benchmark: payload.benchmark ?? null,
+      change_pct: payload.change_pct ?? null,
+      direction: payload.direction ?? null,
+      readiness_score: payload.readiness_score ?? null,
+      readiness_band: payload.readiness_band ?? null,
       applied_by: approval.reviewerId,
     },
   });

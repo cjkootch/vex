@@ -11,13 +11,16 @@ function jsonResponse(body: unknown, init: { status?: number; statusText?: strin
 
 describe("EiaAdapter", () => {
   it("builds the v2 URL with the series filter, date window, and api_key", async () => {
-    const fetchImpl = vi.fn(async (): Promise<Response> =>
+    const fetchImpl = vi.fn(async (_input: string, _init?: RequestInit): Promise<Response> =>
       jsonResponse({ response: { data: [] } }),
     );
-    const adapter = new EiaAdapter({ apiKey: "test-key", fetch: fetchImpl });
+    const adapter = new EiaAdapter({
+      apiKey: "test-key",
+      fetch: fetchImpl as unknown as typeof fetch,
+    });
     await adapter.fetchSeries({ seriesId: FUEL_SERIES.WTI, start: "2026-04-10", end: "2026-04-17" });
 
-    const urlCalled = fetchImpl.mock.calls[0]![0] as string;
+    const urlCalled = fetchImpl.mock.calls[0]![0];
     const url = new URL(urlCalled);
     expect(url.host).toBe("api.eia.gov");
     expect(url.pathname).toBe(`/v2/seriesid/${encodeURIComponent(FUEL_SERIES.WTI)}/data/`);

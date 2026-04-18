@@ -64,6 +64,9 @@ function buildDeps(
     memberships: {
       create: vi.fn().mockResolvedValue(undefined),
     },
+    touchpoints: {
+      insert: vi.fn().mockResolvedValue({ id: "tp-1" }),
+    },
     events: {
       insertIfNotExists: vi.fn().mockResolvedValue(undefined),
     },
@@ -353,5 +356,73 @@ describe("approval executor — unknown action types", () => {
     const deps = buildDeps(null);
     await runJob(deps);
     expect(deps.events.insertIfNotExists).not.toHaveBeenCalled();
+  });
+});
+
+describe("approval executor — market.outreach", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("lands a vex_outreach_scheduled touchpoint + market.outreach_scheduled event", async () => {
+    const deps = buildDeps({
+      actionType: "market.outreach",
+      decision: "approved",
+      proposedPayload: {
+        org_id: "01HSEEDCRP0000000000000001",
+        org_name: "Hot Buyer Co.",
+        product: "diesel",
+        benchmark: "NY_HARBOR_ULSD",
+        direction: "down",
+        change_pct: -6.8,
+        current_price_usg: 2.325,
+        baseline_price_usg: 2.5,
+        rate_date: "2026-04-17",
+        readiness_score: 82,
+        readiness_band: "hot",
+      },
+    });
+
+    await runJob(deps);
+
+    expect(deps.touchpoints.insert).toHaveBeenCalledOnce();
+    const [, tenantArg, tpData] = deps.touchpoints.insert.mock.calls[0]!;
+    expect(tenantArg).toBe(TENANT);
+    expect(tpData.channel).toBe("vex_outreach_scheduled");
+    expect(tpData.orgId).toBe("01HSEEDCRP0000000000000001");
+    expect(tpData.metadata.approval_id).toBe(APPROVAL_ID);
+    expect(tpData.metadata.readiness_band).toBe("hot");
+    expect(tpData.metadata.change_pct).toBe(-6.8);
+
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("market.outreach_scheduled");
+    expect(event.subjectType).toBe("organization");
+    expect(event.subjectId).toBe("01HSEEDCRP0000000000000001");
+    expect(event.idempotencyKey).toBe(`market.outreach_scheduled:${APPROVAL_ID}`);
+  });
+
+  it("emits approval.executor.failed when org_id is missing", async () => {
+    const deps = buildDeps({
+      actionType: "market.outreach",
+      decision: "approved",
+      proposedPayload: { product: "diesel", benchmark: "NY_HARBOR_ULSD" },
+    });
+    await runJob(deps);
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toBe("missing org_id");
+  });
+
+  it("falls through to the received-log branch when decision !== approved", async () => {
+    const deps = buildDeps({
+      actionType: "market.outreach",
+      decision: "rejected",
+      proposedPayload: { org_id: "01HSEEDCRP0000000000000001" },
+    });
+    await runJob(deps);
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.received");
   });
 });
