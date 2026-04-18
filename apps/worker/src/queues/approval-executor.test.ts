@@ -62,9 +62,28 @@ function buildDeps(
       // applyCreateDeal validates buyer existence against this. Default
       // to a non-null row so existing tests don't have to thread it.
       findById: vi.fn().mockResolvedValue({ id: "01HSEEDCRP0000000000000001" }),
+      // Pass C unified dedupe path. Default to "created" so the
+      // existing happy-path tests still assert new-org behavior.
+      createWithDedupeCheck: vi
+        .fn()
+        .mockImplementation(
+          async (_tx: unknown, _tenantId: string, input: { id: string }) => ({
+            kind: "created" as const,
+            organization: { id: input.id },
+          }),
+        ),
     },
     contacts: {
       create: vi.fn().mockResolvedValue(undefined),
+      // See organizations.createWithDedupeCheck above.
+      createWithDedupeCheck: vi
+        .fn()
+        .mockImplementation(
+          async (_tx: unknown, _tenantId: string, input: { id: string }) => ({
+            kind: "created" as const,
+            contact: { id: input.id },
+          }),
+        ),
     },
     memberships: {
       create: vi.fn().mockResolvedValue(undefined),
@@ -171,8 +190,8 @@ describe("approval executor — crm.create_company", () => {
     });
     await runJob(deps);
 
-    expect(deps.organizations.create).toHaveBeenCalledOnce();
-    const [, tenantArg, input] = deps.organizations.create.mock.calls[0]!;
+    expect(deps.organizations.createWithDedupeCheck).toHaveBeenCalledOnce();
+    const [, tenantArg, input] = deps.organizations.createWithDedupeCheck.mock.calls[0]!;
     expect(tenantArg).toBe(TENANT);
     expect(input.legalName).toBe("Harbour Bunkers");
     expect(input.domain).toBe("harbourbunkers.test");
@@ -246,8 +265,8 @@ describe("approval executor — crm.create_contact", () => {
     });
     await runJob(deps);
 
-    expect(deps.contacts.create).toHaveBeenCalledOnce();
-    const contactInput = deps.contacts.create.mock.calls[0]![2];
+    expect(deps.contacts.createWithDedupeCheck).toHaveBeenCalledOnce();
+    const contactInput = deps.contacts.createWithDedupeCheck.mock.calls[0]![2];
     expect(contactInput.fullName).toBe("Jane Trader");
     expect(contactInput.orgId).toBe("01HSEEDCRP0000000000000001");
 

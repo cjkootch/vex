@@ -68,6 +68,37 @@ export class OrganizationRepository {
   }
 
   /**
+   * Dedupe-aware create. Runs the normalized-identity lookup first and
+   * returns a tagged result so the caller chooses how to react (409 on
+   * the direct API path; mark-applied + replay event on the approval
+   * executor). Unifies Pass B's dedupe with the approval write path.
+   */
+  async createWithDedupeCheck(
+    tx: Tx,
+    tenantId: string,
+    input: {
+      id: string;
+      legalName: string;
+      domain?: string | null;
+      industry?: string | null;
+    },
+  ): Promise<
+    | { kind: "created"; organization: Organization }
+    | { kind: "duplicate"; organization: Organization }
+  > {
+    const existing = await this.findByNormalizedIdentity(
+      tx,
+      input.legalName,
+      input.domain ?? null,
+    );
+    if (existing) {
+      return { kind: "duplicate", organization: existing };
+    }
+    const organization = await this.create(tx, tenantId, input);
+    return { kind: "created", organization };
+  }
+
+  /**
    * Plain create — used by the UI-driven `POST /organizations` endpoint.
    * Distinct from `upsertByExternalKey` because hand-entered companies
    * don't have a source-system key to dedupe against.
