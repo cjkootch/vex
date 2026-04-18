@@ -254,6 +254,9 @@ jobs:
           # the response body on every attempt so a persistent
           # non-warmup failure (bad role/db, wrong API path, etc.)
           # is immediately diagnosable.
+          # The branch-level /connection_uri route is gone in the
+          # current Neon API ("this route does not exist"). The
+          # project-level endpoint takes branch_id as a query param.
           fetch_conn() {
             local pooled="$1"
             for attempt in 1 2 3 4 5 6; do
@@ -261,10 +264,11 @@ jobs:
                 curl -sS --noproxy '*' -G \
                   -w '\n%{http_code}' \
                   -H "Authorization: Bearer $NEON_API_KEY" \
+                  --data-urlencode "branch_id=$BRANCH_ID" \
                   --data-urlencode "database_name=$db_name" \
                   --data-urlencode "role_name=$role_name" \
                   --data-urlencode "pooled=$pooled" \
-                  "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri"
+                  "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/connection_uri"
               )
               status=$(echo "$body" | tail -n1)
               json=$(echo "$body" | sed '$d')
