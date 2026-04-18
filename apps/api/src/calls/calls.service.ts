@@ -66,6 +66,23 @@ export interface CallStatusResult {
     status: string;
     durationSeconds: number | null;
     transcriptRef: string | null;
+    /**
+     * When the activity was created — for an active call this is the
+     * call start. Clients use it to compute a live duration counter
+     * (now - startedAt) while the durationSeconds column is still null.
+     */
+    startedAt: string;
+  } | null;
+  /**
+   * Best-effort contact display — the approval's proposed_payload
+   * carries a contact_id; we resolve to full_name + primary phone so
+   * the detail UI can show who the agent called without a second round
+   * trip. null when the contact was deleted or the payload lacks an id.
+   */
+  callee: {
+    id: string;
+    fullName: string | null;
+    phone: string | null;
   } | null;
   /** Temporal's view, when the workflow hasn't finished. */
   workflow?: { status: string };
@@ -206,6 +223,7 @@ export class CallsService {
                 : activity.result ?? "unknown",
             durationSeconds: activity.durationSeconds,
             transcriptRef: activity.transcriptRef,
+            startedAt: activity.occurredAt.toISOString(),
           }
         : null;
 
@@ -221,12 +239,131 @@ export class CallsService {
         workflowStatus = null;
       }
 
+      // Callee resolution — the approval payload carries the contact_id
+      // the operator selected at initiateCall time. Pull the name +
+      // primary phone so the detail page has "who" at a glance.
+      const payload = approval.proposedPayload as { contact_id?: string } | null;
+      const contactId = payload?.contact_id ?? null;
+      let callee: CallStatusResult["callee"] = null;
+      if (contactId) {
+        const contact = await this.contacts.findById(tx, contactId);
+        callee = {
+          id: contactId,
+          fullName: contact?.fullName ?? null,
+          phone: contact?.phones?.[0] ?? null,
+        };
+      }
+
       return {
         workflowId,
         approval: { id: approval.id, decision: approval.decision },
         activity: activityOut,
+        callee,
         ...(workflowStatus ? { workflow: { status: workflowStatus } } : {}),
       };
+    });
+  }
+
+  /**
+   * Sprint I — mark a call as needing human backup. Creates a T2
+   * approval with actionType `call.request_backup` that surfaces in
+   * the operator inbox with a "Join call" CTA. The workflow + the
+   * actual join behaviour (Twilio Conference + operator audio) lands
+   * in Sprints J/K; today this is the observability rail.
+   *
+   * Idempotent at the action-type level — if an open backup request
+   * already exists for this workflow, return it instead of minting
+   * a duplicate. The operator sees one ping, not a spam cluster.
+   */
+  async requestHumanBackup(args: {
+    tenantId: string;
+    workflowId: string;
+    reason?: string;
+    initiatedBy?: string;
+  }): Promise<{ approvalId: string; existed: boolean }> {
+    return withTenant(this.db, args.tenantId, async (tx) => {
+      const callApproval = await this.approvals.findByWorkflowId(tx, args.workflowId);
+      if (!callApproval) {
+        throw new NotFoundException(`call ${args.workflowId} not found`);
+      }
+      const activity = await this.activities.findByTypeAndSessionId(
+        tx,
+        "voice_call",
+        args.workflowId,
+      );
+      const callSid =
+        activity && typeof activity.metadata["call_sid"] === "string"
+          ? (activity.metadata["call_sid"] as string)
+          : null;
+      const durationAtRequest = activity
+        ? Math.max(
+            0,
+            Math.floor(
+              (Date.now() - activity.occurredAt.getTime()) / 1000,
+            ),
+          )
+        : 0;
+
+      // Check for an existing open backup request for this call. The
+      // workflow_id lookup handles the case; approvals.findByWorkflowId
+      // returns the most-recent, so we specifically scan decision=pending.
+      const pending = await this.approvals.listByDecision(tx, "pending", 100);
+      const existing = pending.find((a) => {
+        if (a.actionType !== "call.request_backup") return false;
+        const p = a.proposedPayload as { workflow_id?: string } | null;
+        return p?.workflow_id === args.workflowId;
+      });
+      if (existing) {
+        return { approvalId: existing.id, existed: true };
+      }
+
+      const payload: {
+        tier: "T2";
+        workflow_id: string;
+        call_sid: string | null;
+        duration_at_request_seconds: number;
+        callee_contact_id: string | null;
+        reason: string | null;
+        initiated_by: string | null;
+      } = {
+        tier: "T2",
+        workflow_id: args.workflowId,
+        call_sid: callSid,
+        duration_at_request_seconds: durationAtRequest,
+        callee_contact_id:
+          (callApproval.proposedPayload as { contact_id?: string } | null)
+            ?.contact_id ?? null,
+        reason: args.reason ?? null,
+        initiated_by: args.initiatedBy ?? null,
+      };
+      const approval = await this.approvals.create(tx, args.tenantId, {
+        agentRunId: callApproval.agentRunId,
+        actionType: "call.request_backup",
+        proposedPayload: payload,
+      });
+
+      await this.events.insertIfNotExists(tx, args.tenantId, {
+        verb: "call.backup_requested",
+        subjectType: "approval",
+        subjectId: approval.id,
+        actorType: args.initiatedBy ? "user" : "system",
+        actorId: args.initiatedBy ?? "outbound_call_workflow",
+        objectType: "approval",
+        objectId: approval.id,
+        occurredAt: new Date(),
+        idempotencyKey: `call.backup_requested:${approval.id}`,
+        metadata: {
+          workflow_id: args.workflowId,
+          call_sid: callSid,
+          duration_at_request_seconds: durationAtRequest,
+          reason: args.reason ?? null,
+        },
+      });
+
+      this.log.log(
+        `backup requested for call ${args.workflowId} (approval=${approval.id})`,
+      );
+      return { approvalId: approval.id, existed: false };
     });
   }
 
