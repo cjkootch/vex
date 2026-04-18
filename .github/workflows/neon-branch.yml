@@ -215,20 +215,35 @@ jobs:
           # returned 404 with the hardcoded names). Query the branch
           # for its actual database + role, then pass those to
           # connection_uri.
-          db_name=$(
+          # Prefer the database owner's role. `authenticator` is
+          # Neon's system role for connection pooling and can't
+          # authenticate against the DB directly, so
+          # /connection_uri?role_name=authenticator returns 404.
+          # The /databases response lists each db with its owner_name;
+          # use that as the role for connection_uri.
+          databases_json=$(
             curl -fsS --noproxy '*' \
               -H "Authorization: Bearer $NEON_API_KEY" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/databases" \
-              | jq -r '.databases[0].name // empty'
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/databases"
           )
-          role_name=$(
+          roles_json=$(
             curl -fsS --noproxy '*' \
               -H "Authorization: Bearer $NEON_API_KEY" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/roles" \
-              | jq -r '.roles[0].name // empty'
+              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/roles"
           )
+          echo "databases: $(echo "$databases_json" | jq -c '[.databases[] | {name, owner_name}]')"
+          echo "roles: $(echo "$roles_json" | jq -c '[.roles[].name]')"
+          db_name=$(echo "$databases_json" | jq -r '.databases[0].name // empty')
+          role_name=$(echo "$databases_json" | jq -r '.databases[0].owner_name // empty')
+          if [ -z "$role_name" ]; then
+            # Fallback: first non-authenticator role.
+            role_name=$(
+              echo "$roles_json" \
+                | jq -r 'first(.roles[] | select(.name != "authenticator") | .name) // empty'
+            )
+          fi
           if [ -z "$db_name" ] || [ -z "$role_name" ]; then
-            echo "::error::branch has no database or role — db=$db_name role=$role_name"
+            echo "::error::branch has no usable database/role — db=$db_name role=$role_name"
             exit 1
           fi
           echo "using database=$db_name role=$role_name"
