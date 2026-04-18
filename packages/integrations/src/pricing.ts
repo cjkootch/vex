@@ -30,6 +30,13 @@ export const pricing = {
       textOutputUsdPerMillion: 20,
     },
   },
+  /** Provider-metered side effects. USD per message / minute / segment. */
+  resend: {
+    /** Transactional email cost per message. Resend's Pro plan bills
+     *  $0.0004 per email (2024) — pin here so ledger writes don't need
+     *  to chase the provider's price page. */
+    perMessageUsd: 0.0004,
+  },
 } as const;
 
 /**

@@ -58,6 +58,13 @@ export const EnvSchema = z.object({
   APP_BASE_URL: z.string().url().optional(),
   RESEND_API_KEY: z.string().optional(),
   /**
+   * Default From header for approval-executor email sends. Required
+   * alongside RESEND_API_KEY; the approval executor refuses to send when
+   * either is missing. Format: `"Name <address@domain>"` or just an
+   * address.
+   */
+  RESEND_FROM: z.string().min(1).optional(),
+  /**
    * Resend (Svix) webhook signing secret. Format: `whsec_<base64>`. Required
    * by the Resend webhook handler — the verifier strips the `whsec_` prefix
    * and base64-decodes the remainder for HMAC-SHA256.

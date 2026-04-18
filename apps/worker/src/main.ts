@@ -55,6 +55,17 @@ async function main(): Promise<void> {
       secretAccessKey: env.S3_SECRET_ACCESS_KEY,
       ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
     },
+    // Resend — optional. Only wired when both an API key and a default
+    // From address are present; otherwise the approval executor's
+    // email.send branch fails closed with `email.send_not_configured`.
+    ...(env.RESEND_API_KEY && env.RESEND_FROM
+      ? {
+          resend: {
+            apiKey: env.RESEND_API_KEY,
+            defaultFrom: env.RESEND_FROM,
+          },
+        }
+      : {}),
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
   // Sprint 12 — the OutboundCallWorkflow needs Twilio + S3 + reachable
