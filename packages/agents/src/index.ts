@@ -99,6 +99,7 @@ export {
   ResearchAgent,
   CallPrepAgent,
   MarketDataAgent,
+  MarketAlertAgent,
   type AgentContext,
   type AgentOutput,
   type IAgent,
@@ -108,4 +109,7 @@ export {
   type MarketDataProvider,
   type MarketDataSeries,
   type MarketDataFetchResult,
+  type MarketAlertAgentInput,
+  type MarketAlertCrossing,
+  type MarketAlertCandidate,
 } from "./agents/index.js";

@@ -14,3 +14,9 @@ export {
   type MarketDataSeries,
   type MarketDataFetchResult,
 } from "./market-data.js";
+export {
+  MarketAlertAgent,
+  type MarketAlertAgentInput,
+  type MarketAlertCrossing,
+  type MarketAlertCandidate,
+} from "./market-alert.js";
