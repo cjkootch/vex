@@ -97,3 +97,9 @@ export {
   type ResearchAgentInput,
   type CallPrepAgentInput,
 } from "./agents/index.js";
+export {
+  evaluateGate,
+  type GateContext,
+  type GateNode,
+  type GateResult,
+} from "./scoring/gate-dsl.js";

@@ -59,4 +59,28 @@ export class TouchpointRepository {
       .orderBy(desc(touchpoints.occurredAt))
       .limit(limit);
   }
+
+  /**
+   * Touchpoints for a specific contact since `since`. Used by the
+   * Sprint D CampaignEnrollmentWorkflow to hydrate the gate-eval
+   * signal cache at workflow start.
+   */
+  async listForContactSince(
+    tx: Tx,
+    contactId: string,
+    since: Date,
+    limit = 200,
+  ): Promise<Touchpoint[]> {
+    return tx
+      .select()
+      .from(touchpoints)
+      .where(
+        and(
+          eq(touchpoints.contactId, contactId),
+          gte(touchpoints.occurredAt, since),
+        ),
+      )
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(limit);
+  }
 }

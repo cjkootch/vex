@@ -212,6 +212,7 @@ async function bootstrap(): Promise<void> {
         touchpoints: touchpointRepository,
         steps: campaignStepRepository,
         enrollments: campaignEnrollmentRepository,
+        temporal: temporal?.client ?? null,
       }),
       organizations: OrganizationsModule.register({
         db,

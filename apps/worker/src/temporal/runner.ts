@@ -5,6 +5,8 @@ import {
   ActivityRepository,
   AgentRunRepository,
   ApprovalRepository,
+  CampaignEnrollmentRepository,
+  CampaignStepRepository,
   ContactRepository,
   EventRepository,
   LeadRepository,
@@ -23,6 +25,7 @@ import type { CostLedger } from "@vex/telemetry";
 import { buildFollowUpActivities } from "./activities/follow-up-activities.js";
 import { buildResearchActivities } from "./activities/research-activities.js";
 import { buildCallActivities } from "./activities/call-activities.js";
+import { buildEnrollmentActivities } from "./activities/enrollment-activities.js";
 
 export interface OutboundCallConfig {
   /** Public URL Twilio hits for the TwiML document driving the call. */
@@ -68,6 +71,8 @@ export async function startTemporalWorker(
     events: new EventRepository(),
     approvals: new ApprovalRepository(),
     agentRuns: new AgentRunRepository(),
+    campaignSteps: new CampaignStepRepository(),
+    campaignEnrollments: new CampaignEnrollmentRepository(),
   };
 
   const followUpActivities = buildFollowUpActivities({
@@ -77,6 +82,16 @@ export async function startTemporalWorker(
     approvals: repos.approvals,
     events: repos.events,
     anthropic: options.anthropic,
+  });
+
+  const enrollmentActivities = buildEnrollmentActivities({
+    db: options.db,
+    enrollments: repos.campaignEnrollments,
+    steps: repos.campaignSteps,
+    approvals: repos.approvals,
+    touchpoints: repos.touchpoints,
+    contacts: repos.contacts,
+    events: repos.events,
   });
 
   const researchActivities = buildResearchActivities({
@@ -123,6 +138,7 @@ export async function startTemporalWorker(
       ...followUpActivities,
       ...researchActivities,
       ...callActivities,
+      ...enrollmentActivities,
     },
   });
 
