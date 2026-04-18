@@ -28,10 +28,10 @@ export class ContactsModule {
       module: ContactsModule,
       controllers: [ContactsController],
       providers: [
-        { provide: CONTACTS_DB_CLIENT, useValue: config.db },
-        { provide: CONTACTS_REPO, useValue: config.contacts },
-        { provide: CONTACTS_MEMBERSHIPS_REPO, useValue: config.memberships },
-        { provide: CONTACTS_EVENTS_REPO, useValue: config.events },
+        { provide: CONTACTS_DB_CLIENT, useFactory: () => config.db },
+        { provide: CONTACTS_REPO, useFactory: () => config.contacts },
+        { provide: CONTACTS_MEMBERSHIPS_REPO, useFactory: () => config.memberships },
+        { provide: CONTACTS_EVENTS_REPO, useFactory: () => config.events },
         ContactsService,
       ],
     };

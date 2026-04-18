@@ -25,9 +25,9 @@ export class AgentRunsModule {
       module: AgentRunsModule,
       controllers: [AgentRunsController],
       providers: [
-        { provide: AGENT_RUNS_DB_CLIENT, useValue: config.db },
-        { provide: AGENT_RUNS_REPO, useValue: config.agentRuns },
-        { provide: AGENT_RUNS_APPROVAL_REPO, useValue: config.approvals },
+        { provide: AGENT_RUNS_DB_CLIENT, useFactory: () => config.db },
+        { provide: AGENT_RUNS_REPO, useFactory: () => config.agentRuns },
+        { provide: AGENT_RUNS_APPROVAL_REPO, useFactory: () => config.approvals },
       ],
     };
   }

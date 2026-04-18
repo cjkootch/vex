@@ -12,7 +12,7 @@ export class EventsModule {
     return {
       module: EventsModule,
       controllers: [EventsController],
-      providers: [{ provide: EVENTS_DB_CLIENT, useValue: config.db }],
+      providers: [{ provide: EVENTS_DB_CLIENT, useFactory: () => config.db }],
     };
   }
 }

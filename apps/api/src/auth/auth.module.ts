@@ -17,7 +17,7 @@ export class AuthModule {
       global: true,
       controllers: [AuthController],
       providers: [
-        { provide: NEXTAUTH_SECRET_TOKEN, useValue: config.nextAuthSecret },
+        { provide: NEXTAUTH_SECRET_TOKEN, useFactory: () => config.nextAuthSecret },
         JwtAuthGuard,
         RolesGuard,
         TenantContext,

@@ -12,7 +12,7 @@ export class SearchModule {
     return {
       module: SearchModule,
       controllers: [SearchController],
-      providers: [{ provide: SEARCH_DB_CLIENT, useValue: config.db }],
+      providers: [{ provide: SEARCH_DB_CLIENT, useFactory: () => config.db }],
     };
   }
 }

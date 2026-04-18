@@ -25,9 +25,9 @@ export class BriefModule {
       module: BriefModule,
       controllers: [BriefController],
       providers: [
-        { provide: BRIEF_DB_CLIENT, useValue: config.db },
-        { provide: BRIEF_SUMMARY_REPO, useValue: config.summaries },
-        { provide: BRIEF_APPROVAL_REPO, useValue: config.approvals },
+        { provide: BRIEF_DB_CLIENT, useFactory: () => config.db },
+        { provide: BRIEF_SUMMARY_REPO, useFactory: () => config.summaries },
+        { provide: BRIEF_APPROVAL_REPO, useFactory: () => config.approvals },
       ],
     };
   }

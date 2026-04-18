@@ -20,9 +20,9 @@ export class OrganizationsModule {
       module: OrganizationsModule,
       controllers: [OrganizationsController],
       providers: [
-        { provide: ORGANIZATIONS_DB_CLIENT, useValue: config.db },
-        { provide: ORGANIZATIONS_REPO, useValue: config.organizations },
-        { provide: ORGANIZATIONS_EVENT_REPO, useValue: config.events },
+        { provide: ORGANIZATIONS_DB_CLIENT, useFactory: () => config.db },
+        { provide: ORGANIZATIONS_REPO, useFactory: () => config.organizations },
+        { provide: ORGANIZATIONS_EVENT_REPO, useFactory: () => config.events },
       ],
     };
   }
