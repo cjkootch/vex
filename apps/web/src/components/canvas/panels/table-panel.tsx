@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   flexRender,
   getCoreRowModel,
@@ -17,8 +18,19 @@ type TableProps = Extract<ManifestPanel, { type: "table" }>;
 const PAGE_SIZE = 25;
 const MAX_ROWS = 100;
 
+// Canonical fuel-deal ref pattern (VTC-YYYY-NNN). When the table
+// contains a column whose header matches "deal ref" (case-insensitive)
+// AND that cell matches this pattern, the row becomes a clickable link
+// to the full deal view.
+const DEAL_REF_RE = /^VTC-\d{4}-\d{3}$/;
+
 export function TablePanel({ title, columns, rows }: TableProps) {
+  const router = useRouter();
   const data = useMemo(() => rows.slice(0, MAX_ROWS), [rows]);
+  const dealRefColumn = useMemo(
+    () => columns.find((c) => /deal.?ref/i.test(c)) ?? null,
+    [columns],
+  );
   const colDefs = useMemo<ColumnDef<Record<string, string>>[]>(
     () =>
       columns.map((c) => ({
@@ -28,6 +40,36 @@ export function TablePanel({ title, columns, rows }: TableProps) {
         cell: ({ getValue }) => String(getValue() ?? ""),
       })),
     [columns],
+  );
+
+  // Click → lookup dealRef → push. Keeping the resolution in the
+  // panel (rather than e.g. a by-ref route) is one click + one API
+  // call and avoids a flash of the landing-on-a-redirector page.
+  // \`limit=500\` matches the list endpoint's clamp ceiling so chat
+  // can still navigate to a deal that's outside the default 100
+  // newest-first window. A dedicated /deals/by-ref endpoint would
+  // be cleaner at 500+ deals per workspace — follow-up.
+  const openDeal = useCallback(
+    async (dealRef: string): Promise<void> => {
+      if (!DEAL_REF_RE.test(dealRef)) return;
+      try {
+        const res = await fetch("/api/deals?limit=500", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          deals?: Array<{ id?: string; dealRef?: string }>;
+        };
+        const deal = data.deals?.find((d) => d.dealRef === dealRef);
+        if (deal?.id) {
+          router.push(`/app/deals/${deal.id}`);
+        }
+      } catch {
+        // Silent fail — user stays on chat, nothing destructive.
+      }
+    },
+    [router],
   );
 
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -79,15 +121,42 @@ export function TablePanel({ title, columns, rows }: TableProps) {
                 ))}
               </thead>
               <tbody>
-                {table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className="border-b border-line/40 hover:bg-white/5">
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-3 py-2 text-white/90">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {table.getRowModel().rows.map((row) => {
+                  const dealRef = dealRefColumn
+                    ? row.original[dealRefColumn]
+                    : undefined;
+                  const clickable =
+                    typeof dealRef === "string" && DEAL_REF_RE.test(dealRef);
+                  return (
+                    <tr
+                      key={row.id}
+                      {...(clickable
+                        ? {
+                            role: "link",
+                            tabIndex: 0,
+                            onClick: () => openDeal(dealRef!),
+                            onKeyDown: (e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                openDeal(dealRef!);
+                              }
+                            },
+                          }
+                        : {})}
+                      className={`border-b border-line/40 hover:bg-white/5 ${
+                        clickable
+                          ? "cursor-pointer focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent"
+                          : ""
+                      }`}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <td key={cell.id} className="px-3 py-2 text-white/90">
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
