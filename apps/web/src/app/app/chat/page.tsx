@@ -120,7 +120,7 @@ function ChatPageInner() {
             transition: "grid-template-columns 300ms ease",
           }}
         >
-          <div className="min-w-0">
+          <div className="min-h-0 min-w-0">
             <ConversationThread
               turns={active.turns}
               onTurns={(turns) =>
