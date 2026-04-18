@@ -1,5 +1,5 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import type { CampaignStatus } from "@vex/domain";
+import { createId, type CampaignStatus } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { campaigns, type Campaign } from "../schema/campaigns.js";
 import { touchpoints, type Touchpoint } from "../schema/touchpoints.js";
@@ -29,7 +29,50 @@ export interface CampaignRollups {
 
 export type CampaignWithRollups = Campaign & CampaignRollups;
 
+export interface CampaignCreateInput {
+  /** Caller can pin an id (rare — usually let the repo mint). */
+  id?: string;
+  channel: string;
+  source?: string | null;
+  medium?: string | null;
+  accountRef?: string | null;
+  spend?: number | null;
+  objective?: string | null;
+  status?: CampaignStatus;
+}
+
 export class CampaignRepository {
+  /**
+   * Operator-initiated campaign create. The Resend webhook path writes
+   * campaigns implicitly by landing touchpoints against a matched
+   * `(source, medium)`; this is the explicit "New campaign" form path.
+   * Defaults `status` to `active` so a freshly created campaign shows
+   * up on the default filter.
+   */
+  async create(
+    tx: Tx,
+    tenantId: string,
+    input: CampaignCreateInput,
+  ): Promise<Campaign> {
+    const [row] = await tx
+      .insert(campaigns)
+      .values({
+        id: input.id ?? createId(),
+        tenantId,
+        channel: input.channel,
+        source: input.source ?? null,
+        medium: input.medium ?? null,
+        accountRef: input.accountRef ?? null,
+        spend: input.spend ?? null,
+        objective: input.objective ?? null,
+        status: input.status ?? "active",
+        externalKeys: {},
+      })
+      .returning();
+    if (!row) throw new Error("campaign insert returned no row");
+    return row;
+  }
+
   async findById(tx: Tx, id: string): Promise<Campaign | null> {
     const [row] = await tx
       .select()

@@ -10,7 +10,79 @@ export const runtime = "nodejs";
  * params. When `VEX_API_URL` is unset, returns a three-row stub that
  * matches the seeded campaigns so the list page renders in local dev
  * without a running API.
+ *
+ * POST /api/marketing/campaigns — proxy to apps/api
+ * `POST /marketing/campaigns`. Forwards the JSON body. Local-dev stub
+ * echoes a created campaign with zeroed rollups so the "New campaign"
+ * form can round-trip without a running API.
  */
+export async function POST(req: NextRequest): Promise<Response> {
+  const upstream = process.env["VEX_API_URL"];
+  if (upstream) {
+    const url = `${upstream.replace(/\/$/, "")}/marketing/campaigns`;
+    try {
+      const body = await req.text();
+      const headers = buildUpstreamHeaders(req);
+      headers.set("content-type", "application/json");
+      const response = await fetch(url, { method: "POST", headers, body });
+      const respBody = await response.text();
+      return new Response(respBody, {
+        status: response.status,
+        headers: {
+          "content-type":
+            response.headers.get("content-type") ?? "application/json",
+        },
+      });
+    } catch (err) {
+      return NextResponse.json(
+        { error: "upstream_unavailable", message: (err as Error).message },
+        { status: 502 },
+      );
+    }
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json(
+      { error: "invalid_json", message: "POST body is not valid JSON" },
+      { status: 400 },
+    );
+  }
+  if (typeof payload["channel"] !== "string" || payload["channel"].length === 0) {
+    return NextResponse.json(
+      { error: "validation", message: "channel is required" },
+      { status: 400 },
+    );
+  }
+  const now = new Date().toISOString();
+  const randId = Math.random().toString(36).slice(2, 14).toUpperCase().padEnd(14, "0");
+  return NextResponse.json(
+    {
+      campaign: {
+        id: `01HSTUBCPN${randId}`,
+        channel: payload["channel"],
+        source: (payload["source"] as string | undefined) ?? null,
+        medium: (payload["medium"] as string | undefined) ?? null,
+        accountRef: (payload["accountRef"] as string | undefined) ?? null,
+        spend: (payload["spend"] as number | undefined) ?? null,
+        objective: (payload["objective"] as string | undefined) ?? null,
+        status: (payload["status"] as string | undefined) ?? "active",
+        touchpointCount: 0,
+        sent: 0,
+        delivered: 0,
+        opened: 0,
+        clicked: 0,
+        bounced: 0,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+    { status: 201 },
+  );
+}
+
 export async function GET(req: NextRequest): Promise<Response> {
   const upstream = process.env["VEX_API_URL"];
   const incoming = new URL(req.url);

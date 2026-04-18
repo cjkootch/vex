@@ -14,6 +14,7 @@ export type { EmbeddingChunkInsert } from "./embedding-chunk-repository.js";
 export { TouchpointRepository, type TouchpointInsert } from "./touchpoint-repository.js";
 export {
   CampaignRepository,
+  type CampaignCreateInput,
   type CampaignRollups,
   type CampaignWithRollups,
 } from "./campaign-repository.js";
