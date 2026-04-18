@@ -29,6 +29,7 @@ import type { VoiceSdkConfig } from "./calls.module.js";
 import {
   CALLS_ACTIVITIES_REPO,
   CALLS_AGENT_RUNS_REPO,
+  CALLS_APP_BASE_URL,
   CALLS_APPROVALS_REPO,
   CALLS_CONTACTS_REPO,
   CALLS_DB_CLIENT,
@@ -41,6 +42,13 @@ import {
   CALLS_VOICE_SDK_CONFIG,
   CALLS_WORKSPACES_REPO,
 } from "./tokens.js";
+
+const DEFAULT_DEMO_SCRIPT =
+  "Hi, this is Vex calling on behalf of Vector Trade Capital. " +
+  "We received your inquiry on our website about fuel trading services. " +
+  "I wanted to follow up to learn a bit about your volume requirements " +
+  "and the product grades you're interested in. " +
+  "Do you have a minute to chat?";
 
 /**
  * The workspace setting `enabled_agents` must contain this string for
@@ -114,6 +122,7 @@ export class CallsService {
     @Inject(CALLS_S3_UPLOADER) private readonly s3: S3Uploader,
     @Inject(CALLS_TASK_QUEUE) private readonly taskQueue: string,
     @Inject(CALLS_VOICE_SDK_CONFIG) private readonly voiceSdk: VoiceSdkConfig,
+    @Inject(CALLS_APP_BASE_URL) private readonly appBaseUrl: string,
   ) {}
 
   /**
@@ -284,6 +293,69 @@ export class CallsService {
    * already exists for this workflow, return it instead of minting
    * a duplicate. The operator sees one ping, not a spam cluster.
    */
+  /**
+   * Fire a scripted-voice demo call. Bypasses the T3 approval gate
+   * and the OutboundCallWorkflow — dials Twilio directly with a TwiML
+   * URL that speaks the script via Polly. Used for end-to-end
+   * verification of the Twilio account + Fly environment without
+   * spinning up the full agent pipeline.
+   *
+   * Writes a `voice_call` activity row tagged `demo_call: true` so
+   * the inbox shows the call but it's filterable from real calls.
+   *
+   * Requires APP_BASE_URL — the demo TwiML endpoint lives under the
+   * same apps/api domain and Twilio needs a public HTTPS URL to fetch.
+   */
+  async initiateDemoCall(args: {
+    tenantId: string;
+    userId: string;
+    toNumber: string;
+    script?: string;
+  }): Promise<{ callSid: string; status: string; activityId: string }> {
+    if (!this.appBaseUrl) {
+      throw new ServiceUnavailableException(
+        "demo_call_unconfigured: APP_BASE_URL must be set",
+      );
+    }
+    const script = args.script ?? DEFAULT_DEMO_SCRIPT;
+    const twimlUrl = `${this.appBaseUrl.replace(/\/$/, "")}/calls/twilio/demo-twiml?text=${encodeURIComponent(script)}`;
+    const statusCallback = `${this.appBaseUrl.replace(/\/$/, "")}/calls/twilio/demo-status`;
+
+    const { callSid, status } = await this.twilio.createOutboundCall({
+      to: args.toNumber,
+      twimlUrl,
+      statusCallback,
+      // Status callback requires a wf= param in the real flow but the
+      // demo path doesn't drive a workflow; omit it here. The demo
+      // status handler short-circuits when no wf is present.
+      statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
+      record: false,
+      timeout: 30,
+    });
+
+    const activity = await withTenant(this.db, args.tenantId, async (tx) => {
+      return this.activities.insert(tx, args.tenantId, {
+        type: "voice_call",
+        relatedObjectIds: {},
+        occurredAt: new Date(),
+        result: status,
+        metadata: {
+          demo_call: true,
+          call_sid: callSid,
+          status,
+          initiated_by: args.userId,
+          to_number: args.toNumber,
+          script,
+        },
+      });
+    });
+
+    this.log.log(
+      `demo call initiated: sid=${callSid} to=${args.toNumber} activity=${activity.id}`,
+    );
+    return { callSid, status, activityId: activity.id };
+  }
+
   async requestHumanBackup(args: {
     tenantId: string;
     workflowId: string;

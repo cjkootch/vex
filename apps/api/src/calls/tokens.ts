@@ -26,3 +26,11 @@ export const CALLS_VOICE_SDK_CONFIG = Symbol("CALLS_VOICE_SDK_CONFIG");
  * in rather than rebuilt on every webhook.
  */
 export const CALLS_VOICE_LISTENER_CONFIG = Symbol("CALLS_VOICE_LISTENER_CONFIG");
+
+/**
+ * Public base URL of apps/api (e.g. `https://vex-api.fly.dev`). Used
+ * by the demo-call path to construct the TwiML + status-callback
+ * URLs Twilio fetches. Empty string when APP_BASE_URL isn't set —
+ * the demo endpoint 503s in that case.
+ */
+export const CALLS_APP_BASE_URL = Symbol("CALLS_APP_BASE_URL");

@@ -76,6 +76,7 @@ function buildService(overrides: {
     {} as never, // s3
     "vex-main", // taskQueue
     null, // voiceSdk
+    "", // appBaseUrl
   );
 
   return {
@@ -237,6 +238,7 @@ describe("CallsService.requestHumanBackup", () => {
       {} as never,
       "vex-main",
       null,
+      "",
     );
     return {
       service,
@@ -436,6 +438,7 @@ describe("CallsService.mintJoinToken", () => {
       {} as never,
       "vex-main",
       voiceSdk,
+      "",
     );
     return {
       service,
