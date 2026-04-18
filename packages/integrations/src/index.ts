@@ -30,6 +30,14 @@ export {
   type TwilioDeps,
 } from "./twilio.js";
 export { createResendClient } from "./resend.js";
+export {
+  EiaAdapter,
+  FUEL_SERIES,
+  type EiaDeps,
+  type EiaFetchParams,
+  type EiaSeriesRow,
+  type FuelSeriesKey,
+} from "./eia.js";
 export { pricing } from "./pricing.js";
 export {
   ResendNormalizer,
