@@ -42,44 +42,6 @@ export const CampaignStatus = {
 } as const;
 export type CampaignStatus = (typeof CampaignStatus)[keyof typeof CampaignStatus];
 
-/**
- * Dispatch channel for a campaign step. `manual` is the escape hatch
- * for steps that need a human to take an off-platform action
- * ("book the demo") — the executor still lands a touchpoint but the
- * actual send is a no-op. One row per step; see campaign_steps.
- */
-export const CampaignChannel = {
-  Email: "email",
-  Sms: "sms",
-  Whatsapp: "whatsapp",
-  Voice: "voice",
-  Manual: "manual",
-} as const;
-export type CampaignChannel =
-  (typeof CampaignChannel)[keyof typeof CampaignChannel];
-
-/**
- * Lifecycle state for a contact's enrollment in a campaign plan.
- *   - `enrolled` is the active state — the workflow is currently
- *     advancing through steps.
- *   - `paused` halts step advancement without unenrolling.
- *   - `completed` is reached when the recipient runs off the end of
- *     the plan or the workflow hits a terminal branch.
- *   - `unsubscribed` is a permanent opt-out, set when the inbound
- *     intent classifier flags an unsubscribe signal.
- *   - `errored` is a terminal state for unrecoverable execution
- *     failures — ops has to re-enroll to retry.
- */
-export const EnrollmentState = {
-  Enrolled: "enrolled",
-  Paused: "paused",
-  Completed: "completed",
-  Unsubscribed: "unsubscribed",
-  Errored: "errored",
-} as const;
-export type EnrollmentState =
-  (typeof EnrollmentState)[keyof typeof EnrollmentState];
-
 export const MessageDirection = {
   Inbound: "inbound",
   Outbound: "outbound",
