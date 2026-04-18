@@ -1,21 +1,30 @@
 import { loadEnv } from "@vex/config";
 import {
+  CampaignEnrollmentRepository,
+  EventRepository,
   OrganizationRepository,
+  TouchpointRepository,
   WorkspaceRepository,
   createDb,
 } from "@vex/db";
 import {
   AnthropicAdapter,
   S3Uploader,
+  createTemporalClient,
   createTwilioClient,
 } from "@vex/integrations";
 import { InMemoryCostLedger, initOtel, shutdownOtel } from "@vex/telemetry";
 import { AgentScanner } from "./scanner.js";
+import { runIntentClassifierTick } from "./jobs/intent-classifier-job.js";
 import { startBullWorker } from "./queues/runner.js";
 import { startTemporalWorker } from "./temporal/runner.js";
 
 const DEFAULT_WORKSPACE_ID = "01HSEEDWRK0000000000000001";
 const SCANNER_INTERVAL_MS = 60 * 60 * 1000;
+/** Intent classifier runs every 10 minutes. Inbound replies should
+ *  get labelled fast so the CampaignEnrollmentWorkflow branches
+ *  without waiting for the next scheduled tick. */
+const INTENT_CLASSIFIER_INTERVAL_MS = 10 * 60 * 1000;
 
 /**
  * The worker process hosts two runtimes:
@@ -115,10 +124,61 @@ async function main(): Promise<void> {
     console.error("initial scan failed", err);
   });
 
+  // Intent classifier — scans inbound touchpoints every 10 minutes,
+  // labels them, and signals live CampaignEnrollmentWorkflow(s).
+  // Opens its own Temporal *client* (not worker) — the signals fly
+  // into whatever workflow service is running. Best-effort: a
+  // missing Temporal cluster just logs + skips the signal emission.
+  let intentTimer: NodeJS.Timeout | null = null;
+  const intentTouchpoints = new TouchpointRepository();
+  const intentEnrollments = new CampaignEnrollmentRepository();
+  const intentEvents = new EventRepository();
+  let intentTemporalClient: Awaited<ReturnType<typeof createTemporalClient>> | null = null;
+  try {
+    intentTemporalClient = await createTemporalClient({
+      address: env.TEMPORAL_ADDRESS,
+      namespace: env.TEMPORAL_NAMESPACE,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `intent-classifier: Temporal client unavailable (${(err as Error).message}); signals will be skipped`,
+    );
+  }
+  const runIntentTick = (): void => {
+    void runIntentClassifierTick(
+      {
+        db,
+        touchpoints: intentTouchpoints,
+        enrollments: intentEnrollments,
+        events: intentEvents,
+        anthropic,
+        temporal: intentTemporalClient?.client ?? null,
+      },
+      { tenantId: DEFAULT_WORKSPACE_ID },
+    )
+      .then((result) => {
+        if (result.scanned > 0) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `intent-classifier: scanned=${result.scanned} classified=${result.classified} unsubscribes=${result.unsubscribes} signals=${result.signalsSent}`,
+          );
+        }
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("intent-classifier tick failed", err);
+      });
+  };
+  intentTimer = setInterval(runIntentTick, INTENT_CLASSIFIER_INTERVAL_MS);
+  runIntentTick();
+
   const shutdown = async (): Promise<void> => {
     clearInterval(scannerTimer);
+    if (intentTimer) clearInterval(intentTimer);
     await bull.close();
     temporal.shutdown();
+    if (intentTemporalClient) await intentTemporalClient.close();
     await shutdownOtel();
   };
   process.on("SIGINT", () => void shutdown());

@@ -187,6 +187,30 @@ export class CampaignEnrollmentRepository {
     return counts;
   }
 
+  /**
+   * Sprint E — enrollments a single contact is currently participating
+   * in across every campaign. The intent classifier uses this to know
+   * which workflows to signal when a new inbound reply is labelled:
+   * one contact may be in 3 different campaigns at once.
+   *
+   * Only `enrolled` + `paused` are returned; `completed`, `unsubscribed`,
+   * and `errored` don't have a running workflow worth signalling.
+   */
+  async listActiveForContact(
+    tx: Tx,
+    contactId: string,
+  ): Promise<CampaignEnrollment[]> {
+    return tx
+      .select()
+      .from(campaignEnrollments)
+      .where(
+        and(
+          eq(campaignEnrollments.contactId, contactId),
+          inArray(campaignEnrollments.state, ["enrolled", "paused"]),
+        ),
+      );
+  }
+
   async findActiveEnrollmentsForContacts(
     tx: Tx,
     campaignId: string,

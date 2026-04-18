@@ -1,4 +1,4 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { touchpoints, type Touchpoint } from "../schema/touchpoints.js";
@@ -82,5 +82,59 @@ export class TouchpointRepository {
       )
       .orderBy(desc(touchpoints.occurredAt))
       .limit(limit);
+  }
+
+  /**
+   * Sprint E — inbound touchpoints the intent classifier hasn't
+   * labelled yet. Restricted to `metadata.direction = 'inbound'` so
+   * the classifier only burns tokens on things a contact actually
+   * said. The `metadata.intent IS NULL` check is expressed via the
+   * JSONB `->>` extract so Postgres uses the column index — not a
+   * table scan.
+   */
+  async listUnclassifiedInbound(
+    tx: Tx,
+    since: Date,
+    limit = 50,
+  ): Promise<Touchpoint[]> {
+    return tx
+      .select()
+      .from(touchpoints)
+      .where(
+        and(
+          gte(touchpoints.occurredAt, since),
+          sql`${touchpoints.metadata} ->> 'direction' = 'inbound'`,
+          sql`(${touchpoints.metadata} ->> 'intent') IS NULL`,
+        ),
+      )
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(limit);
+  }
+
+  /**
+   * Sprint E — write the classifier's label back onto a touchpoint's
+   * metadata. Merges with existing metadata so we don't clobber the
+   * normalizer's fields (verb, direction, provider_message_id, etc.).
+   * Uses Postgres's `||` JSONB concat so concurrent writers don't
+   * stomp on each other — the last write wins by key.
+   */
+  async markIntent(
+    tx: Tx,
+    id: string,
+    intent: string,
+    confidence: number,
+    reason: string,
+  ): Promise<void> {
+    await tx
+      .update(touchpoints)
+      .set({
+        metadata: sql`${touchpoints.metadata} || jsonb_build_object(
+          'intent', ${intent}::text,
+          'intent_confidence', ${confidence}::double precision,
+          'intent_reason', ${reason}::text,
+          'intent_classified_at', ${new Date().toISOString()}::text
+        )`,
+      })
+      .where(eq(touchpoints.id, id));
   }
 }
