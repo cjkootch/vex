@@ -64,6 +64,21 @@ export interface MembershipMutationArgs {
   orgId: string;
 }
 
+export interface UpdateContactPatch {
+  fullName?: string | undefined;
+  title?: string | null | undefined;
+  emails?: string[] | null | undefined;
+  phones?: string[] | null | undefined;
+  timezone?: string | null | undefined;
+}
+
+export interface UpdateContactArgs {
+  tenantId: string;
+  actorUserId: string;
+  contactId: string;
+  patch: UpdateContactPatch;
+}
+
 export interface ContactWithMemberships {
   contact: Contact;
   memberships: ContactOrgMembership[];
@@ -220,6 +235,60 @@ export class ContactsService {
       throw new NotFoundException(`contact ${id} not found`);
     }
     return contact;
+  }
+
+  /**
+   * Edit the hand-maintained columns on a contact — name, title,
+   * emails, phones, timezone. Org memberships have their own mutation
+   * endpoints (addMembership / setPrimaryMembership / removeMembership)
+   * so we don't rewrite them here. Emits an audit event with
+   * before/after for the compliance timeline.
+   */
+  async update(args: UpdateContactArgs): Promise<Contact> {
+    const { tenantId, actorUserId, contactId, patch } = args;
+    return withTenant(this.db, tenantId, async (tx) => {
+      const before = await this.contacts.findById(tx, contactId);
+      if (!before) {
+        throw new NotFoundException(`contact ${contactId} not found`);
+      }
+
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      if (patch.fullName !== undefined) set["fullName"] = patch.fullName;
+      if (patch.title !== undefined) set["title"] = patch.title;
+      if (patch.emails !== undefined) set["emails"] = patch.emails ?? [];
+      if (patch.phones !== undefined) set["phones"] = patch.phones ?? [];
+      if (patch.timezone !== undefined) set["timezone"] = patch.timezone;
+
+      const [after] = await tx
+        .update(schema.contacts)
+        .set(set)
+        .where(eq(schema.contacts.id, contactId))
+        .returning();
+      if (!after) throw new Error(`contact ${contactId} vanished during update`);
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "contact.updated",
+        subjectType: "contact",
+        subjectId: contactId,
+        actorType: "user",
+        actorId: actorUserId,
+        objectType: "contact",
+        objectId: contactId,
+        occurredAt: new Date(),
+        // Stable key — tied to before.updatedAt so a retry dedupes but
+        // a second distinct edit lands a fresh audit row.
+        idempotencyKey: `contact.updated:${contactId}:${before.updatedAt.toISOString()}`,
+        metadata: {
+          patch,
+          before,
+          after,
+          audit_event_id: createId(),
+        },
+      });
+
+      this.log.log(`contact ${contactId} updated by ${actorUserId}`);
+      return after;
+    });
   }
 
   /** List memberships for a contact, primary first. */

@@ -38,6 +38,54 @@ export async function GET(
   return NextResponse.json({ organization: stubOrganization(params.id) });
 }
 
+/**
+ * PATCH /api/organizations/:id — proxy to apps/api
+ * `PATCH /organizations/:id`. Edits the hand-entered identity columns
+ * (legalName / domain / industry). Merge metadata lives on separate
+ * mutation paths.
+ */
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } },
+): Promise<Response> {
+  const upstream = process.env["VEX_API_URL"];
+  const bodyText = await req.text();
+
+  if (upstream) {
+    const url = `${upstream.replace(/\/$/, "")}/organizations/${encodeURIComponent(params.id)}`;
+    try {
+      const headers = buildUpstreamHeaders(req);
+      headers.set("content-type", "application/json");
+      const response = await fetch(url, {
+        method: "PATCH",
+        headers,
+        body: bodyText,
+      });
+      const responseBody = await response.text();
+      return new Response(responseBody, {
+        status: response.status,
+        headers: {
+          "content-type":
+            response.headers.get("content-type") ?? "application/json",
+        },
+      });
+    } catch (err) {
+      return NextResponse.json(
+        { error: "upstream_unavailable", message: (err as Error).message },
+        { status: 502 },
+      );
+    }
+  }
+
+  return NextResponse.json(
+    {
+      error: "not_implemented",
+      message: "PATCH /api/organizations/:id not implemented in local stub",
+    },
+    { status: 501 },
+  );
+}
+
 function stubOrganization(id: string) {
   const now = new Date().toISOString();
   return {

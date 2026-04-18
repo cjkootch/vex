@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
+import { EditDealForm } from "@/components/crm/edit-deal-form";
 import { Tabs } from "@/components/ui/tabs";
 
 interface DealDetail {
@@ -44,6 +45,7 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeTab, setActiveTab] = useState("overview");
+  const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +119,13 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
               /* toast handled elsewhere */
             }}
           />
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
+          >
+            Edit
+          </button>
           <Link
             href={`/app/chat?ask=${encodeURIComponent(`Score deal ${deal.dealRef}`)}`}
             className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
@@ -125,6 +134,13 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
           </Link>
         </div>
       </header>
+
+      <EditDealForm
+        open={editOpen}
+        deal={deal}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => setRefreshKey((k) => k + 1)}
+      />
 
       <Tabs
         active={activeTab}

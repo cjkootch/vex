@@ -7,6 +7,7 @@ import {
   HttpCode,
   Inject,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -48,6 +49,21 @@ const AddMembershipBody = z.object({
   role: z.string().max(200).optional(),
   isPrimary: z.boolean().optional(),
 });
+
+/**
+ * Editable fields on a contact. Memberships (orgs / roles / primary)
+ * have their own mutation endpoints below — this patch only touches
+ * the hand-maintained identity columns.
+ */
+const UpdateContactBody = z
+  .object({
+    fullName: z.string().min(1).max(200),
+    title: z.string().max(120).nullable(),
+    emails: z.array(z.string().email()).max(10).nullable(),
+    phones: z.array(z.string().max(40)).max(10).nullable(),
+    timezone: z.string().max(100).nullable(),
+  })
+  .partial();
 
 /**
  * REST surface for contact suppression. Paired with Sprint 12's
@@ -176,6 +192,21 @@ export class ContactsController {
       this.service.listDealsForContact(this.tenant.tenantId, id),
     ]);
     return { contact, memberships, deals };
+  }
+
+  @Patch(":id")
+  async update(@Param("id") id: string, @Body() raw: unknown) {
+    const parsed = UpdateContactBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const contact = await this.service.update({
+      tenantId: this.tenant.tenantId,
+      actorUserId: this.tenant.userId,
+      contactId: id,
+      patch: parsed.data,
+    });
+    return { contact };
   }
 
   @Post(":id/optout")
