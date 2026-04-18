@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { WorkspaceMode, type WorkspaceModeConfig } from "@vex/ui";
@@ -46,6 +46,33 @@ export default function ChatPage() {
   );
 }
 
+const STORAGE_KEY = "vex.chat.conversations.v1";
+const DEFAULT_TITLES = new Set(["New conversation", "Untitled conversation"]);
+
+interface StoredState {
+  conversations: Conversation[];
+  activeId: string;
+}
+
+function loadStoredState(): StoredState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredState>;
+    if (
+      !Array.isArray(parsed.conversations) ||
+      parsed.conversations.length === 0 ||
+      typeof parsed.activeId !== "string"
+    ) {
+      return null;
+    }
+    return { conversations: parsed.conversations, activeId: parsed.activeId };
+  } catch {
+    return null;
+  }
+}
+
 function ChatPageInner() {
   const { mode, config, contextId, contextLabel, contextSublabel, setMode } =
     useWorkspaceMode();
@@ -54,6 +81,29 @@ function ChatPageInner() {
     initialConversation(),
   ]);
   const [activeId, setActiveId] = useState<string>(() => conversations[0]!.id);
+
+  // Hydrate from localStorage on mount. Next.js renders the initial
+  // default-state client-side too, so setting state in an effect
+  // avoids a hydration mismatch vs reading localStorage at init.
+  useEffect(() => {
+    const stored = loadStoredState();
+    if (!stored) return;
+    setConversations(stored.conversations);
+    setActiveId(stored.activeId);
+  }, []);
+
+  // Persist on every change. Always wrap in try/catch — Safari
+  // private mode and quota-exceeded scenarios shouldn't crash chat.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({ conversations, activeId }),
+      );
+    } catch {
+      /* quota / private mode — in-memory still works */
+    }
+  }, [conversations, activeId]);
 
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? conversations[0]!,
@@ -82,6 +132,21 @@ function ChatPageInner() {
           const fresh = newConversation();
           setConversations((prev) => [fresh, ...prev]);
           setActiveId(fresh.id);
+        }}
+        onDelete={(id) => {
+          setConversations((prev) => {
+            const next = prev.filter((c) => c.id !== id);
+            if (next.length === 0) {
+              // Keep at least one conversation — seed a fresh one.
+              const fresh = newConversation();
+              setActiveId(fresh.id);
+              return [fresh];
+            }
+            if (id === activeId) {
+              setActiveId(next[0]!.id);
+            }
+            return next;
+          });
         }}
       />
 
@@ -125,11 +190,23 @@ function ChatPageInner() {
               turns={active.turns}
               onTurns={(turns) =>
                 setConversations((prev) =>
-                  prev.map((c) =>
-                    c.id === active.id
-                      ? { ...c, turns, updatedAt: Date.now() }
-                      : c,
-                  ),
+                  prev.map((c) => {
+                    if (c.id !== active.id) return c;
+                    // Auto-derive title from the first user turn the
+                    // first time one lands, so the sidebar shows
+                    // something meaningful instead of "New
+                    // conversation". Skip once the user has renamed
+                    // the conversation manually (title no longer
+                    // matches either default).
+                    let title = c.title;
+                    if (DEFAULT_TITLES.has(c.title)) {
+                      const firstUser = turns.find((t) => t.role === "user");
+                      if (firstUser?.text) {
+                        title = firstUser.text.slice(0, 60);
+                      }
+                    }
+                    return { ...c, turns, title, updatedAt: Date.now() };
+                  }),
                 )
               }
             />
