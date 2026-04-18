@@ -532,6 +532,28 @@ async function applyCreateContact(
       : payload.orgs;
   const primary = normalisedOrgs.find((o) => o.isPrimary)!;
 
+  // FK validation — every orgId in the membership payload must
+  // exist in this tenant before we create the contact, to match
+  // the POST /contacts service-layer guarantee. Without this the
+  // approval path was relying on DB FK constraints and RLS to
+  // refuse bad ids, which produced a cryptic "contact_org_memberships
+  // violates foreign key" error instead of a clean executor-failed
+  // audit pointing at the specific missing org.
+  for (const org of normalisedOrgs) {
+    const exists = await deps.organizations.findById(tx, org.orgId);
+    if (!exists) {
+      await recordExecutorFailure(
+        tx,
+        deps,
+        tenantId,
+        approval.id,
+        "crm.create_contact",
+        `orgId ${org.orgId} not found in tenant`,
+      );
+      return;
+    }
+  }
+
   const newId = createId();
   // Unified email-dedupe — the direct POST /contacts path uses the
   // same helper. If the approved payload lands on an existing
