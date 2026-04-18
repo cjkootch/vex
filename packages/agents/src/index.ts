@@ -87,6 +87,7 @@ export {
 } from "./agent-runner.js";
 export { ApprovalGate } from "./approval-gate.js";
 export {
+  AnalystAgent,
   DailyBriefAgent,
   FollowUpAgent,
   ResearchAgent,

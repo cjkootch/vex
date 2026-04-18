@@ -42,7 +42,11 @@ export interface DlqJobData extends NormalizationJobData {
 }
 
 /** Agent job payload — kind drives which agent the worker constructs. */
-export type AgentJobKind = "daily_brief" | "research" | "follow_up";
+export type AgentJobKind =
+  | "daily_brief"
+  | "research"
+  | "follow_up"
+  | "analyst";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;
@@ -240,6 +244,17 @@ export async function scheduleRecurringAgents(
     {
       repeat: { pattern: "0 */2 8-18 * * 1-5" },
       jobId: `recurring:follow_up:${workspaceId}`,
+    },
+  );
+  // AnalystAgent — runs once a day at 06:30 UTC (a half hour after the
+  // daily brief) so its anomaly events exist in time to surface in the
+  // next day's Brief + Marketing tab.
+  await queue.add(
+    "analyst",
+    { kind: "analyst", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "30 6 * * *" },
+      jobId: `recurring:analyst:${workspaceId}`,
     },
   );
 }

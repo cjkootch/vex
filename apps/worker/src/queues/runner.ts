@@ -1,6 +1,7 @@
 import type { Job, Worker } from "bullmq";
 import {
   AgentRunner,
+  AnalystAgent,
   DailyBriefAgent,
   FollowUpAgent,
   ResearchAgent,
@@ -245,6 +246,8 @@ function buildAgentProcessor(runner: AgentRunner) {
         return runner.run(new DailyBriefAgent(), { workspaceId: data.workspace_id });
       case "follow_up":
         return runner.run(new FollowUpAgent(), { workspaceId: data.workspace_id });
+      case "analyst":
+        return runner.run(new AnalystAgent(), { workspaceId: data.workspace_id });
       case "research": {
         const orgId = data.input?.["organization_id"];
         if (typeof orgId !== "string") {
