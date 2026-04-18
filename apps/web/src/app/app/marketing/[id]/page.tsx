@@ -384,6 +384,7 @@ function AddStepForm({
         <button
           type="submit"
           disabled={submitting}
+          data-testid="add-step-submit"
           className="h-8 rounded-md bg-accent px-3 text-xs font-medium text-white hover:bg-accent/80 disabled:opacity-60"
         >
           {submitting ? "Adding…" : "Add step"}
