@@ -66,6 +66,27 @@ export const EnvSchema = z.object({
   TWILIO_API_SECRET: z.string().optional(),
   TWILIO_TWIML_APP_SID: z.string().optional(),
   /**
+   * Sprint K — enable the real-time AI escalation listener. When `true`,
+   * the outbound TwiML forks callee audio via `<Start><Stream>` to
+   * /calls/twilio/stream, which runs an OpenAI Realtime session with
+   * an `escalate_to_human` tool. The AI listens (not talks) and
+   * auto-invokes requestHumanBackup when it hears escalation signals.
+   *
+   * Requires OPENAI_API_KEY + APP_BASE_URL (for the wss:// URL Twilio
+   * POSTs into) to already be set. When `false` the bridge is inert
+   * and the TwiML matches Sprint J's conference-only shape.
+   */
+  VEX_AI_VOICE_ENABLED: z.coerce.boolean().default(false),
+  /**
+   * OpenAI Realtime model for the escalation listener session. Distinct
+   * from VOICE_REALTIME_MODEL (which powers the browser operator voice)
+   * so we can dial the call-side model independently of the browser
+   * one — they have different latency/cost trade-offs.
+   */
+  OPENAI_REALTIME_CALL_MODEL: z
+    .string()
+    .default("gpt-4o-realtime-preview-2024-12-17"),
+  /**
    * Public base URL Twilio hits for TwiML + status + recording webhooks.
    * Required whenever the Twilio credentials above are set — the
    * OutboundCallWorkflow cannot complete without reachable callback URLs.

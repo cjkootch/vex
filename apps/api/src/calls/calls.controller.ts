@@ -19,7 +19,11 @@ import { JwtAuthGuard, RolesGuard, RequireRole, TenantContext } from "../auth/in
 import { UserRole } from "@vex/domain";
 import type { TwilioVerifier } from "../webhooks/twilio-verifier.js";
 import { CallsService } from "./calls.service.js";
-import { CALLS_TWILIO_VERIFIER } from "./tokens.js";
+import type { VoiceListenerConfig } from "./calls.module.js";
+import {
+  CALLS_TWILIO_VERIFIER,
+  CALLS_VOICE_LISTENER_CONFIG,
+} from "./tokens.js";
 
 const InitiateBody = z.object({
   contact_id: z.string().min(1),
@@ -53,6 +57,8 @@ export class CallsController {
     @Inject(TenantContext) private readonly tenant: TenantContext,
     @Inject(CallsService) private readonly service: CallsService,
     @Inject(CALLS_TWILIO_VERIFIER) private readonly twilioVerifier: TwilioVerifier,
+    @Inject(CALLS_VOICE_LISTENER_CONFIG)
+    private readonly voiceListener: VoiceListenerConfig,
   ) {}
 
   @Post()
@@ -146,16 +152,34 @@ export class CallsController {
     this.verifyTwilio(req);
     const query = (req.query ?? {}) as Record<string, unknown>;
     const wf = query["wf"];
+    const tenant = query["tenant"];
     const workflowId = typeof wf === "string" && wf.length > 0 ? wf : "unknown";
     const confName = conferenceNameForWorkflow(workflowId);
-    return [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      "<Response>",
-      "  <Dial>",
+
+    const lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<Response>"];
+    if (
+      this.voiceListener.enabled &&
+      typeof tenant === "string" &&
+      tenant.length > 0
+    ) {
+      // Sprint K — fork callee audio to the escalation-listener WS.
+      // `Start`/`Stream` is unidirectional (Twilio → us); the AI can
+      // observe but not inject audio back, which keeps Sprint J's
+      // Dial+Conference intact for the operator join flow.
+      const streamUrl = `${this.voiceListener.streamUrl}?wf=${encodeURIComponent(
+        workflowId,
+      )}&tenant=${encodeURIComponent(tenant)}`;
+      lines.push("  <Start>");
+      lines.push(`    <Stream url="${escapeXml(streamUrl)}" track="inbound_track" />`);
+      lines.push("  </Start>");
+    }
+    lines.push("  <Dial>");
+    lines.push(
       `    <Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${escapeXml(confName)}</Conference>`,
-      "  </Dial>",
-      "</Response>",
-    ].join("\n");
+    );
+    lines.push("  </Dial>");
+    lines.push("</Response>");
+    return lines.join("\n");
   }
 
   /**

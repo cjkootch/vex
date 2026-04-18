@@ -335,14 +335,20 @@ export function buildCallActivities(deps: CallActivitiesDeps) {
 
           const { callSid, status } = await deps.twilio.createOutboundCall({
             to: input.toNumber,
-            twimlUrl: withWorkflowId(deps.twimlUrl, input.workflowId),
-            statusCallback: withWorkflowId(
+            twimlUrl: withCallParams(
+              deps.twimlUrl,
+              input.workflowId,
+              input.tenantId,
+            ),
+            statusCallback: withCallParams(
               deps.statusCallbackUrl,
               input.workflowId,
+              input.tenantId,
             ),
-            recordingStatusCallback: withWorkflowId(
+            recordingStatusCallback: withCallParams(
               deps.recordingCallbackUrl,
               input.workflowId,
+              input.tenantId,
             ),
             record: true,
             timeout: 30,
@@ -649,10 +655,19 @@ function localHourIn(timezone: string, at: Date): number {
   }
 }
 
-/** Append `?wf=<workflow-id>` so the Twilio webhook can route signals. */
-function withWorkflowId(baseUrl: string, workflowId: string): string {
+/**
+ * Append `?wf=<workflow-id>&tenant=<tenant-id>` so Twilio callbacks
+ * can route signals back to the workflow and so the TwiML handler
+ * (Sprint K `<Start><Stream>` fork) knows which tenant's escalation
+ * pipeline to invoke.
+ */
+function withCallParams(
+  baseUrl: string,
+  workflowId: string,
+  tenantId: string,
+): string {
   const joinChar = baseUrl.includes("?") ? "&" : "?";
-  return `${baseUrl}${joinChar}wf=${encodeURIComponent(workflowId)}`;
+  return `${baseUrl}${joinChar}wf=${encodeURIComponent(workflowId)}&tenant=${encodeURIComponent(tenantId)}`;
 }
 
 /** Minimal evidence pack wrapping a call transcript for the summary prompt. */
