@@ -39,6 +39,7 @@ function buildDeps(
     ? {
         id: approval.id ?? APPROVAL_ID,
         reviewerId: approval.reviewerId ?? "01HSEEDPRS0000000000000001",
+        appliedObjectId: null as string | null,
         ...approval,
       }
     : null;
@@ -50,6 +51,7 @@ function buildDeps(
     db: {},
     approvals: {
       findById: vi.fn().mockResolvedValue(approvalRow),
+      markApplied: vi.fn().mockResolvedValue(undefined),
     },
     deals: {
       updateStatus: vi.fn().mockResolvedValue(undefined),
@@ -57,6 +59,9 @@ function buildDeps(
     },
     organizations: {
       create: vi.fn().mockResolvedValue(undefined),
+      // applyCreateDeal validates buyer existence against this. Default
+      // to a non-null row so existing tests don't have to thread it.
+      findById: vi.fn().mockResolvedValue({ id: "01HSEEDCRP0000000000000001" }),
     },
     contacts: {
       create: vi.fn().mockResolvedValue(undefined),
@@ -189,6 +194,33 @@ describe("approval executor — crm.create_company", () => {
     expect(deps.organizations.create).not.toHaveBeenCalled();
     const event = deps.events.insertIfNotExists.mock.calls[0]![2];
     expect(event.verb).toBe("approval.executor.failed");
+  });
+
+  it("skips the insert and emits a replay event when appliedObjectId is set", async () => {
+    // Simulates a queue retry after a prior successful apply: the
+    // approval row already carries the created org id, so the
+    // executor must short-circuit instead of minting a duplicate.
+    const deps = buildDeps({
+      actionType: "crm.create_company",
+      decision: "approved",
+      proposedPayload: { legalName: "Harbour Bunkers" },
+    });
+    deps.approvals.findById.mockResolvedValueOnce({
+      id: APPROVAL_ID,
+      reviewerId: "01HSEEDPRS0000000000000001",
+      actionType: "crm.create_company",
+      decision: "approved",
+      proposedPayload: { legalName: "Harbour Bunkers" },
+      appliedObjectId: "01HSEEDCRP0000000000000099",
+    });
+    await runJob(deps);
+    expect(deps.organizations.create).not.toHaveBeenCalled();
+    expect(deps.approvals.markApplied).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.replayed");
+    expect(event.metadata.applied_object_id).toBe(
+      "01HSEEDCRP0000000000000099",
+    );
   });
 });
 
