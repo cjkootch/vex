@@ -25,6 +25,12 @@ const InitiateBody = z.object({
   contact_id: z.string().min(1),
 });
 
+const RequestBackupBody = z
+  .object({
+    reason: z.string().min(1).max(500).optional(),
+  })
+  .default({});
+
 /**
  * Outbound-call surface.
  *
@@ -78,6 +84,35 @@ export class CallsController {
   @UseGuards(JwtAuthGuard)
   async transcript(@Param("workflowId") workflowId: string) {
     return this.service.getTranscript(this.tenant.tenantId, workflowId);
+  }
+
+  /**
+   * Sprint I — request human backup on an in-flight call. Creates a
+   * T2 approval the operator inbox surfaces with a "Join call" CTA.
+   * Idempotent at the workflow level: repeated calls while an open
+   * request exists reuse the same approval id.
+   */
+  @Post(":workflowId/request-backup")
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(201)
+  async requestBackup(
+    @Param("workflowId") workflowId: string,
+    @Body() raw: unknown,
+  ) {
+    const parsed = RequestBackupBody.safeParse(raw ?? {});
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const args: {
+      tenantId: string;
+      workflowId: string;
+      initiatedBy: string;
+      reason?: string;
+    } = {
+      tenantId: this.tenant.tenantId,
+      workflowId,
+      initiatedBy: this.tenant.userId,
+    };
+    if (parsed.data.reason !== undefined) args.reason = parsed.data.reason;
+    return this.service.requestHumanBackup(args);
   }
 
   // -------------------------------------------------------------------

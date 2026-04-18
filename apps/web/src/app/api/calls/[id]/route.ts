@@ -38,11 +38,26 @@ export async function GET(
     }
   }
 
-  // Local-dev stub
+  // Local-dev stub — realistic in-progress call so the Sprint I
+  // detail page renders with live duration, callee, and status
+  // without a running apps/api.
+  const startedAt = new Date(Date.now() - 2 * 60_000).toISOString();
   return NextResponse.json({
     workflowId: params.id,
     approval: { id: `stub-approval-${params.id}`, decision: "pending" },
-    activity: null,
+    activity: {
+      id: "01HSTUBACT0000000000000001",
+      callSid: "CAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      status: "in-progress",
+      durationSeconds: null,
+      transcriptRef: null,
+      startedAt,
+    },
+    callee: {
+      id: "01HSEEDCNT0000000000000001",
+      fullName: "Dana Reyes",
+      phone: "+15555551234",
+    },
     workflow: { status: "RUNNING" },
     stub: true,
   });

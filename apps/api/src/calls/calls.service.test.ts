@@ -171,3 +171,197 @@ describe("CallsService.initiateCall", () => {
     expect(eventArgs[2].verb).toBe("call.initiated");
   });
 });
+
+describe("CallsService.requestHumanBackup", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  interface BackupFixtureOpts {
+    pending?: Array<{
+      id: string;
+      actionType: string;
+      proposedPayload: Record<string, unknown>;
+    }>;
+    activity?: {
+      occurredAt: Date;
+      metadata?: Record<string, unknown>;
+    } | null;
+    callApprovalExists?: boolean;
+  }
+
+  function buildBackupService(opts: BackupFixtureOpts = {}) {
+    const approvalsCreate = vi
+      .fn()
+      .mockResolvedValue({ id: "01HAPP_NEW_BACKUP_000000000A" });
+    const approvalsFindByWorkflowId = vi
+      .fn()
+      .mockResolvedValue(
+        opts.callApprovalExists === false
+          ? null
+          : {
+              id: "01HAPP_CALL_00000000000000A",
+              agentRunId: "01HRUN_00000000000000000000A",
+              proposedPayload: { contact_id: "contact-1" },
+            },
+      );
+    const approvalsListByDecision = vi
+      .fn()
+      .mockResolvedValue(opts.pending ?? []);
+    const activitiesFindByTypeAndSessionId = vi
+      .fn()
+      .mockResolvedValue(opts.activity ?? null);
+    const eventsInsertIfNotExists = vi.fn().mockResolvedValue(undefined);
+
+    const service = new CallsService(
+      {} as never,
+      { findById: vi.fn() } as never,
+      { findById: vi.fn() } as never,
+      {} as never,
+      {
+        create: approvalsCreate,
+        findByWorkflowId: approvalsFindByWorkflowId,
+        listByDecision: approvalsListByDecision,
+      } as never,
+      { findByTypeAndSessionId: activitiesFindByTypeAndSessionId } as never,
+      {} as never,
+      { insertIfNotExists: eventsInsertIfNotExists } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      "vex-main",
+    );
+    return {
+      service,
+      mocks: {
+        approvalsCreate,
+        approvalsFindByWorkflowId,
+        approvalsListByDecision,
+        activitiesFindByTypeAndSessionId,
+        eventsInsertIfNotExists,
+      },
+    };
+  }
+
+  it("creates a T2 approval with duration + callee + call_sid metadata", async () => {
+    const startedAt = new Date(Date.now() - 180_000); // 3 minutes ago
+    const { service, mocks } = buildBackupService({
+      activity: {
+        occurredAt: startedAt,
+        metadata: { call_sid: "CA_TEST_SID" },
+      },
+    });
+    const result = await service.requestHumanBackup({
+      tenantId: TENANT,
+      workflowId: "outbound-call-01HRUN_00000000000000000000A",
+      reason: "customer asked to speak to a human",
+      initiatedBy: "01HSEEDUSR0000000000000001",
+    });
+
+    expect(result.existed).toBe(false);
+    expect(result.approvalId).toBe("01HAPP_NEW_BACKUP_000000000A");
+    const createArgs = mocks.approvalsCreate.mock.calls[0]!;
+    const payload = createArgs[2].proposedPayload as Record<string, unknown>;
+    expect(createArgs[2].actionType).toBe("call.request_backup");
+    expect(payload["tier"]).toBe("T2");
+    expect(payload["workflow_id"]).toBe(
+      "outbound-call-01HRUN_00000000000000000000A",
+    );
+    expect(payload["call_sid"]).toBe("CA_TEST_SID");
+    expect(payload["callee_contact_id"]).toBe("contact-1");
+    expect(payload["reason"]).toBe("customer asked to speak to a human");
+    // 3 minutes ago → duration ~180s. Allow a small tolerance for
+    // test-runtime drift.
+    const duration = payload["duration_at_request_seconds"] as number;
+    expect(duration).toBeGreaterThanOrEqual(179);
+    expect(duration).toBeLessThanOrEqual(181);
+
+    const event = mocks.eventsInsertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("call.backup_requested");
+  });
+
+  it("is idempotent per workflow — a second request for an open call returns the existing approval", async () => {
+    const { service, mocks } = buildBackupService({
+      pending: [
+        {
+          id: "01HAPP_PRIOR_00000000000000A",
+          actionType: "call.request_backup",
+          proposedPayload: {
+            workflow_id: "outbound-call-01HRUN_00000000000000000000A",
+          },
+        },
+      ],
+    });
+    const result = await service.requestHumanBackup({
+      tenantId: TENANT,
+      workflowId: "outbound-call-01HRUN_00000000000000000000A",
+      reason: "second request",
+    });
+    expect(result.existed).toBe(true);
+    expect(result.approvalId).toBe("01HAPP_PRIOR_00000000000000A");
+    expect(mocks.approvalsCreate).not.toHaveBeenCalled();
+    expect(mocks.eventsInsertIfNotExists).not.toHaveBeenCalled();
+  });
+
+  it("throws NotFoundException when the underlying call approval is missing", async () => {
+    const { service } = buildBackupService({ callApprovalExists: false });
+    await expect(
+      service.requestHumanBackup({
+        tenantId: TENANT,
+        workflowId: "outbound-call-missing",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("handles calls with no activity yet — duration reports 0", async () => {
+    const { service, mocks } = buildBackupService({ activity: null });
+    await service.requestHumanBackup({
+      tenantId: TENANT,
+      workflowId: "outbound-call-01HRUN_00000000000000000000A",
+    });
+    const payload = mocks.approvalsCreate.mock.calls[0]![2]
+      .proposedPayload as Record<string, unknown>;
+    expect(payload["call_sid"]).toBeNull();
+    expect(payload["duration_at_request_seconds"]).toBe(0);
+  });
+
+  it("ignores pending backup requests for OTHER workflows when checking idempotency", async () => {
+    const { service, mocks } = buildBackupService({
+      pending: [
+        {
+          id: "01HAPP_OTHER_00000000000000A",
+          actionType: "call.request_backup",
+          proposedPayload: {
+            workflow_id: "outbound-call-different",
+          },
+        },
+      ],
+    });
+    const result = await service.requestHumanBackup({
+      tenantId: TENANT,
+      workflowId: "outbound-call-01HRUN_00000000000000000000A",
+    });
+    expect(result.existed).toBe(false);
+    expect(mocks.approvalsCreate).toHaveBeenCalledOnce();
+  });
+
+  it("ignores pending approvals of non-backup action types", async () => {
+    const { service, mocks } = buildBackupService({
+      pending: [
+        {
+          id: "01HAPP_UNRELATED_00000000A",
+          actionType: "follow_up.suggestion",
+          proposedPayload: {
+            workflow_id: "outbound-call-01HRUN_00000000000000000000A",
+          },
+        },
+      ],
+    });
+    const result = await service.requestHumanBackup({
+      tenantId: TENANT,
+      workflowId: "outbound-call-01HRUN_00000000000000000000A",
+    });
+    expect(result.existed).toBe(false);
+    expect(mocks.approvalsCreate).toHaveBeenCalledOnce();
+  });
+});

@@ -143,6 +143,8 @@ function ApprovalCard({
   let body: JSX.Element;
   if (item.actionType === "campaign.enroll_batch") {
     body = <EnrollBatchBody payload={item.proposedPayload} />;
+  } else if (item.actionType === "call.request_backup") {
+    body = <CallBackupBody payload={item.proposedPayload} />;
   } else {
     const subject =
       stringField(item.proposedPayload, "subject_line") ?? "(no subject)";
@@ -275,6 +277,78 @@ function EnrollBatchBody({
       )}
     </div>
   );
+}
+
+/**
+ * Sprint I — renders call.request_backup payloads. The operator needs
+ * to see: which call is pinging, how long the agent has been on it,
+ * optional reason, and a "Join call" CTA that deep-links to the call
+ * detail page. (Actual join / live-listen lands in Sprint J once the
+ * OutboundCallWorkflow is restructured on a Twilio Conference.)
+ */
+function CallBackupBody({
+  payload,
+}: {
+  payload: Record<string, unknown>;
+}) {
+  const workflowId = stringField(payload, "workflow_id");
+  const durationAtRequest = numberField(payload, "duration_at_request_seconds");
+  const callSid = stringField(payload, "call_sid");
+  const reason = stringField(payload, "reason");
+  return (
+    <div className="mt-2 space-y-2">
+      <div
+        data-testid="call-backup-heading"
+        className="flex items-baseline gap-2 text-sm font-semibold text-white"
+      >
+        <span>Agent needs a human</span>
+        {typeof durationAtRequest === "number" && (
+          <span className="rounded bg-warn/20 px-1.5 py-0.5 font-mono text-warn">
+            {formatDurationShort(durationAtRequest)} on call
+          </span>
+        )}
+      </div>
+      <dl className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-white/60">
+        {workflowId && (
+          <div>
+            <dt className="inline text-white/40">workflow </dt>
+            <dd className="inline font-mono text-white/70">
+              {workflowId.slice(0, 20)}…
+            </dd>
+          </div>
+        )}
+        {callSid && (
+          <div>
+            <dt className="inline text-white/40">sid </dt>
+            <dd className="inline font-mono text-white/70">
+              {callSid.slice(0, 12)}…
+            </dd>
+          </div>
+        )}
+      </dl>
+      {reason && (
+        <p className="border-t border-line/40 pt-2 text-xs italic text-white/60">
+          “{reason}”
+        </p>
+      )}
+      {workflowId && (
+        <a
+          href={`/app/calls/${encodeURIComponent(workflowId)}`}
+          data-testid="call-backup-join"
+          className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 text-xs font-medium text-white hover:bg-accent/80"
+        >
+          Join call →
+        </a>
+      )}
+    </div>
+  );
+}
+
+function formatDurationShort(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m${s > 0 ? ` ${s}s` : ""}`;
 }
 
 function isPlanStepSummary(value: unknown): value is PlanStepSummary {

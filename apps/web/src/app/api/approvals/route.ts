@@ -64,6 +64,21 @@ export async function GET(req: NextRequest): Promise<Response> {
         },
       },
       {
+        id: "01HSEEDAPV0000000000000004",
+        actionType: "call.request_backup",
+        decision: "pending",
+        createdAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+        proposedPayload: {
+          tier: "T2",
+          workflow_id: "outbound-call-01HSEEDRUN0000000000000099",
+          call_sid: "CAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+          duration_at_request_seconds: 182,
+          callee_contact_id: "01HSEEDCNT0000000000000001",
+          reason: "caller asked to speak to a manager",
+          initiated_by: "01HSEEDUSR0000000000000001",
+        },
+      },
+      {
         id: "01HSEEDAPV0000000000000003",
         actionType: "campaign.enroll_batch",
         decision: "pending",
