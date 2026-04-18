@@ -15,6 +15,7 @@ import {
 } from "@vex/integrations";
 import { InMemoryCostLedger, initOtel, shutdownOtel } from "@vex/telemetry";
 import { AgentScanner } from "./scanner.js";
+import { runEnrollmentReconciliationTick } from "./jobs/enrollment-reconciliation-job.js";
 import { runIntentClassifierTick } from "./jobs/intent-classifier-job.js";
 import { startBullWorker } from "./queues/runner.js";
 import { startTemporalWorker } from "./temporal/runner.js";
@@ -25,6 +26,9 @@ const SCANNER_INTERVAL_MS = 60 * 60 * 1000;
  *  get labelled fast so the CampaignEnrollmentWorkflow branches
  *  without waiting for the next scheduled tick. */
 const INTENT_CLASSIFIER_INTERVAL_MS = 10 * 60 * 1000;
+/** Reconcile orphaned enrollments every 15 minutes — longer than the
+ *  default staleness threshold so we don't race a just-enrolled row. */
+const ENROLLMENT_RECONCILIATION_INTERVAL_MS = 15 * 60 * 1000;
 
 /**
  * The worker process hosts two runtimes:
@@ -52,6 +56,24 @@ async function main(): Promise<void> {
     costLedger,
   });
 
+  // Temporal client — shared between the approval-executor
+  // (campaign.enroll_batch branch), the intent classifier, and the
+  // enrollment reconciliation cron. Best-effort: a missing cluster
+  // means the executor still materialises rows and the reconciler
+  // can't fire — the next boot with Temporal back online adopts them.
+  let temporalClient: Awaited<ReturnType<typeof createTemporalClient>> | null = null;
+  try {
+    temporalClient = await createTemporalClient({
+      address: env.TEMPORAL_ADDRESS,
+      namespace: env.TEMPORAL_NAMESPACE,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `worker: Temporal client unavailable at boot (${(err as Error).message}); campaign workflows will fall back to reconciliation`,
+    );
+  }
+
   const bull = await startBullWorker({
     redisUrl: env.REDIS_URL,
     applicationDatabaseUrl: env.APPLICATION_DATABASE_URL,
@@ -64,6 +86,7 @@ async function main(): Promise<void> {
       secretAccessKey: env.S3_SECRET_ACCESS_KEY,
       ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
     },
+    temporal: temporalClient?.client ?? null,
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
   // Sprint 12 — the OutboundCallWorkflow needs Twilio + S3 + reachable
@@ -125,26 +148,12 @@ async function main(): Promise<void> {
   });
 
   // Intent classifier — scans inbound touchpoints every 10 minutes,
-  // labels them, and signals live CampaignEnrollmentWorkflow(s).
-  // Opens its own Temporal *client* (not worker) — the signals fly
-  // into whatever workflow service is running. Best-effort: a
-  // missing Temporal cluster just logs + skips the signal emission.
+  // labels them, and signals live CampaignEnrollmentWorkflow(s)
+  // through the shared Temporal client (opened above).
   let intentTimer: NodeJS.Timeout | null = null;
   const intentTouchpoints = new TouchpointRepository();
   const intentEnrollments = new CampaignEnrollmentRepository();
   const intentEvents = new EventRepository();
-  let intentTemporalClient: Awaited<ReturnType<typeof createTemporalClient>> | null = null;
-  try {
-    intentTemporalClient = await createTemporalClient({
-      address: env.TEMPORAL_ADDRESS,
-      namespace: env.TEMPORAL_NAMESPACE,
-    });
-  } catch (err) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      `intent-classifier: Temporal client unavailable (${(err as Error).message}); signals will be skipped`,
-    );
-  }
   const runIntentTick = (): void => {
     void runIntentClassifierTick(
       {
@@ -153,7 +162,7 @@ async function main(): Promise<void> {
         enrollments: intentEnrollments,
         events: intentEvents,
         anthropic,
-        temporal: intentTemporalClient?.client ?? null,
+        temporal: temporalClient?.client ?? null,
       },
       { tenantId: DEFAULT_WORKSPACE_ID },
     )
@@ -173,12 +182,48 @@ async function main(): Promise<void> {
   intentTimer = setInterval(runIntentTick, INTENT_CLASSIFIER_INTERVAL_MS);
   runIntentTick();
 
+  // Enrollment reconciliation — finds enrollments in `enrolled`
+  // state without a running workflow and restarts them. Covers
+  // Temporal-unreachable-at-enroll + worker-restart cases.
+  let reconcilerTimer: NodeJS.Timeout | null = null;
+  const reconcilerEnrollments = new CampaignEnrollmentRepository();
+  const reconcilerEvents = new EventRepository();
+  const runReconcilerTick = (): void => {
+    void runEnrollmentReconciliationTick(
+      {
+        db,
+        enrollments: reconcilerEnrollments,
+        events: reconcilerEvents,
+        temporal: temporalClient?.client ?? null,
+      },
+      { tenantId: DEFAULT_WORKSPACE_ID },
+    )
+      .then((result) => {
+        if (result.restarted > 0 || result.failures > 0) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `reconciler: scanned=${result.scanned} healthy=${result.healthy} restarted=${result.restarted} failures=${result.failures}`,
+          );
+        }
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("reconciler tick failed", err);
+      });
+  };
+  reconcilerTimer = setInterval(
+    runReconcilerTick,
+    ENROLLMENT_RECONCILIATION_INTERVAL_MS,
+  );
+  runReconcilerTick();
+
   const shutdown = async (): Promise<void> => {
     clearInterval(scannerTimer);
     if (intentTimer) clearInterval(intentTimer);
+    if (reconcilerTimer) clearInterval(reconcilerTimer);
     await bull.close();
     temporal.shutdown();
-    if (intentTemporalClient) await intentTemporalClient.close();
+    if (temporalClient) await temporalClient.close();
     await shutdownOtel();
   };
   process.on("SIGINT", () => void shutdown());

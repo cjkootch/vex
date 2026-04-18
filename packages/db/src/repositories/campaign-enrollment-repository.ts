@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lt } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import {
@@ -185,6 +185,34 @@ export class CampaignEnrollmentRepository {
       counts[row.state] = (counts[row.state] ?? 0) + 1;
     }
     return counts;
+  }
+
+  /**
+   * Sprint F — enrollments that are still active but haven't moved
+   * recently. Used by the reconciliation cron to find workflows that
+   * were supposed to be running but aren't (Temporal was unreachable
+   * at enroll time, worker restart lost an in-flight workflow, etc.).
+   *
+   * Returns only `enrolled` state — paused enrollments are waiting
+   * on a resume signal by design and errored/terminal states shouldn't
+   * restart.
+   */
+  async listStaleEnrolled(
+    tx: Tx,
+    updatedBefore: Date,
+    limit = 50,
+  ): Promise<CampaignEnrollment[]> {
+    return tx
+      .select()
+      .from(campaignEnrollments)
+      .where(
+        and(
+          eq(campaignEnrollments.state, "enrolled"),
+          lt(campaignEnrollments.updatedAt, updatedBefore),
+        ),
+      )
+      .orderBy(campaignEnrollments.updatedAt)
+      .limit(limit);
   }
 
   /**

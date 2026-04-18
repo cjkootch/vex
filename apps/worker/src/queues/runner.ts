@@ -26,6 +26,9 @@ import {
   ActivityRepository,
   AgentRunRepository,
   ApprovalRepository,
+  CampaignEnrollmentRepository,
+  CampaignRepository,
+  CampaignStepRepository,
   ContactOrgMembershipRepository,
   ContactRepository,
   EventRepository,
@@ -44,7 +47,14 @@ import {
   type Db,
 } from "@vex/db";
 import { createId } from "@vex/domain";
-import { AnthropicAdapter, OpenAIAdapter, S3Uploader } from "@vex/integrations";
+import type { Client as TemporalClient } from "@temporalio/client";
+import {
+  AnthropicAdapter,
+  OpenAIAdapter,
+  S3Uploader,
+  TEMPORAL_TASK_QUEUE,
+  WorkflowId,
+} from "@vex/integrations";
 import {
   InMemoryCostLedger,
   recordQueueBackpressure,
@@ -66,6 +76,14 @@ export interface QueueRunnerOptions {
     accessKeyId: string;
     secretAccessKey: string;
   };
+  /**
+   * Temporal client used by the approval executor's
+   * `campaign.enroll_batch` branch to start
+   * CampaignEnrollmentWorkflow(s). Optional — when absent, the
+   * executor still materialises enrollment rows and relies on the
+   * Sprint F reconciliation cron to start the workflows later.
+   */
+  temporal?: TemporalClient | null;
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
   defaultWorkspaceId?: string;
@@ -157,7 +175,11 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       organizations: repos.organizations,
       contacts: repos.contacts,
       memberships: repos.memberships,
+      campaigns: repos.campaigns,
+      campaignSteps: repos.campaignSteps,
+      campaignEnrollments: repos.campaignEnrollments,
       events: repos.events,
+      temporal: options.temporal ?? null,
     }),
     connection,
   );
@@ -267,7 +289,17 @@ export interface ApprovalExecutorDeps {
   organizations: OrganizationRepository;
   contacts: ContactRepository;
   memberships: ContactOrgMembershipRepository;
+  campaigns: CampaignRepository;
+  campaignSteps: CampaignStepRepository;
+  campaignEnrollments: CampaignEnrollmentRepository;
   events: EventRepository;
+  /**
+   * Best-effort Temporal client for the `campaign.enroll_batch`
+   * branch. When null, the executor still materialises the
+   * enrollment rows; the reconciliation cron (Sprint F) will adopt
+   * them the next tick.
+   */
+  temporal: TemporalClient | null;
 }
 
 /**
@@ -306,6 +338,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         }
         if (approval.actionType === "crm.create_deal") {
           await applyCreateDeal(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "campaign.enroll_batch") {
+          await applyEnrollBatch(tx, deps, workspace_id, approval);
           return;
         }
       }
@@ -718,6 +754,141 @@ async function applyCreateDeal(
 }
 
 /**
+ * Approved `campaign.enroll_batch` — materialises enrollment rows
+ * and starts CampaignEnrollmentWorkflow(s). Sprint F moves the
+ * enroll fan-out behind a reviewer gate: a single approval covers
+ * the whole batch instead of one per step.
+ *
+ * Idempotency: if the approval was applied already, short-circuit
+ * to a replay event. Re-validates the plan on apply because an
+ * operator may have edited steps between request and approval —
+ * we refuse to dispatch against a plan that's gone gap-ridden.
+ *
+ * Workflow start is best-effort. When Temporal is unavailable the
+ * enrollment rows still land; the reconciliation cron adopts them
+ * on its next tick. The idempotent enroll() ensures a partial
+ * failure + retry doesn't create duplicate rows.
+ */
+async function applyEnrollBatch(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    campaign_id?: string;
+    contact_ids?: string[];
+    recipient_count?: number;
+    rationale?: string;
+  } | null;
+
+  const campaignId = payload?.campaign_id;
+  const contactIds = Array.isArray(payload?.contact_ids)
+    ? payload!.contact_ids.filter((v): v is string => typeof v === "string" && v.length > 0)
+    : [];
+  if (!campaignId || contactIds.length === 0) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "campaign.enroll_batch",
+      "missing campaign_id or contact_ids",
+    );
+    return;
+  }
+
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "campaign.enroll_batch");
+    return;
+  }
+
+  const campaign = await deps.campaigns.findById(tx, campaignId);
+  if (!campaign) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "campaign.enroll_batch",
+      `campaign ${campaignId} not found`,
+    );
+    return;
+  }
+  const validation = await deps.campaignSteps.validateSequence(tx, campaignId);
+  if (validation) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "campaign.enroll_batch",
+      `plan invalid at approval time: ${validation}`,
+    );
+    return;
+  }
+
+  const result = await deps.campaignEnrollments.enrollBatch(
+    tx,
+    tenantId,
+    campaignId,
+    contactIds,
+  );
+
+  // markApplied stamps the approval with a synthetic id that
+  // survives replay — re-running won't re-enroll because the
+  // appliedObjectId branch short-circuits.
+  await deps.approvals.markApplied(
+    tx,
+    approval.id,
+    `enroll:${campaignId}:${result.createdIds.length}`,
+  );
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "campaign.enrollment_batch_applied",
+    subjectType: "campaign",
+    subjectId: campaignId,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `campaign.enrollment_batch_applied:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      campaign_id: campaignId,
+      created_count: result.createdIds.length,
+      existing_count: result.existingCount,
+      recipient_count: payload?.recipient_count ?? contactIds.length,
+      rationale: payload?.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
+
+  // Fire off one workflow per new enrollment. Failures during start
+  // are noted but don't fail the apply — the reconciliation cron
+  // picks them up.
+  if (!deps.temporal || result.createdIds.length === 0) return;
+  for (const enrollmentId of result.createdIds) {
+    try {
+      await deps.temporal.workflow.start("campaignEnrollmentWorkflow", {
+        taskQueue: TEMPORAL_TASK_QUEUE,
+        workflowId: WorkflowId.campaignEnrollment(enrollmentId),
+        args: [{ tenantId, enrollmentId }],
+      });
+    } catch (err) {
+      const message = (err as Error).message ?? "";
+      if (!message.toLowerCase().includes("already")) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `applyEnrollBatch: workflow start failed for ${enrollmentId}: ${message}`,
+        );
+      }
+    }
+  }
+}
+
+/**
  * Emit an observability-only event when the executor skipped a side
  * effect because the approval was already applied on a prior run.
  * Idempotency key matches the one the successful run emitted, so
@@ -785,5 +956,8 @@ function buildRepos() {
     leads: new LeadRepository(),
     summaries: new SummaryRepository(),
     threads: new ThreadRepository(),
+    campaigns: new CampaignRepository(),
+    campaignSteps: new CampaignStepRepository(),
+    campaignEnrollments: new CampaignEnrollmentRepository(),
   };
 }
