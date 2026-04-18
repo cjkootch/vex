@@ -227,12 +227,21 @@ export class CallsController {
    * audience is always Twilio. `text` query param carries the
    * URL-encoded script the demo endpoint set.
    */
+  /**
+   * Unauthenticated — intentionally. The demo path passes the script
+   * via a URL-encoded query param, which makes Twilio's signature
+   * round-trip brittle (the URL that gets signed doesn't always match
+   * what arrives at the handler after Fastify/Node normalization).
+   * Side-effect-free (returns TwiML, touches nothing), so skipping
+   * signature verification is acceptable for this test-only route.
+   * Production calls still flow through /calls/twilio/twiml which is
+   * signature-verified.
+   */
   @Post("twilio/demo-twiml")
   @SkipThrottle()
   @Header("content-type", "text/xml")
   @HttpCode(200)
   async demoTwiml(@Req() req: RawBodyRequest<FastifyRequest>): Promise<string> {
-    this.verifyTwilio(req);
     const query = (req.query ?? {}) as Record<string, unknown>;
     const text =
       typeof query["text"] === "string" && query["text"].length > 0
@@ -305,6 +314,19 @@ export class CallsController {
   async statusCallback(@Req() req: RawBodyRequest<FastifyRequest>): Promise<void> {
     const { params, workflowId } = this.parseTwilio(req);
     await this.service.handleStatusCallback(workflowId, params);
+  }
+
+  /**
+   * Demo-call status callback. Unauthenticated + no-op — we don't
+   * drive a workflow for demo calls, so the lifecycle events are only
+   * useful if something goes wrong and we want to look at the logs.
+   * Accept + 204 so Twilio doesn't retry.
+   */
+  @Post("twilio/demo-status")
+  @SkipThrottle()
+  @HttpCode(204)
+  async demoStatusCallback(): Promise<void> {
+    return;
   }
 
   @Post("twilio/recording")
