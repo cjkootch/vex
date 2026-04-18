@@ -142,7 +142,7 @@ export function ConversationThread({ turns, onTurns }: Props) {
             placeholder="Ask Vex…"
             rows={1}
             data-testid="chat-input"
-            className="min-h-[44px] flex-1 resize-none rounded-md border border-line bg-muted/60 px-3 py-2 text-sm text-white outline-none focus:border-accent"
+            className="min-h-[44px] flex-1 resize-none rounded-md border border-line bg-muted/60 px-3 py-2 text-base text-white outline-none focus:border-accent md:text-sm"
           />
           <button
             type="submit"
