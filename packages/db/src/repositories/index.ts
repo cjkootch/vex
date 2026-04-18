@@ -17,6 +17,16 @@ export {
   type CampaignRollups,
   type CampaignWithRollups,
 } from "./campaign-repository.js";
+export {
+  CampaignStepRepository,
+  type CampaignStepCreateInput,
+  type CampaignStepUpdatePatch,
+} from "./campaign-step-repository.js";
+export {
+  CampaignEnrollmentRepository,
+  type EnrollInput,
+  type EnrollmentListFilter,
+} from "./campaign-enrollment-repository.js";
 export { ActivityRepository, type ActivityInsert } from "./activity-repository.js";
 export { EventRepository, type EventInsert } from "./event-repository.js";
 export { WorkspaceRepository } from "./workspace-repository.js";
