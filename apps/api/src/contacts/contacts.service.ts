@@ -178,31 +178,29 @@ export class ContactsService {
 
     const id = createId();
     const result = await withTenant(this.db, args.tenantId, async (tx) => {
-      // Dedupe guard: if any supplied email is already attached to a
-      // contact in this tenant, refuse with a 409 Conflict pointing at
-      // the existing row. Prevents the hand-entry path from seeding
-      // duplicate people for the same address — the approval executor
-      // has its own idempotency guard (appliedObjectId).
-      for (const email of args.emails ?? []) {
-        const existing = await this.contacts.findByEmail(tx, email);
-        if (existing) {
-          throw new ConflictException({
-            message: `contact with email ${email} already exists`,
-            existingContactId: existing.id,
-          });
-        }
+      // Unified dedupe path — the approval executor calls the same
+      // \`createWithDedupeCheck\` helper so both the direct API and the
+      // approval routes collapse onto one email-overlap check.
+      const created = await this.contacts.createWithDedupeCheck(
+        tx,
+        args.tenantId,
+        {
+          id,
+          orgId: primary.orgId,
+          fullName: args.fullName,
+          ...(args.title !== undefined ? { title: args.title } : {}),
+          ...(args.emails !== undefined ? { emails: args.emails } : {}),
+          ...(args.phones !== undefined ? { phones: args.phones } : {}),
+          ...(args.timezone !== undefined ? { timezone: args.timezone } : {}),
+        },
+      );
+      if (created.kind === "duplicate") {
+        throw new ConflictException({
+          message: `contact with email ${created.matchedEmail} already exists`,
+          existingContactId: created.contact.id,
+        });
       }
-      // `contacts.org_id` points at the primary for backwards-compat
-      // with readers that predate the memberships table.
-      const contact = await this.contacts.create(tx, args.tenantId, {
-        id,
-        orgId: primary.orgId,
-        fullName: args.fullName,
-        ...(args.title !== undefined ? { title: args.title } : {}),
-        ...(args.emails !== undefined ? { emails: args.emails } : {}),
-        ...(args.phones !== undefined ? { phones: args.phones } : {}),
-        ...(args.timezone !== undefined ? { timezone: args.timezone } : {}),
-      });
+      const contact = created.contact;
 
       const memberships: ContactOrgMembership[] = [];
       for (const org of normalisedOrgs) {

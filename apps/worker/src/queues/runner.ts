@@ -440,13 +440,43 @@ async function applyCreateCompany(
     await recordExecutorReplay(tx, deps, tenantId, approval, "crm.create_company");
     return;
   }
-  const id = createId();
-  await deps.organizations.create(tx, tenantId, {
-    id,
-    legalName: payload.legalName,
-    ...(payload.domain ? { domain: payload.domain } : {}),
-    ...(payload.industry ? { industry: payload.industry } : {}),
-  });
+  const newId = createId();
+  // Unified dedupe — same helper the direct POST /organizations
+  // path uses. If the approved payload matches an existing org,
+  // mark the approval as applied against the existing id and emit
+  // a replay-style audit instead of minting a duplicate.
+  const result = await deps.organizations.createWithDedupeCheck(
+    tx,
+    tenantId,
+    {
+      id: newId,
+      legalName: payload.legalName,
+      ...(payload.domain ? { domain: payload.domain } : {}),
+      ...(payload.industry ? { industry: payload.industry } : {}),
+    },
+  );
+  if (result.kind === "duplicate") {
+    await deps.approvals.markApplied(tx, approval.id, result.organization.id);
+    await deps.events.insertIfNotExists(tx, tenantId, {
+      verb: "approval.executor.replayed",
+      subjectType: "approval",
+      subjectId: approval.id,
+      actorType: "system",
+      actorId: "approval_executor",
+      objectType: "organization",
+      objectId: result.organization.id,
+      occurredAt: new Date(),
+      idempotencyKey: `approval.executor.replayed:${approval.id}`,
+      metadata: {
+        action_type: "crm.create_company",
+        matched_existing: true,
+        applied_object_id: result.organization.id,
+        reason: "normalized-identity duplicate",
+      },
+    });
+    return;
+  }
+  const id = result.organization.id;
   await deps.approvals.markApplied(tx, approval.id, id);
   await deps.events.insertIfNotExists(tx, tenantId, {
     verb: "organization.created",
@@ -502,15 +532,47 @@ async function applyCreateContact(
       : payload.orgs;
   const primary = normalisedOrgs.find((o) => o.isPrimary)!;
 
-  const id = createId();
-  await deps.contacts.create(tx, tenantId, {
-    id,
-    orgId: primary.orgId,
-    fullName: payload.fullName,
-    ...(payload.title ? { title: payload.title } : {}),
-    ...(payload.emails ? { emails: payload.emails } : {}),
-    ...(payload.phones ? { phones: payload.phones } : {}),
-  });
+  const newId = createId();
+  // Unified email-dedupe — the direct POST /contacts path uses the
+  // same helper. If the approved payload lands on an existing
+  // contact (matching email), point the approval at the existing id
+  // and skip the insert + memberships. Emit a replay-flavoured
+  // audit so operators can see the approval didn't create a new row.
+  const created = await deps.contacts.createWithDedupeCheck(
+    tx,
+    tenantId,
+    {
+      id: newId,
+      orgId: primary.orgId,
+      fullName: payload.fullName,
+      ...(payload.title ? { title: payload.title } : {}),
+      ...(payload.emails ? { emails: payload.emails } : {}),
+      ...(payload.phones ? { phones: payload.phones } : {}),
+    },
+  );
+  if (created.kind === "duplicate") {
+    await deps.approvals.markApplied(tx, approval.id, created.contact.id);
+    await deps.events.insertIfNotExists(tx, tenantId, {
+      verb: "approval.executor.replayed",
+      subjectType: "approval",
+      subjectId: approval.id,
+      actorType: "system",
+      actorId: "approval_executor",
+      objectType: "contact",
+      objectId: created.contact.id,
+      occurredAt: new Date(),
+      idempotencyKey: `approval.executor.replayed:${approval.id}`,
+      metadata: {
+        action_type: "crm.create_contact",
+        matched_existing: true,
+        applied_object_id: created.contact.id,
+        matched_email: created.matchedEmail,
+        reason: "email-overlap duplicate",
+      },
+    });
+    return;
+  }
+  const id = created.contact.id;
   for (const org of normalisedOrgs) {
     await deps.memberships.create(tx, tenantId, {
       contactId: id,

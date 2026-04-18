@@ -170,29 +170,29 @@ export class OrganizationsController {
     const { tenantId, userId } = this.tenant;
 
     const organization = await withTenant(this.db, tenantId, async (tx) => {
-      // Dedupe guard: look for an existing org in this tenant whose
-      // normalized legal name or domain matches. Catches variations
-      // like "Vector Trade Capital" vs "Vector Trade Capital LLC" and
-      // "vexhq.ai" vs "www.vexhq.ai" before the insert. The DB still
-      // has its own unique constraints as a last-resort net.
-      const duplicate = await this.organizations.findByNormalizedIdentity(
-        tx,
-        input.legalName,
-        input.domain ?? null,
-      );
-      if (duplicate) {
-        throw new ConflictException({
-          message: `organization ${input.legalName} already exists`,
-          existingOrganizationId: duplicate.id,
-        });
-      }
       try {
-        const row = await this.organizations.create(tx, tenantId, {
-          id,
-          legalName: input.legalName,
-          ...(input.domain ? { domain: input.domain } : {}),
-          ...(input.industry ? { industry: input.industry } : {}),
-        });
+        // Unified dedupe path — approval executor also calls
+        // createWithDedupeCheck so both routes collapse onto one
+        // normalized-identity check. "Vector Trade Capital" vs
+        // "Vector Trade Capital LLC" and "vexhq.ai" vs "www.vexhq.ai"
+        // are caught here before any insert runs.
+        const result = await this.organizations.createWithDedupeCheck(
+          tx,
+          tenantId,
+          {
+            id,
+            legalName: input.legalName,
+            ...(input.domain ? { domain: input.domain } : {}),
+            ...(input.industry ? { industry: input.industry } : {}),
+          },
+        );
+        if (result.kind === "duplicate") {
+          throw new ConflictException({
+            message: `organization ${input.legalName} already exists`,
+            existingOrganizationId: result.organization.id,
+          });
+        }
+        const row = result.organization;
         await this.events.insertIfNotExists(tx, tenantId, {
           verb: "organization.created",
           subjectType: "organization",

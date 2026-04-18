@@ -20,6 +20,31 @@ export class ContactRepository {
   }
 
   /**
+   * Dedupe-aware create. Walks the supplied emails against existing
+   * contacts and short-circuits if any match, so both the direct API
+   * path and the approval executor get the same collision behavior.
+   * Returns a tagged result — caller decides whether to throw (direct)
+   * or mark-applied + emit a replay event (executor).
+   */
+  async createWithDedupeCheck(
+    tx: Tx,
+    tenantId: string,
+    input: ContactCreateInput,
+  ): Promise<
+    | { kind: "created"; contact: Contact }
+    | { kind: "duplicate"; contact: Contact; matchedEmail: string }
+  > {
+    for (const email of input.emails ?? []) {
+      const duplicate = await this.findByEmail(tx, email);
+      if (duplicate) {
+        return { kind: "duplicate", contact: duplicate, matchedEmail: email };
+      }
+    }
+    const contact = await this.create(tx, tenantId, input);
+    return { kind: "created", contact };
+  }
+
+  /**
    * Plain create — used by the UI-driven `POST /contacts` endpoint.
    * The ingestion path continues to use `upsertByExternalKey` equivalents
    * so dedupe logic stays out of the hand-entry path.
