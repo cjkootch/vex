@@ -6,16 +6,27 @@ import {
 } from "@vex/db";
 import {
   AnthropicAdapter,
+  OpenAIAdapter,
   S3Uploader,
   createTwilioClient,
 } from "@vex/integrations";
 import { InMemoryCostLedger, initOtel, shutdownOtel } from "@vex/telemetry";
 import { AgentScanner } from "./scanner.js";
+import {
+  FUEL_SERIES_CONFIG,
+  buildEiaProvider,
+  runMarketDataTick,
+} from "./jobs/market-data-job.js";
 import { startBullWorker } from "./queues/runner.js";
 import { startTemporalWorker } from "./temporal/runner.js";
 
 const DEFAULT_WORKSPACE_ID = "01HSEEDWRK0000000000000001";
 const SCANNER_INTERVAL_MS = 60 * 60 * 1000;
+/**
+ * EIA daily series publish once/day, weekly series once/week. Polling
+ * every 6h keeps the feed warm without burning API quota.
+ */
+const MARKET_DATA_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 /**
  * The worker process hosts two runtimes:
@@ -40,6 +51,10 @@ async function main(): Promise<void> {
   const costLedger = new InMemoryCostLedger();
   const anthropic = new AnthropicAdapter({
     apiKey: env.ANTHROPIC_API_KEY,
+    costLedger,
+  });
+  const openai = new OpenAIAdapter({
+    apiKey: env.OPENAI_API_KEY,
     costLedger,
   });
 
@@ -115,8 +130,36 @@ async function main(): Promise<void> {
     console.error("initial scan failed", err);
   });
 
+  // Market-data tick — ingest latest EIA petroleum + natgas spot prices
+  // into fuel_market_rates. Boot-time + every 6h. Skipped entirely when
+  // EIA_API_KEY is absent so dev environments don't fail on a missing
+  // credential.
+  const marketProvider = buildEiaProvider(env.EIA_API_KEY);
+  let marketDataTimer: NodeJS.Timeout | null = null;
+  if (marketProvider) {
+    const tick = (): void => {
+      void runMarketDataTick({
+        db,
+        anthropic,
+        openai,
+        costLedger,
+        provider: marketProvider,
+        series: FUEL_SERIES_CONFIG,
+        workspaceId: DEFAULT_WORKSPACE_ID,
+      }).then((result) => {
+        if (result.status === "failed") {
+          // eslint-disable-next-line no-console
+          console.error("market-data tick failed", result.error);
+        }
+      });
+    };
+    marketDataTimer = setInterval(tick, MARKET_DATA_INTERVAL_MS);
+    tick();
+  }
+
   const shutdown = async (): Promise<void> => {
     clearInterval(scannerTimer);
+    if (marketDataTimer) clearInterval(marketDataTimer);
     await bull.close();
     temporal.shutdown();
     await shutdownOtel();
