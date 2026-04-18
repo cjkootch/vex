@@ -147,6 +147,33 @@ const RouteMapPanel = z.object({
     .optional(),
 });
 
+/**
+ * Single-deal scorecard — surfaces the calculator outputs (EBITDA,
+ * margin, score, recommendation) plus compliance flags. Used when
+ * the user asks about a specific deal's economics so the answer
+ * isn't buried in a generic table row.
+ */
+const DealScorecardPanel = z.object({
+  type: z.literal("deal_scorecard"),
+  dealRef: z.string().min(1),
+  product: z.string().optional(),
+  status: z.string().optional(),
+  buyer: z.string().optional(),
+  lane: z.string().optional(),
+  volumeUsg: z.string().optional(),
+  metrics: z
+    .array(
+      z.object({
+        label: z.string().min(1),
+        value: z.string().min(1),
+        tone: z.enum(["good", "warn", "bad", "neutral"]).optional(),
+      }),
+    )
+    .min(1),
+  recommendation: z.string().optional(),
+  flags: z.array(z.string()).optional(),
+});
+
 export const ManifestPanel = z.discriminatedUnion("type", [
   ProfilePanel,
   TablePanel,
@@ -159,6 +186,7 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   DisambiguationPanel,
   ConfirmEntityPanel,
   RouteMapPanel,
+  DealScorecardPanel,
   // Signal-only panel: ManifestCanvas intercepts it to switch workspace
   // mode and show a toast, never renders a concrete component.
   WorkspaceModeSwitchPanel,

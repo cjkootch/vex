@@ -43,34 +43,42 @@ function buildDeps(
       }
     : null;
 
+  // Drop per-field `as never` casts: they collapse the inner vi.fn
+  // types to `never`, which kills `.mock.calls` access in test
+  // assertions. Inferring the literal type keeps the Mock typing.
   const deps = {
-    db: {} as never,
+    db: {},
     approvals: {
       findById: vi.fn().mockResolvedValue(approvalRow),
-    } as never,
+    },
     deals: {
       updateStatus: vi.fn().mockResolvedValue(undefined),
       create: vi.fn().mockResolvedValue(undefined),
-    } as never,
+    },
     organizations: {
       create: vi.fn().mockResolvedValue(undefined),
-    } as never,
+    },
     contacts: {
       create: vi.fn().mockResolvedValue(undefined),
-    } as never,
+    },
     memberships: {
       create: vi.fn().mockResolvedValue(undefined),
-    } as never,
+    },
     events: {
       insertIfNotExists: vi.fn().mockResolvedValue(undefined),
-    } as never,
+    },
   };
 
   return deps;
 }
 
 function runJob(deps: ReturnType<typeof buildDeps>): Promise<void> {
-  const executor = buildApprovalExecutor(deps);
+  // Cast at the boundary — buildApprovalExecutor expects the full
+  // repo interfaces; we only stub the methods the executor actually
+  // calls, so a structural mismatch is intentional.
+  const executor = buildApprovalExecutor(
+    deps as unknown as Parameters<typeof buildApprovalExecutor>[0],
+  );
   return executor({
     data: { approval_id: APPROVAL_ID, workspace_id: TENANT },
   } as never);

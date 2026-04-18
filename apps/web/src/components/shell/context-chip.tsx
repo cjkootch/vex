@@ -86,7 +86,7 @@ export function ContextChip({
       />
       <span className="font-medium text-white">{label}</span>
       {sublabel ? (
-        <span className="text-xs text-white/60">
+        <span className="hidden text-xs text-white/60 sm:inline">
           <span aria-hidden="true" className="mx-1">
             ·
           </span>

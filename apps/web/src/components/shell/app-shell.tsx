@@ -150,13 +150,29 @@ export function AppShell({ children }: { children: ReactNode }) {
 function ShellLayout({ children }: { children: ReactNode }) {
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [autonomyOpen, setAutonomyOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const pending = usePendingApprovalCount();
   const pathname = usePathname() ?? "";
 
+  // Close the mobile drawer on route change so tapping a link doesn't
+  // leave it hovering over the new page.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [pathname]);
+
   return (
     <div className="flex h-screen flex-col bg-canvas text-white">
-      <TopBar pending={pending} />
+      <TopBar
+        pending={pending}
+        onOpenMobileNav={() => setMobileNavOpen(true)}
+      />
       <CommandPalette />
+      <MobileNav
+        open={mobileNavOpen}
+        onClose={() => setMobileNavOpen(false)}
+        pathname={pathname}
+        pending={pending}
+      />
       <div className="flex flex-1 overflow-hidden">
         <SideRail
           collapsed={sideCollapsed}
@@ -174,21 +190,35 @@ function ShellLayout({ children }: { children: ReactNode }) {
   );
 }
 
-function TopBar({ pending }: { pending: number }) {
+function TopBar({
+  pending,
+  onOpenMobileNav,
+}: {
+  pending: number;
+  onOpenMobileNav: () => void;
+}) {
   const { mode, config, contextLabel, contextSublabel, resetMode } =
     useWorkspaceMode();
   const chipType = CONTEXT_TYPE_MAP[config.contextType] ?? "none";
   const onClear = mode !== WorkspaceMode.Global ? resetMode : undefined;
   return (
-    <header className="flex h-12 flex-shrink-0 items-center border-b border-line bg-muted/40 px-4">
+    <header className="flex h-12 flex-shrink-0 items-center gap-2 border-b border-line bg-muted/40 px-3 md:px-4">
+      <button
+        type="button"
+        onClick={onOpenMobileNav}
+        aria-label="Open navigation"
+        className="-ml-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-white/70 hover:bg-white/5 hover:text-white md:hidden"
+      >
+        <Icon path="M4 6h16M4 12h16M4 18h16" />
+      </button>
       <Link
         href="/app"
         aria-label="Vex home"
-        className="flex items-center text-white hover:text-white/80"
+        className="flex flex-shrink-0 items-center text-white hover:text-white/80"
       >
         <VexLogo className="h-6 w-9" />
       </Link>
-      <div className="flex flex-1 justify-center px-6">
+      <div className="flex min-w-0 flex-1 justify-start overflow-hidden px-2 md:justify-center md:px-6">
         {/* exactOptionalPropertyTypes: spread onClear only when set. */}
         <ContextChip
           type={chipType}
@@ -198,12 +228,12 @@ function TopBar({ pending }: { pending: number }) {
           {...(onClear ? { onClear } : {})}
         />
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex flex-shrink-0 items-center gap-2 md:gap-3">
         <SearchHint />
         <ApprovalBadge count={pending} />
         <div
           aria-label={vexCopy.navigation.exit_workspace}
-          className="h-8 w-8 rounded-full bg-white/10"
+          className="h-8 w-8 flex-shrink-0 rounded-full bg-white/10"
         />
       </div>
     </header>
@@ -306,6 +336,101 @@ function SideRail({ collapsed, onToggle, pathname, pending }: SideRailProps) {
         {collapsed ? "›" : "‹"}
       </button>
     </aside>
+  );
+}
+
+/**
+ * Mobile pop-over navigation. Slides in from the left with a
+ * backdrop; tap a link or the backdrop to close. Only rendered on
+ * sub-`md` viewports (the SideRail takes over above that). Escape
+ * key also closes, so the keyboard-only path stays sane.
+ */
+function MobileNav({
+  open,
+  onClose,
+  pathname,
+  pending,
+}: {
+  open: boolean;
+  onClose: () => void;
+  pathname: string;
+  pending: number;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    // Lock body scroll while the drawer is open so the page behind
+    // doesn't bounce around on iOS when the user drags the drawer.
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prev;
+    };
+  }, [open, onClose]);
+
+  return (
+    <div
+      className={`fixed inset-0 z-40 md:hidden ${
+        open ? "pointer-events-auto" : "pointer-events-none"
+      }`}
+      aria-hidden={!open}
+    >
+      <button
+        type="button"
+        aria-label="Close navigation"
+        onClick={onClose}
+        tabIndex={open ? 0 : -1}
+        className={`absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-200 ${
+          open ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <nav
+        aria-label="Mobile navigation"
+        className={`absolute inset-y-0 left-0 flex w-64 flex-col border-r border-line bg-canvas shadow-2xl transition-transform duration-200 ease-out ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex h-12 items-center border-b border-line px-4">
+          <VexLogo className="h-6 w-9 text-white" />
+        </div>
+        <div className="flex-1 overflow-auto p-2">
+          {NAV_ITEMS.map((item) => {
+            const active =
+              item.matchKey === "/app"
+                ? pathname === "/app"
+                : pathname === item.matchKey ||
+                  pathname.startsWith(`${item.matchKey}/`);
+            const badge =
+              item.href === "/app/approvals" && pending > 0 ? pending : null;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                aria-current={active ? "page" : undefined}
+                onClick={onClose}
+                className={`mb-1 flex items-center gap-3 rounded-md px-3 py-3 text-sm transition ${
+                  active
+                    ? "bg-white/10 text-white"
+                    : "text-white/70 hover:bg-white/5 hover:text-white"
+                }`}
+              >
+                <Icon path={item.iconPath} />
+                <span>{item.label}</span>
+                {badge !== null ? (
+                  <span className="ml-auto rounded-full bg-amber-400/20 px-1.5 py-0.5 text-xs text-amber-300">
+                    {badge}
+                  </span>
+                ) : null}
+              </Link>
+            );
+          })}
+        </div>
+      </nav>
+    </div>
   );
 }
 

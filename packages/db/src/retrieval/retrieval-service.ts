@@ -1,4 +1,4 @@
-import { and, desc, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import {
   approxTokens,
   packTokens,
@@ -7,8 +7,10 @@ import {
 } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { contacts } from "../schema/contacts.js";
+import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
 import { embeddingChunks } from "../schema/embedding-chunks.js";
 import { fuelDeals } from "../schema/fuel-deals.js";
+import { fuelDealScenarios } from "../schema/fuel-deal-scenarios.js";
 import { organizations } from "../schema/organizations.js";
 import { summaries } from "../schema/summaries.js";
 import { ScopeResolver, type ResolvedScope } from "./scope-resolver.js";
@@ -274,6 +276,7 @@ export class RetrievalService {
         legalName: organizations.legalName,
         domain: organizations.domain,
         industry: organizations.industry,
+        fitScore: organizations.fitScore,
         updatedAt: organizations.updatedAt,
       })
       .from(organizations);
@@ -282,18 +285,44 @@ export class RetrievalService {
         id: contacts.id,
         fullName: contacts.fullName,
         title: contacts.title,
+        emails: contacts.emails,
+        orgId: contacts.orgId,
         updatedAt: contacts.updatedAt,
       })
       .from(contacts);
+    // Deal query joins the buyer org for the name + the latest
+    // active scenario for the calculator output (margin, EBITDA,
+    // score, recommendation). One row per deal — left-join
+    // tolerates deals with no scenario yet.
+    const buyerAlias = organizations;
     const dealQuery = tx
       .select({
         id: fuelDeals.id,
         dealRef: fuelDeals.dealRef,
         status: fuelDeals.status,
         product: fuelDeals.product,
+        volumeUsg: fuelDeals.volumeUsg,
+        incoterm: fuelDeals.incoterm,
+        destinationPort: fuelDeals.destinationPort,
+        originPort: fuelDeals.originPort,
+        ofacStatus: fuelDeals.ofacScreeningStatus,
+        complianceHold: fuelDeals.complianceHold,
+        buyerOrgId: fuelDeals.buyerOrgId,
+        buyerName: buyerAlias.legalName,
+        scenarioScore: fuelDealScenarios.score,
+        scenarioRec: fuelDealScenarios.recommendation,
+        scenarioJson: fuelDealScenarios.resultsJson,
         updatedAt: fuelDeals.updatedAt,
       })
-      .from(fuelDeals);
+      .from(fuelDeals)
+      .leftJoin(buyerAlias, eq(fuelDeals.buyerOrgId, buyerAlias.id))
+      .leftJoin(
+        fuelDealScenarios,
+        and(
+          eq(fuelDealScenarios.dealId, fuelDeals.id),
+          eq(fuelDealScenarios.isActive, true),
+        ),
+      );
 
     const [orgRows, contactRows, dealRows] = await Promise.all([
       patterns.length > 0 && !mentionsCompanies
@@ -336,7 +365,8 @@ export class RetrievalService {
     const now = Date.now();
 
     for (const o of orgRows) {
-      const text = `Organization ${o.legalName}${o.domain ? ` (${o.domain})` : ""}${o.industry ? ` — industry: ${o.industry}` : ""}.`;
+      const fit = o.fitScore !== null ? `, fit ${(o.fitScore * 100).toFixed(0)}` : "";
+      const text = `Organization ${o.legalName}${o.domain ? ` (${o.domain})` : ""}${o.industry ? ` — ${o.industry}` : ""}${fit}.`;
       items.push({
         chunk_id: o.id,
         object_type: "organization",
@@ -354,7 +384,8 @@ export class RetrievalService {
       });
     }
     for (const c of contactRows) {
-      const text = `Contact ${c.fullName}${c.title ? ` — ${c.title}` : ""}.`;
+      const email = c.emails?.[0] ?? null;
+      const text = `Contact ${c.fullName}${c.title ? ` — ${c.title}` : ""}${email ? ` · ${email}` : ""}.`;
       items.push({
         chunk_id: c.id,
         object_type: "contact",
@@ -372,7 +403,7 @@ export class RetrievalService {
       });
     }
     for (const d of dealRows) {
-      const text = `Fuel deal ${d.dealRef} — product ${d.product}, status ${d.status}.`;
+      const text = describeFuelDeal(d);
       items.push({
         chunk_id: d.id,
         object_type: "fuel_deal",
@@ -541,6 +572,104 @@ function truncateToCap(pack: EvidencePack, cap: number): EvidencePack {
   }
   return { summaries: pack.summaries, items: keep, estimated_tokens: estimated };
 }
+
+/**
+ * Compose a one-line description of a fuel deal that surfaces the
+ * fields a CEO/CFO actually asks about: buyer, volume, status,
+ * lane, EBITDA + margin (from the active scenario), recommendation,
+ * and any compliance flags. Prose form so it lands cleanly in
+ * Claude's evidence pack without bloating the token budget.
+ */
+function describeFuelDeal(d: {
+  dealRef: string;
+  status: string;
+  product: string;
+  volumeUsg: number;
+  incoterm: string;
+  destinationPort: string | null;
+  originPort: string | null;
+  ofacStatus: string;
+  complianceHold: boolean;
+  buyerName: string | null;
+  scenarioScore: number | null;
+  scenarioRec: string | null;
+  scenarioJson: Record<string, unknown> | null;
+}): string {
+  const parts: string[] = [];
+  parts.push(`Fuel deal ${d.dealRef}`);
+  parts.push(`product ${d.product}`);
+  parts.push(`status ${d.status}`);
+  if (d.buyerName) parts.push(`buyer ${d.buyerName}`);
+  parts.push(`volume ${formatVolumeUsg(d.volumeUsg)}`);
+  if (d.originPort && d.destinationPort) {
+    parts.push(`lane ${d.originPort}→${d.destinationPort} ${d.incoterm.toUpperCase()}`);
+  } else if (d.destinationPort) {
+    parts.push(`destination ${d.destinationPort}`);
+  }
+  const totals = readTotals(d.scenarioJson);
+  if (totals.ebitdaUsd !== null) {
+    parts.push(`EBITDA ${formatUsd(totals.ebitdaUsd)}`);
+  }
+  if (totals.ebitdaMarginPct !== null) {
+    parts.push(`margin ${totals.ebitdaMarginPct.toFixed(1)}%`);
+  }
+  const perUsg = readPerUsg(d.scenarioJson);
+  if (perUsg.netMargin !== null) {
+    parts.push(`net ${perUsg.netMargin.toFixed(3)} $/USG`);
+  }
+  if (d.scenarioScore !== null) {
+    parts.push(`score ${Math.round(d.scenarioScore)}/100`);
+  }
+  if (d.scenarioRec) parts.push(`recommendation ${d.scenarioRec}`);
+  if (d.complianceHold) parts.push("compliance hold");
+  if (d.ofacStatus !== "cleared") parts.push(`OFAC ${d.ofacStatus.replace("_", " ")}`);
+  return parts.join(" · ") + ".";
+}
+
+function readTotals(json: Record<string, unknown> | null): {
+  ebitdaUsd: number | null;
+  ebitdaMarginPct: number | null;
+} {
+  if (!json || typeof json !== "object") return { ebitdaUsd: null, ebitdaMarginPct: null };
+  const totals = (json as { totals?: unknown }).totals;
+  if (!totals || typeof totals !== "object") return { ebitdaUsd: null, ebitdaMarginPct: null };
+  const t = totals as Record<string, unknown>;
+  return {
+    ebitdaUsd: typeof t["ebitdaUsd"] === "number" ? (t["ebitdaUsd"] as number) : null,
+    ebitdaMarginPct:
+      typeof t["ebitdaMarginPct"] === "number"
+        ? (t["ebitdaMarginPct"] as number)
+        : null,
+  };
+}
+
+function readPerUsg(json: Record<string, unknown> | null): { netMargin: number | null } {
+  if (!json || typeof json !== "object") return { netMargin: null };
+  const perUsg = (json as { perUsg?: unknown }).perUsg;
+  if (!perUsg || typeof perUsg !== "object") return { netMargin: null };
+  const p = perUsg as Record<string, unknown>;
+  return {
+    netMargin: typeof p["netMargin"] === "number" ? (p["netMargin"] as number) : null,
+  };
+}
+
+function formatVolumeUsg(usg: number): string {
+  if (usg >= 1_000_000) return `${(usg / 1_000_000).toFixed(1)}M USG`;
+  if (usg >= 1_000) return `${(usg / 1_000).toFixed(0)}k USG`;
+  return `${usg} USG`;
+}
+
+function formatUsd(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `$${(n / 1e3).toFixed(0)}k`;
+  return `$${n.toFixed(0)}`;
+}
+
+// Ensure the unused-imports linter doesn't cull contactOrgMemberships —
+// we'll wire it into a contact-deal-count enrichment in a follow-up.
+void contactOrgMemberships;
 
 // kept for test reuse
 export const __test = { rerankScore, truncateToCap, normalizedRrf };
