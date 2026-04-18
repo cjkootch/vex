@@ -17,6 +17,7 @@ import {
   type Db,
   type EventRepository,
   type SummaryRepository,
+  type TouchpointRepository,
   type WorkspaceRepository,
 } from "@vex/db";
 import {
@@ -37,6 +38,7 @@ import {
   CALLS_S3_UPLOADER,
   CALLS_SUMMARIES_REPO,
   CALLS_TASK_QUEUE,
+  CALLS_TOUCHPOINTS_REPO,
   CALLS_TEMPORAL_CLIENT,
   CALLS_TWILIO_CLIENT,
   CALLS_VOICE_SDK_CONFIG,
@@ -124,6 +126,8 @@ export class CallsService {
     @Inject(CALLS_TASK_QUEUE) private readonly taskQueue: string,
     @Inject(CALLS_VOICE_SDK_CONFIG) private readonly voiceSdk: VoiceSdkConfig,
     @Inject(CALLS_APP_BASE_URL) private readonly appBaseUrl: string,
+    @Inject(CALLS_TOUCHPOINTS_REPO)
+    private readonly touchpoints: TouchpointRepository,
   ) {}
 
   /**
@@ -366,6 +370,51 @@ export class CallsService {
       `demo call initiated: sid=${callSid} mode=${mode} to=${args.toNumber} activity=${activity.id}`,
     );
     return { callSid, status, activityId: activity.id };
+  }
+
+  /**
+   * Admin-only test path for SMS + WhatsApp sends. Bypasses the
+   * approval gate and provider normalizer — just fires a message
+   * through the Twilio Messages API and records a touchpoint so the
+   * inbox surfaces it. Used for verifying Twilio credentials + WhatsApp
+   * sender config end-to-end.
+   */
+  async sendDemoMessage(args: {
+    tenantId: string;
+    userId: string;
+    channel: "sms" | "whatsapp";
+    toNumber: string;
+    body: string;
+  }): Promise<{ messageSid: string; status: string; touchpointId: string }> {
+    const msg =
+      args.channel === "whatsapp"
+        ? await this.twilio.sendWhatsApp(args.toNumber, args.body)
+        : await this.twilio.sendSms(args.toNumber, args.body);
+
+    const touchpoint = await withTenant(this.db, args.tenantId, async (tx) => {
+      return this.touchpoints.insert(tx, args.tenantId, {
+        channel: `${args.channel}.sent`,
+        actor: `demo.${args.userId}`,
+        occurredAt: new Date(),
+        metadata: {
+          demo_message: true,
+          direction: "outbound",
+          provider_message_id: msg.sid,
+          to: args.toNumber,
+          text: args.body,
+          preview: args.body,
+        },
+      });
+    });
+
+    this.log.log(
+      `demo ${args.channel} sent: sid=${msg.sid} to=${args.toNumber} touchpoint=${touchpoint.id}`,
+    );
+    return {
+      messageSid: msg.sid,
+      status: msg.status ?? "queued",
+      touchpointId: touchpoint.id,
+    };
   }
 
   async requestHumanBackup(args: {

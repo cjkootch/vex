@@ -50,6 +50,14 @@ export const EnvSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
   /**
+   * Twilio WhatsApp sender. Format: `whatsapp:+E164`. Defaults to
+   * Twilio's shared sandbox number (`+14155238886`) — works only
+   * after the recipient has sent `join <word>` to that number once.
+   * For production, set this to your own approved WhatsApp-enabled
+   * number with the `whatsapp:` prefix preserved.
+   */
+  TWILIO_WHATSAPP_FROM: z.string().default("whatsapp:+14155238886"),
+  /**
    * Sprint J — browser live-listen + operator-join use Twilio's Voice
    * SDK. The SDK authenticates with a short-lived Access Token signed
    * by an API Key + Secret (distinct from the Account Auth Token).

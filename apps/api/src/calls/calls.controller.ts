@@ -35,6 +35,14 @@ const RequestBackupBody = z
   })
   .default({});
 
+const DemoMessageBody = z.object({
+  channel: z.enum(["sms", "whatsapp"]),
+  to: z
+    .string()
+    .regex(/^\+[1-9]\d{7,14}$/, "to must be E.164 (e.g. +18324927169)"),
+  body: z.string().min(1).max(1_500),
+});
+
 const DemoCallBody = z.object({
   phone: z
     .string()
@@ -206,6 +214,27 @@ export class CallsController {
    * `POST /calls` → approval gate → workflow → conference. Sprint L
    * replaces this scripted path with real-time AI voice.
    */
+  /**
+   * Admin-only SMS + WhatsApp test send. Bypasses the approval gate +
+   * normalizer pipeline. Lands as a touchpoint in the inbox with the
+   * `demo_message: true` flag.
+   */
+  @Post("demo-message")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @RequireRole(UserRole.Admin)
+  @HttpCode(202)
+  async demoMessage(@Body() raw: unknown) {
+    const parsed = DemoMessageBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    return this.service.sendDemoMessage({
+      tenantId: this.tenant.tenantId,
+      userId: this.tenant.userId,
+      channel: parsed.data.channel,
+      toNumber: parsed.data.to,
+      body: parsed.data.body,
+    });
+  }
+
   @Post("demo")
   @UseGuards(JwtAuthGuard, RolesGuard)
   @RequireRole(UserRole.Admin)
