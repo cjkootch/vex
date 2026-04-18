@@ -248,25 +248,43 @@ jobs:
           fi
           echo "using database=$db_name role=$role_name"
 
-          # The API returns the connection URI on the connection_uris array.
-          conn=$(
-            curl -fsS --noproxy '*' -G \
-              -H "Authorization: Bearer $NEON_API_KEY" \
-              --data-urlencode "database_name=$db_name" \
-              --data-urlencode "role_name=$role_name" \
-              --data-urlencode "pooled=true" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri" \
-              | jq -r '.uri'
-          )
-          conn_direct=$(
-            curl -fsS --noproxy '*' -G \
-              -H "Authorization: Bearer $NEON_API_KEY" \
-              --data-urlencode "database_name=$db_name" \
-              --data-urlencode "role_name=$role_name" \
-              --data-urlencode "pooled=false" \
-              "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri" \
-              | jq -r '.uri'
-          )
+          # Neon endpoint provisioning is async — on a freshly
+          # recreated branch, /connection_uri can 404 for up to
+          # ~20s while the compute warms. Retry a few times and log
+          # the response body on every attempt so a persistent
+          # non-warmup failure (bad role/db, wrong API path, etc.)
+          # is immediately diagnosable.
+          fetch_conn() {
+            local pooled="$1"
+            for attempt in 1 2 3 4 5 6; do
+              body=$(
+                curl -sS --noproxy '*' -G \
+                  -w '\n%{http_code}' \
+                  -H "Authorization: Bearer $NEON_API_KEY" \
+                  --data-urlencode "database_name=$db_name" \
+                  --data-urlencode "role_name=$role_name" \
+                  --data-urlencode "pooled=$pooled" \
+                  "https://console.neon.tech/api/v2/projects/$NEON_PROJECT_ID/branches/$BRANCH_ID/connection_uri"
+              )
+              status=$(echo "$body" | tail -n1)
+              json=$(echo "$body" | sed '$d')
+              if [ "$status" = "200" ]; then
+                echo "$json" | jq -r '.uri'
+                return 0
+              fi
+              echo "connection_uri pooled=$pooled attempt $attempt http=$status body=$json" >&2
+              sleep $((attempt * 3))
+            done
+            return 1
+          }
+          conn=$(fetch_conn true) || {
+            echo "::error::connection_uri (pooled) never returned 200"
+            exit 1
+          }
+          conn_direct=$(fetch_conn false) || {
+            echo "::error::connection_uri (direct) never returned 200"
+            exit 1
+          }
 
           echo "branch_id=$BRANCH_ID" >> "$GITHUB_OUTPUT"
           echo "::add-mask::$conn"
