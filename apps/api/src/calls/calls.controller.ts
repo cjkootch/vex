@@ -35,6 +35,13 @@ const RequestBackupBody = z
   })
   .default({});
 
+const DemoCallBody = z.object({
+  phone: z
+    .string()
+    .regex(/^\+[1-9]\d{7,14}$/, "phone must be E.164 (e.g. +18324927169)"),
+  script: z.string().min(1).max(1_500).optional(),
+});
+
 /**
  * Outbound-call surface.
  *
@@ -180,6 +187,68 @@ export class CallsController {
     lines.push("  </Dial>");
     lines.push("</Response>");
     return lines.join("\n");
+  }
+
+  /**
+   * Fire a scripted-voice demo call. Admin-only, non-interactive —
+   * bypasses the T3 approval gate and the OutboundCallWorkflow
+   * entirely. Dials the number, Twilio plays the script via Polly,
+   * records an `activity` row so `/app/inbox` shows the call.
+   *
+   * This is a test/demo path for verifying the Twilio plumbing end-
+   * to-end. Real operator-initiated calls still flow through
+   * `POST /calls` → approval gate → workflow → conference. Sprint L
+   * replaces this scripted path with real-time AI voice.
+   */
+  @Post("demo")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @RequireRole(UserRole.Admin)
+  @HttpCode(202)
+  async demoCall(@Body() raw: unknown) {
+    const parsed = DemoCallBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const args: {
+      tenantId: string;
+      userId: string;
+      toNumber: string;
+      script?: string;
+    } = {
+      tenantId: this.tenant.tenantId,
+      userId: this.tenant.userId,
+      toNumber: parsed.data.phone,
+    };
+    if (parsed.data.script !== undefined) args.script = parsed.data.script;
+    return this.service.initiateDemoCall(args);
+  }
+
+  /**
+   * TwiML endpoint for the demo-call path. Signature-verified (Twilio
+   * signs its outbound fetch with the account auth token) so the
+   * audience is always Twilio. `text` query param carries the
+   * URL-encoded script the demo endpoint set.
+   */
+  @Post("twilio/demo-twiml")
+  @SkipThrottle()
+  @Header("content-type", "text/xml")
+  @HttpCode(200)
+  async demoTwiml(@Req() req: RawBodyRequest<FastifyRequest>): Promise<string> {
+    this.verifyTwilio(req);
+    const query = (req.query ?? {}) as Record<string, unknown>;
+    const text =
+      typeof query["text"] === "string" && query["text"].length > 0
+        ? (query["text"] as string)
+        : "Hello from Vex. This is a test call.";
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      "<Response>",
+      `  <Say voice="Polly.Joanna">${escapeXml(text)}</Say>`,
+      // Pause gives the callee space to respond even though no one is
+      // listening; keeps the call open long enough to feel like a
+      // real conversation rather than a robocall.
+      '  <Pause length="20"/>',
+      '  <Say voice="Polly.Joanna">Thanks for your time. We will follow up by email. Goodbye.</Say>',
+      "</Response>",
+    ].join("\n");
   }
 
   /**

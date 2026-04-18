@@ -17,6 +17,7 @@ import { CallsService } from "./calls.service.js";
 import {
   CALLS_ACTIVITIES_REPO,
   CALLS_AGENT_RUNS_REPO,
+  CALLS_APP_BASE_URL,
   CALLS_APPROVALS_REPO,
   CALLS_CONTACTS_REPO,
   CALLS_DB_CLIENT,
@@ -69,6 +70,8 @@ export interface CallsModuleConfig {
   s3: S3Uploader;
   voiceSdk: VoiceSdkConfig;
   voiceListener: VoiceListenerConfig;
+  /** Public base URL of apps/api — used by the demo-call TwiML. */
+  appBaseUrl: string;
   /** Temporal task queue the outbound-call workflow runs on. */
   taskQueue: string;
 }
@@ -95,6 +98,7 @@ export class CallsModule {
         { provide: CALLS_TASK_QUEUE, useFactory: () => config.taskQueue },
         { provide: CALLS_VOICE_SDK_CONFIG, useFactory: () => config.voiceSdk },
         { provide: CALLS_VOICE_LISTENER_CONFIG, useFactory: () => config.voiceListener },
+        { provide: CALLS_APP_BASE_URL, useFactory: () => config.appBaseUrl },
         CallsService,
       ],
     };

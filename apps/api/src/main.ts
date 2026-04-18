@@ -268,6 +268,7 @@ async function bootstrap(): Promise<void> {
                   ? `${env.APP_BASE_URL.replace(/^http/i, "ws").replace(/\/$/, "")}/calls/twilio/stream`
                   : "",
               },
+              appBaseUrl: env.APP_BASE_URL ?? "",
               taskQueue: TEMPORAL_TASK_QUEUE,
             }),
           }
