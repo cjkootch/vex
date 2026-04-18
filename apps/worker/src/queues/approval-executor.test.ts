@@ -88,8 +88,26 @@ function buildDeps(
     memberships: {
       create: vi.fn().mockResolvedValue(undefined),
     },
+    campaigns: {
+      findById: vi
+        .fn()
+        .mockResolvedValue({ id: "01HSEEDCPN0000000000000001", tenantId: TENANT }),
+    },
+    campaignSteps: {
+      validateSequence: vi.fn().mockResolvedValue(null),
+    },
+    campaignEnrollments: {
+      enrollBatch: vi
+        .fn()
+        .mockResolvedValue({ createdIds: ["e1", "e2"], existingCount: 0 }),
+    },
     events: {
       insertIfNotExists: vi.fn().mockResolvedValue(undefined),
+    },
+    temporal: {
+      workflow: {
+        start: vi.fn().mockResolvedValue(undefined),
+      },
     },
   };
 
@@ -404,5 +422,124 @@ describe("approval executor — unknown action types", () => {
     const deps = buildDeps(null);
     await runJob(deps);
     expect(deps.events.insertIfNotExists).not.toHaveBeenCalled();
+  });
+});
+
+describe("approval executor — campaign.enroll_batch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const validPayload = {
+    campaign_id: "01HSEEDCPN0000000000000001",
+    contact_ids: ["01HSEEDCNT000000000000001A", "01HSEEDCNT000000000000001B"],
+    recipient_count: 2,
+    plan_summary: [
+      { position: 0, channel: "email", tier: "T2", auto_approve: false },
+    ],
+    rationale: "spring nurture batch",
+  };
+
+  it("enrolls the batch + starts one workflow per new enrollment + emits applied event", async () => {
+    const deps = buildDeps({
+      actionType: "campaign.enroll_batch",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    await runJob(deps);
+
+    expect(deps.campaignEnrollments.enrollBatch).toHaveBeenCalledOnce();
+    const enrollArgs = (
+      deps.campaignEnrollments.enrollBatch as ReturnType<typeof vi.fn>
+    ).mock.calls[0]!;
+    expect(enrollArgs[2]).toBe("01HSEEDCPN0000000000000001");
+    expect(enrollArgs[3]).toEqual(validPayload.contact_ids);
+
+    // One workflow.start per createdId.
+    const starts = (deps.temporal.workflow.start as ReturnType<typeof vi.fn>).mock.calls;
+    expect(starts).toHaveLength(2);
+    expect(starts[0]![1].workflowId).toBe("campaign-enrollment-e1");
+    expect(starts[1]![1].workflowId).toBe("campaign-enrollment-e2");
+
+    expect(deps.approvals.markApplied).toHaveBeenCalledWith(
+      expect.anything(),
+      APPROVAL_ID,
+      expect.stringMatching(/^enroll:/),
+    );
+
+    const appliedEvent = (deps.events.insertIfNotExists as ReturnType<typeof vi.fn>).mock.calls[0]![2];
+    expect(appliedEvent.verb).toBe("campaign.enrollment_batch_applied");
+    expect(appliedEvent.metadata.created_count).toBe(2);
+    expect(appliedEvent.metadata.existing_count).toBe(0);
+  });
+
+  it("fails closed when contact_ids are missing", async () => {
+    const deps = buildDeps({
+      actionType: "campaign.enroll_batch",
+      decision: "approved",
+      proposedPayload: {
+        campaign_id: validPayload.campaign_id,
+        contact_ids: [],
+      },
+    });
+    await runJob(deps);
+    expect(deps.campaignEnrollments.enrollBatch).not.toHaveBeenCalled();
+    expect(deps.temporal.workflow.start).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toMatch(/missing campaign_id or contact_ids/);
+  });
+
+  it("fails closed when the campaign plan became invalid between request and apply", async () => {
+    const deps = buildDeps({
+      actionType: "campaign.enroll_batch",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    (deps.campaignSteps.validateSequence as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      "position gap at step 2",
+    );
+    await runJob(deps);
+    expect(deps.campaignEnrollments.enrollBatch).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toMatch(/plan invalid at approval time/);
+  });
+
+  it("falls back to DB-only (no workflow start) when Temporal is null", async () => {
+    const deps = buildDeps({
+      actionType: "campaign.enroll_batch",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    (deps as { temporal: unknown }).temporal = null;
+    await runJob(deps);
+    expect(deps.campaignEnrollments.enrollBatch).toHaveBeenCalledOnce();
+    expect(deps.approvals.markApplied).toHaveBeenCalledOnce();
+    // Enrollment rows still land; reconciliation cron will adopt them.
+    const appliedEvent = (deps.events.insertIfNotExists as ReturnType<typeof vi.fn>).mock.calls[0]![2];
+    expect(appliedEvent.verb).toBe("campaign.enrollment_batch_applied");
+  });
+
+  it("short-circuits to a replay event when appliedObjectId is set", async () => {
+    const deps = buildDeps({
+      actionType: "campaign.enroll_batch",
+      decision: "approved",
+      proposedPayload: validPayload,
+    });
+    deps.approvals.findById.mockResolvedValue({
+      id: APPROVAL_ID,
+      reviewerId: "01HSEEDPRS0000000000000001",
+      actionType: "campaign.enroll_batch",
+      decision: "approved",
+      proposedPayload: validPayload,
+      appliedObjectId: "enroll:prior",
+    });
+    await runJob(deps);
+    expect(deps.campaignEnrollments.enrollBatch).not.toHaveBeenCalled();
+    expect(deps.temporal.workflow.start).not.toHaveBeenCalled();
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.replayed");
+    expect(event.metadata.action_type).toBe("campaign.enroll_batch");
   });
 });

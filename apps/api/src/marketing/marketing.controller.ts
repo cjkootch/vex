@@ -19,13 +19,14 @@ import { z } from "zod";
 import type { CampaignStatus } from "@vex/domain";
 import type { Client as TemporalClient } from "@temporalio/client";
 import type {
+  ApprovalRepository,
   CampaignEnrollmentRepository,
   CampaignRepository,
   CampaignStepRepository,
   CampaignWithRollups,
+  EventRepository,
   TouchpointRepository,
 } from "@vex/db";
-import { TEMPORAL_TASK_QUEUE, WorkflowId } from "@vex/integrations";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { withTenant, type Db } from "@vex/db";
 
@@ -49,6 +50,8 @@ export const MARKETING_TOUCHPOINTS_REPO = Symbol("MARKETING_TOUCHPOINTS_REPO");
 export const MARKETING_STEPS_REPO = Symbol("MARKETING_STEPS_REPO");
 export const MARKETING_ENROLLMENTS_REPO = Symbol("MARKETING_ENROLLMENTS_REPO");
 export const MARKETING_TEMPORAL_CLIENT = Symbol("MARKETING_TEMPORAL_CLIENT");
+export const MARKETING_APPROVALS_REPO = Symbol("MARKETING_APPROVALS_REPO");
+export const MARKETING_EVENTS_REPO = Symbol("MARKETING_EVENTS_REPO");
 
 const CAMPAIGN_STATUSES = new Set<CampaignStatus>([
   "active",
@@ -171,6 +174,10 @@ export class MarketingController {
     private readonly enrollments: CampaignEnrollmentRepository,
     @Inject(MARKETING_TEMPORAL_CLIENT)
     private readonly temporal: TemporalClient | null,
+    @Inject(MARKETING_APPROVALS_REPO)
+    private readonly approvals: ApprovalRepository,
+    @Inject(MARKETING_EVENTS_REPO)
+    private readonly events: EventRepository,
   ) {}
 
   @Get("campaigns")
@@ -338,71 +345,94 @@ export class MarketingController {
   // Enrollments — recipient state
   // ---------------------------------------------------------------------
 
+  /**
+   * Sprint F — enrolling a batch is now a T2 reviewer gate. The
+   * controller creates a pending `campaign.enroll_batch` approval
+   * carrying the plan summary + recipient count; the approval
+   * executor (apps/worker) applies it on approve: enrollment rows
+   * land, CampaignEnrollmentWorkflow(s) start.
+   *
+   * The pre-Sprint-F direct-start path is gone — even a 1-recipient
+   * batch goes through the gate. Operators who want fast-lane
+   * sequences can flip `auto_approve` per step in the plan.
+   */
   @Post("campaigns/:id/enroll")
   @HttpCode(201)
   async enroll(
     @Param("id") campaignId: string,
     @Body() raw: unknown,
   ): Promise<{
-    created: number;
-    existing: number;
+    approvalId: string;
+    recipientCount: number;
+    status: "pending";
   }> {
     const parsed = EnrollBody.safeParse(raw);
     if (!parsed.success) throw new BadRequestException(parsed.error.message);
-    const { tenantId } = this.tenant;
+    const { tenantId, userId } = this.tenant;
 
-    const result = await withTenant(this.db, tenantId, async (tx) => {
+    // Dedupe the contactIds at the boundary so the recipient count +
+    // downstream enrollBatch stay consistent.
+    const contactIds = Array.from(new Set(parsed.data.contactIds));
+
+    const approvalId = await withTenant(this.db, tenantId, async (tx) => {
       const campaign = await this.campaigns.findById(tx, campaignId);
       if (!campaign) {
         throw new NotFoundException(`campaign ${campaignId} not found`);
       }
-      // Refuse to enroll against an empty plan — the workflow needs at
-      // least one step to do anything with a recipient.
       const validation = await this.steps.validateSequence(tx, campaignId);
       if (validation) {
         throw new BadRequestException(`campaign plan invalid: ${validation}`);
       }
-      return this.enrollments.enrollBatch(
-        tx,
-        tenantId,
-        campaignId,
-        parsed.data.contactIds,
-      );
+      const planSteps = await this.steps.listByCampaign(tx, campaignId);
+      const planSummary = planSteps.map((s) => ({
+        position: s.position,
+        channel: s.channel,
+        tier: s.tier,
+        auto_approve: s.autoApprove,
+        delay_after_prior_ms: s.delayAfterPriorMs,
+      }));
+
+      const approval = await this.approvals.create(tx, tenantId, {
+        agentRunId: null,
+        actionType: "campaign.enroll_batch",
+        proposedPayload: {
+          tier: "T2",
+          campaign_id: campaignId,
+          contact_ids: contactIds,
+          recipient_count: contactIds.length,
+          plan_summary: planSummary,
+          requested_by: userId,
+        },
+      });
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "campaign.enrollment_batch_requested",
+        subjectType: "campaign",
+        subjectId: campaignId,
+        actorType: "user",
+        actorId: userId,
+        objectType: "approval",
+        objectId: approval.id,
+        occurredAt: new Date(),
+        idempotencyKey: `campaign.enrollment_batch_requested:${approval.id}`,
+        metadata: {
+          approval_id: approval.id,
+          campaign_id: campaignId,
+          recipient_count: contactIds.length,
+          plan_step_count: planSteps.length,
+        },
+      });
+
+      return approval.id;
     });
 
-    // Kick off one CampaignEnrollmentWorkflow per new enrollment. The
-    // start is best-effort — if Temporal is down we still return 201
-    // so the enrollment rows land; a future reconciliation loop
-    // (Sprint E) will restart orphaned workflows.
-    let workflowsStarted = 0;
-    if (this.temporal && result.createdIds.length > 0) {
-      for (const enrollmentId of result.createdIds) {
-        try {
-          await this.temporal.workflow.start("campaignEnrollmentWorkflow", {
-            taskQueue: TEMPORAL_TASK_QUEUE,
-            workflowId: WorkflowId.campaignEnrollment(enrollmentId),
-            args: [{ tenantId, enrollmentId }],
-          });
-          workflowsStarted += 1;
-        } catch (err) {
-          // Duplicate workflow id is benign — the prior enroll already
-          // started it. Anything else bubbles as a warning.
-          const message = (err as Error).message ?? "";
-          if (!message.toLowerCase().includes("already")) {
-            this.log.warn(
-              `failed to start workflow for enrollment ${enrollmentId}: ${message}`,
-            );
-          }
-        }
-      }
-    }
-
     this.log.log(
-      `enroll campaign=${campaignId} created=${result.createdIds.length} existing=${result.existingCount} workflows=${workflowsStarted}`,
+      `enroll campaign=${campaignId} approval=${approvalId} recipients=${contactIds.length}`,
     );
     return {
-      created: result.createdIds.length,
-      existing: result.existingCount,
+      approvalId,
+      recipientCount: contactIds.length,
+      status: "pending",
     };
   }
 

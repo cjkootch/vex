@@ -1,16 +1,20 @@
 import { Module, type DynamicModule } from "@nestjs/common";
 import type { Client as TemporalClient } from "@temporalio/client";
 import type {
+  ApprovalRepository,
   CampaignEnrollmentRepository,
   CampaignRepository,
   CampaignStepRepository,
   Db,
+  EventRepository,
   TouchpointRepository,
 } from "@vex/db";
 import {
+  MARKETING_APPROVALS_REPO,
   MARKETING_CAMPAIGNS_REPO,
   MARKETING_DB_CLIENT,
   MARKETING_ENROLLMENTS_REPO,
+  MARKETING_EVENTS_REPO,
   MARKETING_STEPS_REPO,
   MARKETING_TEMPORAL_CLIENT,
   MARKETING_TOUCHPOINTS_REPO,
@@ -23,20 +27,17 @@ export interface MarketingModuleConfig {
   touchpoints: TouchpointRepository;
   steps: CampaignStepRepository;
   enrollments: CampaignEnrollmentRepository;
+  approvals: ApprovalRepository;
+  events: EventRepository;
   /**
-   * Best-effort Temporal client. When null, enrollment rows land but
-   * no CampaignEnrollmentWorkflow starts — a future reconciliation
-   * loop (Sprint E) will adopt orphaned enrollments.
+   * Best-effort Temporal client. Sprint F moves the actual workflow
+   * start to the approval executor, so this stays here purely for
+   * future read-surface endpoints that might signal running
+   * workflows (e.g. a "pause enrollment" button). Can be null.
    */
   temporal: TemporalClient | null;
 }
 
-/**
- * Dynamic module for /marketing. Sprint C adds plan authoring
- * (campaigns/:id/steps) + enrollment (campaigns/:id/enroll,
- * enrollments). Sprint D wires the Temporal client so enrollments
- * start CampaignEnrollmentWorkflow instances.
- */
 @Module({})
 export class MarketingModule {
   static register(config: MarketingModuleConfig): DynamicModule {
@@ -50,6 +51,8 @@ export class MarketingModule {
         { provide: MARKETING_STEPS_REPO, useFactory: () => config.steps },
         { provide: MARKETING_ENROLLMENTS_REPO, useFactory: () => config.enrollments },
         { provide: MARKETING_TEMPORAL_CLIENT, useFactory: () => config.temporal },
+        { provide: MARKETING_APPROVALS_REPO, useFactory: () => config.approvals },
+        { provide: MARKETING_EVENTS_REPO, useFactory: () => config.events },
       ],
     };
   }
