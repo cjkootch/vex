@@ -21,13 +21,16 @@ export class AnalystAgent implements IAgent {
     const now = Date.now();
     const day = 24 * 60 * 60 * 1000;
     // Window A — the last 7 days. Window B — the 7 days before that.
+    // Use bounded \`listBetween\` queries per window so a high-volume
+    // week doesn't shove the baseline week out of the result set.
+    const nowDate = new Date(now);
     const recentStart = new Date(now - 7 * day);
     const priorStart = new Date(now - 14 * day);
 
-    const recent = await ctx.touchpoints.listSince(ctx.tx, recentStart, 500);
-    const prior = (
-      await ctx.touchpoints.listSince(ctx.tx, priorStart, 500)
-    ).filter((t) => t.occurredAt < recentStart);
+    const [recent, prior] = await Promise.all([
+      ctx.touchpoints.listBetween(ctx.tx, recentStart, nowDate, 2000),
+      ctx.touchpoints.listBetween(ctx.tx, priorStart, recentStart, 2000),
+    ]);
 
     // Partition by campaign. Touchpoints without a campaignId are
     // irrelevant to marketing analysis — drop them.
@@ -122,10 +125,16 @@ interface Anomaly {
   prior: Rollup & { openRate: number; clickRate: number; bounceRate: number };
 }
 
+type TouchpointLike = {
+  campaignId: string | null;
+  channel: string;
+  metadata: Record<string, unknown>;
+};
+
 function groupByCampaign(
-  rows: Array<{ campaignId: string | null; channel: string }>,
-): Map<string, Array<{ campaignId: string | null; channel: string }>> {
-  const out = new Map<string, Array<{ campaignId: string | null; channel: string }>>();
+  rows: TouchpointLike[],
+): Map<string, TouchpointLike[]> {
+  const out = new Map<string, TouchpointLike[]>();
   for (const row of rows) {
     if (!row.campaignId) continue;
     const list = out.get(row.campaignId) ?? [];
@@ -135,19 +144,31 @@ function groupByCampaign(
   return out;
 }
 
-function rollUp(rows: Array<{ channel: string }>): Rollup {
+/**
+ * Derive the email lifecycle stage from a touchpoint. The Resend
+ * normalizer stores \`channel: "email"\` and puts the canonical verb
+ * (\`email.sent\` / \`email.delivered\` / \`email.opened\` / \`email.clicked\`
+ * / \`email.bounced\`) in \`metadata.verb\`. Some historical ingestion
+ * paths encoded the verb in \`channel\` itself — fall back to that so
+ * old rows still roll up.
+ */
+function verbOf(row: TouchpointLike): string {
+  const metaVerb = row.metadata["verb"];
+  if (typeof metaVerb === "string" && metaVerb.length > 0) {
+    return metaVerb.toLowerCase();
+  }
+  return row.channel.toLowerCase();
+}
+
+function rollUp(rows: TouchpointLike[]): Rollup {
   const r: Rollup = { sent: 0, delivered: 0, opened: 0, clicked: 0, bounced: 0 };
   for (const row of rows) {
-    // Channel values come from the Resend normalizer:
-    // "email.sent" / "email.delivered" / "email.opened" /
-    // "email.clicked" / "email.bounced". Anything else is ignored
-    // by the rollup.
-    const ch = row.channel.toLowerCase();
-    if (ch.endsWith(".sent")) r.sent += 1;
-    else if (ch.endsWith(".delivered")) r.delivered += 1;
-    else if (ch.endsWith(".opened")) r.opened += 1;
-    else if (ch.endsWith(".clicked")) r.clicked += 1;
-    else if (ch.endsWith(".bounced")) r.bounced += 1;
+    const verb = verbOf(row);
+    if (verb.endsWith(".sent") || verb === "sent") r.sent += 1;
+    else if (verb.endsWith(".delivered") || verb === "delivered") r.delivered += 1;
+    else if (verb.endsWith(".opened") || verb === "opened") r.opened += 1;
+    else if (verb.endsWith(".clicked") || verb === "clicked") r.clicked += 1;
+    else if (verb.endsWith(".bounced") || verb === "bounced") r.bounced += 1;
   }
   return r;
 }
