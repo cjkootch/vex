@@ -31,6 +31,43 @@ export class OrganizationRepository {
   }
 
   /**
+   * Dedupe-at-create helper. Returns an existing org in this tenant
+   * that matches either:
+   *   - the normalized legal name (case-insensitive, trimmed, stripped
+   *     of legal-entity suffixes like "LLC", "Inc", "Corp"), OR
+   *   - the normalized domain (case-insensitive, leading "www." stripped).
+   *
+   * Both are checked so "Vector Trade Capital LLC" doesn't land as a
+   * second row next to "Vector Trade Capital", and a new org with a
+   * different name but the same domain still collides. The lookup is
+   * in the tenant's tx, so RLS scopes it automatically.
+   */
+  async findByNormalizedIdentity(
+    tx: Tx,
+    legalName: string,
+    domain: string | null,
+  ): Promise<Organization | null> {
+    const normName = normalizeLegalName(legalName);
+    const normDomain = domain ? normalizeDomain(domain) : null;
+    const predicates = [
+      sql`${sql.raw(
+        normalizeLegalNameSql("legal_name"),
+      )} = ${normName}`,
+    ];
+    if (normDomain) {
+      predicates.push(
+        sql`${sql.raw(normalizeDomainSql("domain"))} = ${normDomain}`,
+      );
+    }
+    const [row] = await tx
+      .select()
+      .from(organizations)
+      .where(or(...predicates))
+      .limit(1);
+    return row ?? null;
+  }
+
+  /**
    * Plain create — used by the UI-driven `POST /organizations` endpoint.
    * Distinct from `upsertByExternalKey` because hand-entered companies
    * don't have a source-system key to dedupe against.
@@ -160,4 +197,53 @@ export class OrganizationRepository {
       .orderBy(asc(organizations.updatedAt))
       .limit(limit);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Normalization helpers for dedupe lookups. Shared between application code
+// (findByNormalizedIdentity above) and the inline SQL that projects the
+// table column into the same normalized shape so the comparison happens in
+// one expression.
+// ---------------------------------------------------------------------------
+
+// Whitespace-before-suffix. MUST stay in lockstep with the SQL
+// normalizer (normalizeLegalNameSql) which uses \s+ too — a prior
+// \b form stripped suffixes on punctuation boundaries in JS but
+// not in SQL, so "Acme-LLC" produced "acme-" client-side vs
+// "acme-llc" in the WHERE clause and the dedupe lookup missed.
+const LEGAL_SUFFIX_RE = /\s+(llc|l\.l\.c|inc|incorporated|corp|corporation|co|ltd|limited|plc|gmbh|ag|sa|bv|spa)\.?$/i;
+
+export function normalizeLegalName(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[,.]/g, "")
+    .replace(/\s+/g, " ")
+    .replace(LEGAL_SUFFIX_RE, "")
+    .trim();
+}
+
+export function normalizeDomain(raw: string): string {
+  return raw.trim().toLowerCase().replace(/^www\./, "");
+}
+
+/**
+ * SQL-side normalization for a legal-name column. Must stay in lockstep
+ * with the JS side above. Keeps the lookup in a single WHERE clause
+ * instead of pulling every row into the node process.
+ */
+function normalizeLegalNameSql(col: string): string {
+  return `regexp_replace(
+    regexp_replace(
+      regexp_replace(lower(trim(${col})), '[,.]', '', 'g'),
+      '\\s+', ' ', 'g'
+    ),
+    '\\s+(llc|l\\.l\\.c|inc|incorporated|corp|corporation|co|ltd|limited|plc|gmbh|ag|sa|bv|spa)\\.?$',
+    '',
+    'i'
+  )`;
+}
+
+function normalizeDomainSql(col: string): string {
+  return `regexp_replace(lower(trim(${col})), '^www\\.', '', 'i')`;
 }

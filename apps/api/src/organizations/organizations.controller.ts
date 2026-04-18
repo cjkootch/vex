@@ -170,6 +170,22 @@ export class OrganizationsController {
     const { tenantId, userId } = this.tenant;
 
     const organization = await withTenant(this.db, tenantId, async (tx) => {
+      // Dedupe guard: look for an existing org in this tenant whose
+      // normalized legal name or domain matches. Catches variations
+      // like "Vector Trade Capital" vs "Vector Trade Capital LLC" and
+      // "vexhq.ai" vs "www.vexhq.ai" before the insert. The DB still
+      // has its own unique constraints as a last-resort net.
+      const duplicate = await this.organizations.findByNormalizedIdentity(
+        tx,
+        input.legalName,
+        input.domain ?? null,
+      );
+      if (duplicate) {
+        throw new ConflictException({
+          message: `organization ${input.legalName} already exists`,
+          existingOrganizationId: duplicate.id,
+        });
+      }
       try {
         const row = await this.organizations.create(tx, tenantId, {
           id,

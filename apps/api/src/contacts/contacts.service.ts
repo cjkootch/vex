@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   Logger,
@@ -177,6 +178,20 @@ export class ContactsService {
 
     const id = createId();
     const result = await withTenant(this.db, args.tenantId, async (tx) => {
+      // Dedupe guard: if any supplied email is already attached to a
+      // contact in this tenant, refuse with a 409 Conflict pointing at
+      // the existing row. Prevents the hand-entry path from seeding
+      // duplicate people for the same address — the approval executor
+      // has its own idempotency guard (appliedObjectId).
+      for (const email of args.emails ?? []) {
+        const existing = await this.contacts.findByEmail(tx, email);
+        if (existing) {
+          throw new ConflictException({
+            message: `contact with email ${email} already exists`,
+            existingContactId: existing.id,
+          });
+        }
+      }
       // `contacts.org_id` points at the primary for backwards-compat
       // with readers that predate the memberships table.
       const contact = await this.contacts.create(tx, args.tenantId, {
@@ -452,7 +467,16 @@ export class ContactsService {
         objectType: "organization",
         objectId: args.orgId,
         occurredAt: new Date(),
-        idempotencyKey: `contact.primary_changed:${args.contactId}:${args.orgId}:${Date.now()}`,
+        // Per-request key. A stable \`${contactId}:${orgId}\` suffix
+        // silently dropped audit history for legitimate A→B→A→B
+        // cycles (insertIfNotExists finds the old key and skips).
+        // Real retry dedupe needs a client \`Idempotency-Key\` header;
+        // until that lands, mint a fresh \`createId()\` per call so
+        // every service invocation audits. Trade-off: an HTTP-level
+        // retry of the same mutation creates a second audit row —
+        // less bad than dropping the third primary change in a
+        // cycle of re-promotions.
+        idempotencyKey: `contact.primary_changed:${args.contactId}:${args.orgId}:${createId()}`,
         metadata: {
           from_org_id: contact.orgId,
           to_org_id: args.orgId,
@@ -499,7 +523,10 @@ export class ContactsService {
         objectType: "organization",
         objectId: args.orgId,
         occurredAt: new Date(),
-        idempotencyKey: `contact.membership_removed:${args.contactId}:${args.orgId}:${Date.now()}`,
+        // Per-request key — see primary_changed above. A
+        // \`${contactId}:${orgId}\` suffix would dedupe a
+        // legitimate remove-after-readd cycle.
+        idempotencyKey: `contact.membership_removed:${args.contactId}:${args.orgId}:${createId()}`,
         metadata: { actor_user_id: args.actorUserId },
       });
       const memberships = await this.memberships.listByContact(tx, args.contactId);
