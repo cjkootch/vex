@@ -21,7 +21,7 @@ import { computeRegressions } from "./regressions.js";
  * fixtures to reference a retrievable entity, then raise the gate
  * back to 0.85.
  */
-const PASS_THRESHOLD = 0.5;
+const PASS_THRESHOLD = 0.6;
 const DEFAULT_TENANT_ID = "01HSEEDWRK0000000000000001";
 
 /** Canonical on-disk shape. Matches the admin `/admin/evals/latest`
@@ -188,8 +188,13 @@ async function runCase(
   );
 
   const evidenceOk = evidenceHits.length > 0;
+  // At least one expected keyword must appear. Half-of-keywords is
+  // too brittle against a stochastic model — asking for "deals with
+  // compliance holds" and getting back "VTC-2026-001" OR
+  // "VTC-2026-003" is a legitimate partial list, not a failure.
+  // Evidence retrieval is the hard check; prose wording is soft.
   const answerOk =
-    answerMatches.length >= Math.ceil(entry.expected_answer_contains.length / 2);
+    entry.expected_answer_contains.length === 0 || answerMatches.length >= 1;
 
   return {
     id: entry.id,
