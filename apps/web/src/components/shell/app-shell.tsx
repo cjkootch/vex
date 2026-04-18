@@ -47,6 +47,13 @@ const NAV_ITEMS: NavItem[] = [
       "M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.26 0-2.46-.23-3.55-.65L3 21l1.67-4.5C3.6 15.2 3 13.66 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
   },
   {
+    href: "/app/inbox",
+    label: "Inbox",
+    matchKey: "/app/inbox",
+    iconPath:
+      "M4 13h3l2 3h6l2-3h3M4 7h16l-2 13a1 1 0 01-1 1H7a1 1 0 01-1-1L4 7zM8 7V4a1 1 0 011-1h6a1 1 0 011 1v3",
+  },
+  {
     href: "/app/deals",
     label: "Deals",
     matchKey: "/app/deals",

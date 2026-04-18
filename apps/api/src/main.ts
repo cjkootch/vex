@@ -46,6 +46,7 @@ import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
 import { AdminModule } from "./admin/admin.module.js";
 import { BriefModule } from "./brief/brief.module.js";
+import { CommunicationsModule } from "./communications/communications.module.js";
 import { CallsModule } from "./calls/calls.module.js";
 import { CallsService } from "./calls/calls.service.js";
 import { VoiceStreamServer } from "./calls/voice-stream-server.js";
@@ -193,6 +194,11 @@ async function bootstrap(): Promise<void> {
         db,
         summaries: summaryRepository,
         approvals: approvalRepository,
+      }),
+      communications: CommunicationsModule.register({
+        db,
+        touchpoints: touchpointRepository,
+        activities: activityRepository,
       }),
       contacts: ContactsModule.register({
         db,

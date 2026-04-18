@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, sql, type SQL } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { activities, type Activity } from "../schema/activities.js";
@@ -66,6 +66,39 @@ export class ActivityRepository {
       .returning();
     if (!row) throw new Error(`activity ${id} not found`);
     return row;
+  }
+
+  /**
+   * Keyset-paginated feed of activities filtered by type. Used by the
+   * communications log to fold voice calls into the same time-sorted
+   * stream as touchpoints. `contactId` matches rows whose
+   * `related_object_ids.contact_id` JSONB field equals the id — that's
+   * where OutboundCallWorkflow stamps the callee when a call starts.
+   */
+  async listFeed(
+    tx: Tx,
+    filters: {
+      type: string;
+      contactId?: string;
+      before?: Date;
+    },
+    limit = 50,
+  ): Promise<Activity[]> {
+    const clauses: SQL[] = [eq(activities.type, filters.type)];
+    if (filters.contactId) {
+      clauses.push(
+        sql`${activities.relatedObjectIds} ->> 'contact_id' = ${filters.contactId}`,
+      );
+    }
+    if (filters.before) {
+      clauses.push(lt(activities.occurredAt, filters.before));
+    }
+    return tx
+      .select()
+      .from(activities)
+      .where(and(...clauses))
+      .orderBy(desc(activities.occurredAt))
+      .limit(limit);
   }
 
   async findByTypeAndSessionId(

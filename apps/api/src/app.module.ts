@@ -11,6 +11,7 @@ import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
 import { AdminModule } from "./admin/admin.module.js";
 import { BriefModule } from "./brief/brief.module.js";
 import { CallsModule } from "./calls/calls.module.js";
+import { CommunicationsModule } from "./communications/communications.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
 import { EventsModule } from "./events/events.module.js";
@@ -26,6 +27,7 @@ export interface AppModuleConfig {
   agentRuns?: DynamicModule;
   brief?: DynamicModule;
   calls?: DynamicModule;
+  communications?: DynamicModule;
   contacts?: DynamicModule;
   deals?: DynamicModule;
   events?: DynamicModule;
@@ -73,6 +75,7 @@ export class AppModule {
     if (config.approvals) imports.push(config.approvals);
     if (config.agentRuns) imports.push(config.agentRuns);
     if (config.brief) imports.push(config.brief);
+    if (config.communications) imports.push(config.communications);
     if (config.contacts) imports.push(config.contacts);
     if (config.deals) imports.push(config.deals);
     if (config.events) imports.push(config.events);
@@ -102,6 +105,7 @@ export {
   AdminModule,
   BriefModule,
   CallsModule,
+  CommunicationsModule,
   ContactsModule,
   DealsModule,
   EventsModule,
