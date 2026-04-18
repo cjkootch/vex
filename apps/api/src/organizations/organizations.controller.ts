@@ -9,6 +9,7 @@ import {
   Logger,
   NotFoundException,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -41,6 +42,19 @@ const CreateOrganizationBody = z.object({
   domain: z.string().max(255).optional(),
   industry: z.string().max(120).optional(),
 });
+
+/**
+ * Editable fields on an organization — only the bits a human enters
+ * by hand. Merge metadata (externalKeys, fieldConfidence, fitScore)
+ * and status all have their own mutation paths.
+ */
+const UpdateOrganizationBody = z
+  .object({
+    legalName: z.string().min(1).max(200),
+    domain: z.string().max(255).nullable(),
+    industry: z.string().max(120).nullable(),
+  })
+  .partial();
 
 type RecordStatus = "active" | "archived" | "inactive";
 
@@ -203,6 +217,140 @@ export class OrganizationsController {
         updatedAt: organization.updatedAt.toISOString(),
       },
     };
+  }
+
+  @Patch(":id")
+  async update(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ organization: OrganizationDetail }> {
+    const parsed = UpdateOrganizationBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const patch = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    const organization = await withTenant(this.db, tenantId, async (tx) => {
+      const before = await this.organizations.findById(tx, id);
+      if (!before) throw new NotFoundException(`organization ${id} not found`);
+
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      if (patch.legalName !== undefined) set["legalName"] = patch.legalName;
+      if (patch.domain !== undefined) set["domain"] = patch.domain;
+      if (patch.industry !== undefined) set["industry"] = patch.industry;
+
+      let after;
+      try {
+        [after] = await tx
+          .update(schema.organizations)
+          .set(set)
+          .where(eq(schema.organizations.id, id))
+          .returning();
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (msg.includes("duplicate") || msg.includes("unique")) {
+          throw new ConflictException(
+            `organization ${patch.legalName ?? before.legalName} exists`,
+          );
+        }
+        throw err;
+      }
+      if (!after) throw new Error(`organization ${id} vanished during update`);
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "organization.updated",
+        subjectType: "organization",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "organization",
+        objectId: id,
+        occurredAt: new Date(),
+        // Stable key tied to before.updatedAt so a retry dedupes but a
+        // follow-up edit records a distinct row.
+        idempotencyKey: `organization.updated:${id}:${before.updatedAt.toISOString()}`,
+        metadata: {
+          patch,
+          before,
+          after,
+          audit_event_id: createId(),
+        },
+      });
+
+      // Rehydrate contacts + deals so the response mirrors the detail
+      // endpoint shape the UI already renders.
+      const contactRows = await tx
+        .select({
+          contact: schema.contacts,
+          role: schema.contactOrgMemberships.role,
+          isPrimary: schema.contactOrgMemberships.isPrimary,
+        })
+        .from(schema.contactOrgMemberships)
+        .innerJoin(
+          schema.contacts,
+          eq(schema.contactOrgMemberships.contactId, schema.contacts.id),
+        )
+        .where(eq(schema.contactOrgMemberships.orgId, id))
+        .orderBy(desc(schema.contacts.updatedAt))
+        .limit(200);
+      const contacts = contactRows.map((r) => r.contact);
+
+      const dealRows = await tx
+        .select({
+          id: schema.fuelDeals.id,
+          dealRef: schema.fuelDeals.dealRef,
+          status: schema.fuelDeals.status,
+          product: schema.fuelDeals.product,
+          volumeUsg: schema.fuelDeals.volumeUsg,
+          buyerOrgId: schema.fuelDeals.buyerOrgId,
+          sellerOrgId: schema.fuelDeals.sellerOrgId,
+        })
+        .from(schema.fuelDeals)
+        .where(
+          or(
+            eq(schema.fuelDeals.buyerOrgId, id),
+            eq(schema.fuelDeals.sellerOrgId, id),
+          ),
+        )
+        .orderBy(desc(schema.fuelDeals.createdAt))
+        .limit(100);
+      const deals: OrganizationDealSummary[] = dealRows.map((d) => ({
+        id: d.id,
+        dealRef: d.dealRef,
+        status: d.status,
+        product: d.product,
+        volumeUsg: d.volumeUsg,
+        role: d.buyerOrgId === id ? "buyer" : "seller",
+      }));
+
+      const detail: OrganizationDetail = {
+        id: after.id,
+        legalName: after.legalName,
+        domain: after.domain,
+        industry: after.industry,
+        fitScore: after.fitScore,
+        status: after.status,
+        sourceOfTruth: after.sourceOfTruth,
+        externalKeys: after.externalKeys,
+        contactCount: contacts.length,
+        createdAt: after.createdAt.toISOString(),
+        updatedAt: after.updatedAt.toISOString(),
+        contacts: contacts.map((c) => ({
+          id: c.id,
+          fullName: c.fullName,
+          title: c.title,
+          email: c.emails[0] ?? null,
+          phone: c.phones[0] ?? null,
+          optedOut: c.optOutAt !== null,
+        })),
+        deals,
+      };
+      return detail;
+    });
+
+    this.log.log(`organization ${id} updated by ${userId}`);
+    return { organization };
   }
 
   @Get(":id")

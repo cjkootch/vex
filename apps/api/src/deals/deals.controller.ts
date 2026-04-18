@@ -22,6 +22,7 @@ import type {
   ApprovalRepository,
   EventRepository,
   FuelDealRepository,
+  OrganizationRepository,
 } from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
@@ -44,6 +45,7 @@ export const DEALS_DB_CLIENT = Symbol("DEALS_DB_CLIENT");
 export const DEALS_REPO = Symbol("DEALS_REPO");
 export const DEALS_EVENT_REPO = Symbol("DEALS_EVENT_REPO");
 export const DEALS_APPROVAL_REPO = Symbol("DEALS_APPROVAL_REPO");
+export const DEALS_ORGS_REPO = Symbol("DEALS_ORGS_REPO");
 
 /**
  * Status transitions that require a T2 approval instead of applying
@@ -123,6 +125,62 @@ const UpdateStatusBody = z.object({
   status: z.enum(DEAL_STATUSES),
 });
 
+/**
+ * Editable fields on a fuel deal. Deliberately omits `dealRef`
+ * (immutable) and `status` (owns its own approval-gated endpoint at
+ * PATCH /deals/:id/status). Every field is optional so the caller can
+ * ship a partial patch; the controller only writes columns that made
+ * it into the validated payload.
+ */
+const UpdateDealBody = z
+  .object({
+    product: z.enum([
+      "ulsd",
+      "gasoline_87",
+      "gasoline_91",
+      "jet_a",
+      "jet_a1",
+      "avgas",
+      "lfo",
+      "hfo",
+      "lng",
+      "lpg",
+      "biodiesel_b20",
+    ]),
+    volumeUsg: z.number().positive(),
+    densityKgL: z.number().positive().max(2),
+    incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]),
+    pricingBasis: z.enum([
+      "platts",
+      "argus",
+      "opis",
+      "nymex_wti",
+      "nymex_rbob",
+      "ice_brent",
+      "fixed",
+      "negotiated",
+    ]),
+    paymentTerms: z.enum([
+      "prepayment_100",
+      "prepayment_80_20",
+      "lc_sight",
+      "lc_60d",
+      "lc_90d",
+      "lc_120d",
+      "sblc",
+      "open_account",
+      "telegraphic_transfer",
+      "mixed",
+    ]),
+    destinationPort: z.string().nullable(),
+    originPort: z.string().nullable(),
+    laycanStart: z.string().nullable(),
+    laycanEnd: z.string().nullable(),
+    notes: z.string().nullable(),
+    buyerOrgId: z.string().min(1),
+  })
+  .partial();
+
 export interface DealListRow {
   id: string;
   dealRef: string;
@@ -180,6 +238,7 @@ export class DealsController {
     @Inject(DEALS_REPO) private readonly deals: FuelDealRepository,
     @Inject(DEALS_EVENT_REPO) private readonly events: EventRepository,
     @Inject(DEALS_APPROVAL_REPO) private readonly approvals: ApprovalRepository,
+    @Inject(DEALS_ORGS_REPO) private readonly organizations: OrganizationRepository,
   ) {}
 
   @Get()
@@ -424,6 +483,91 @@ export class DealsController {
       `deal ${id} status→${targetStatus} approval requested (approval=${approvalId}) by ${userId}`,
     );
     return { approvalId, status: "pending" };
+  }
+
+  @Patch(":id")
+  async update(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ deal: DealDetail }> {
+    const parsed = UpdateDealBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const patch = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    const deal = await withTenant(this.db, tenantId, async (tx) => {
+      const before = await loadDealDetail(tx, id);
+      if (!before) throw new NotFoundException(`deal ${id} not found`);
+
+      // Verify a new buyer (when changed) actually exists in this
+      // tenant. RLS already filters the lookup, so an empty result
+      // means the caller passed a bogus or cross-tenant id.
+      if (patch.buyerOrgId && patch.buyerOrgId !== before.buyerOrgId) {
+        const buyer = await this.organizations.findById(tx, patch.buyerOrgId);
+        if (!buyer) {
+          throw new NotFoundException(
+            `buyerOrgId ${patch.buyerOrgId} does not exist in this workspace`,
+          );
+        }
+      }
+
+      // Build a minimal update payload — only write columns that made
+      // it through Zod validation so the caller can send a partial
+      // patch without clobbering untouched fields.
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      if (patch.product !== undefined) set["product"] = patch.product;
+      if (patch.volumeUsg !== undefined) set["volumeUsg"] = patch.volumeUsg;
+      if (patch.densityKgL !== undefined) set["densityKgL"] = patch.densityKgL;
+      if (patch.incoterm !== undefined) set["incoterm"] = patch.incoterm;
+      if (patch.pricingBasis !== undefined)
+        set["pricingBasis"] = patch.pricingBasis;
+      if (patch.paymentTerms !== undefined)
+        set["paymentTerms"] = patch.paymentTerms;
+      if (patch.destinationPort !== undefined)
+        set["destinationPort"] = patch.destinationPort;
+      if (patch.originPort !== undefined) set["originPort"] = patch.originPort;
+      if (patch.laycanStart !== undefined) set["laycanStart"] = patch.laycanStart;
+      if (patch.laycanEnd !== undefined) set["laycanEnd"] = patch.laycanEnd;
+      if (patch.notes !== undefined) set["notes"] = patch.notes;
+      if (patch.buyerOrgId !== undefined) set["buyerOrgId"] = patch.buyerOrgId;
+
+      await tx
+        .update(schema.fuelDeals)
+        .set(set)
+        .where(eq(schema.fuelDeals.id, id))
+        .returning();
+
+      const after = await loadDealDetail(tx, id);
+      if (!after) throw new Error(`deal ${id} not readable after update`);
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.updated",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "fuel_deal",
+        objectId: id,
+        occurredAt: new Date(),
+        // Stable key — tied to the pre-patch updatedAt so a retry of
+        // the same edit dedupes, but a second distinct edit lands a
+        // fresh row.
+        idempotencyKey: `deal.updated:${id}:${before.updatedAt}`,
+        metadata: {
+          patch,
+          before,
+          after,
+          audit_event_id: createId(),
+        },
+      });
+
+      return after;
+    });
+
+    this.log.log(`deal ${id} updated by ${userId}`);
+    return { deal };
   }
 
   @Get(":id")

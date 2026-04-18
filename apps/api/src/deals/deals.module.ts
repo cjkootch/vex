@@ -4,11 +4,13 @@ import type {
   Db,
   EventRepository,
   FuelDealRepository,
+  OrganizationRepository,
 } from "@vex/db";
 import {
   DEALS_APPROVAL_REPO,
   DEALS_DB_CLIENT,
   DEALS_EVENT_REPO,
+  DEALS_ORGS_REPO,
   DEALS_REPO,
   DealsController,
 } from "./deals.controller.js";
@@ -18,13 +20,16 @@ export interface DealsModuleConfig {
   deals: FuelDealRepository;
   events: EventRepository;
   approvals: ApprovalRepository;
+  organizations: OrganizationRepository;
 }
 
 /**
  * Dynamic module for /deals. Sprint 14 added POST + PATCH write
  * endpoints; Group 3 adds POST /:id/status/request which needs the
  * ApprovalRepository so it can land a pending T2 approval row for
- * approved/cancelled transitions.
+ * approved/cancelled transitions. The edit endpoint added in the
+ * CRM-edit feature reuses OrganizationRepository to validate a new
+ * buyer_org_id when the caller changes it.
  */
 @Module({})
 export class DealsModule {
@@ -37,6 +42,7 @@ export class DealsModule {
         { provide: DEALS_REPO, useValue: config.deals },
         { provide: DEALS_EVENT_REPO, useValue: config.events },
         { provide: DEALS_APPROVAL_REPO, useValue: config.approvals },
+        { provide: DEALS_ORGS_REPO, useValue: config.organizations },
       ],
     };
   }

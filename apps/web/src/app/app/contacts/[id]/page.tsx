@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
+import { EditContactForm } from "@/components/crm/edit-contact-form";
 import { Tabs } from "@/components/ui/tabs";
 
 interface Membership {
@@ -57,6 +58,7 @@ export default function ContactDetailPage({
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeTab, setActiveTab] = useState("overview");
+  const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,13 +183,29 @@ export default function ContactDetailPage({
             </div>
           )}
         </div>
-        <Link
-          href={`/app/chat?ask=${encodeURIComponent(`What do I know about ${contact.fullName}?`)}`}
-          className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
-        >
-          Ask Vex →
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
+          >
+            Edit
+          </button>
+          <Link
+            href={`/app/chat?ask=${encodeURIComponent(`What do I know about ${contact.fullName}?`)}`}
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
+          >
+            Ask Vex →
+          </Link>
+        </div>
       </header>
+
+      <EditContactForm
+        open={editOpen}
+        contact={contact}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => setRefreshKey((k) => k + 1)}
+      />
 
       <Tabs
         active={activeTab}

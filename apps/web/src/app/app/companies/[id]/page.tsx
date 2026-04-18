@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
+import { EditCompanyForm } from "@/components/crm/edit-company-form";
 import { Tabs } from "@/components/ui/tabs";
 
 interface OrganizationContact {
@@ -47,6 +48,8 @@ export default function CompanyDetailPage({
   const [org, setOrg] = useState<OrganizationDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +75,7 @@ export default function CompanyDetailPage({
     return () => {
       cancelled = true;
     };
-  }, [params.id]);
+  }, [params.id, refreshKey]);
 
   if (error) {
     return (
@@ -106,13 +109,29 @@ export default function CompanyDetailPage({
             {org.fitScore !== null && ` · fit ${Math.round(org.fitScore * 100)}`}
           </p>
         </div>
-        <Link
-          href={`/app/chat?ask=${encodeURIComponent(`Tell me about ${org.legalName}`)}`}
-          className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
-        >
-          Ask Vex →
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setEditOpen(true)}
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
+          >
+            Edit
+          </button>
+          <Link
+            href={`/app/chat?ask=${encodeURIComponent(`Tell me about ${org.legalName}`)}`}
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
+          >
+            Ask Vex →
+          </Link>
+        </div>
       </header>
+
+      <EditCompanyForm
+        open={editOpen}
+        organization={org}
+        onClose={() => setEditOpen(false)}
+        onSaved={() => setRefreshKey((k) => k + 1)}
+      />
 
       <Tabs
         active={activeTab}
