@@ -390,8 +390,13 @@ export class RetrievalService {
               .orderBy(desc(fuelDeals.updatedAt))
               .limit(dealLimit)
           : Promise.resolve([]),
-      patterns.length > 0 && !mentionsCampaigns
+      patterns.length > 0
         ? campaignQuery
+            // Filter even when \`mentionsCampaigns\` fires — otherwise
+            // "touchpoint history for email_nurture" takes the
+            // category-only branch and returns recent campaigns
+            // regardless of the token. Filter always, widen the limit
+            // when a category word is also present.
             .where(
               or(
                 ...patterns.flatMap((p) => [
@@ -413,10 +418,14 @@ export class RetrievalService {
 
     // For every matched campaign, pull its most recent touchpoints —
     // eval fixtures ("show the touchpoint history for email_nurture")
-    // expect touchpoint object_ids alongside the campaign row.
-    const touchpointRows =
-      campaignRows.length > 0
-        ? await tx
+    // expect touchpoint object_ids alongside the campaign row. A
+    // single \`IN (...) LIMIT 15\` would let one high-volume campaign
+    // crowd out the others, so fetch per-campaign in parallel.
+    const TOUCHPOINTS_PER_CAMPAIGN = 5;
+    const touchpointRows = (
+      await Promise.all(
+        campaignRows.map((c) =>
+          tx
             .select({
               id: touchpoints.id,
               channel: touchpoints.channel,
@@ -425,15 +434,12 @@ export class RetrievalService {
               campaignId: touchpoints.campaignId,
             })
             .from(touchpoints)
-            .where(
-              inArray(
-                touchpoints.campaignId,
-                campaignRows.map((c) => c.id),
-              ),
-            )
+            .where(eq(touchpoints.campaignId, c.id))
             .orderBy(desc(touchpoints.occurredAt))
-            .limit(15)
-        : [];
+            .limit(TOUCHPOINTS_PER_CAMPAIGN),
+        ),
+      )
+    ).flat();
 
     const items: EvidenceItem[] = [];
     const now = Date.now();
