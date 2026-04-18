@@ -93,6 +93,81 @@ describe("validateManifest", () => {
   });
 });
 
+describe("validateManifest — agent_status", () => {
+  it("accepts a well-formed agent_status panel with multiple rows", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "agent_status",
+          title: "Agent health",
+          rows: [
+            {
+              agentName: "analyst",
+              status: "completed",
+              lastRun: "2026-04-18T06:30:00Z",
+              costUsd: 0,
+              summary: "3 anomalies across 2 campaigns",
+            },
+            {
+              agentName: "follow_up",
+              status: "failed",
+              lastRun: "2026-04-18T05:00:00Z",
+              costUsd: 0.0123,
+              error: "rate-limited by anthropic",
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects agent_status with an unknown status value", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "agent_status",
+          rows: [
+            {
+              agentName: "analyst",
+              status: "ghosted",
+              lastRun: null,
+              costUsd: 0,
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects agent_status with negative costUsd", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "agent_status",
+          rows: [
+            {
+              agentName: "analyst",
+              status: "completed",
+              lastRun: null,
+              costUsd: -1,
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects agent_status with an empty rows array", () => {
+    const result = validateManifest({
+      panels: [{ type: "agent_status", rows: [] }],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
 describe("manifestFallback", () => {
   it("packages text into a single-row table panel", () => {
     const fallback = manifestFallback("hello world");

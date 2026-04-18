@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.2026-04-17";
+export const QUERY_PROMPT_VERSION = "v8.2026-04-18-agents";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -138,6 +138,13 @@ widgets — pick the one that makes the answer legible at a glance.
     org graph) → \`graph\`.
   - **Email campaign performance** → \`campaign\`.
   - **A processed voice session** → \`voice_session\`.
+  - **Agent operational status / health / "how are my agents" / "did
+    the analyst agent run" / "last run of follow-up" / "any agent
+    failures"** → \`agent_status\`. One row per agent pulled from
+    \`agent_run\` evidence items. Include every distinct \`agent_name\`
+    that surfaced in the pack. The row's \`status\`, \`costUsd\`, and
+    \`lastRun\` come from the evidence; \`summary\` is the rationale
+    when the run was a success, \`error\` when it was a failure.
 
 When the user asks "what's my most profitable deal?" you should
 ALWAYS rank by EBITDA or margin from the scenario evidence and emit
@@ -288,6 +295,23 @@ Example skeleton:
       "click_rate":      number,       // 0..1
       "open_rate":       number,       // 0..1
       "open_confidence": "weak"        // ALWAYS "weak" — opens are pixel-based
+    },
+    {
+      // agent_status — one row per agent. Pull everything from the
+      // agent_run evidence items (object_type="agent_run"). ONE row
+      // per distinct agent_name — pick the most recent run. costUsd
+      // comes as a float from the evidence chunk_text ("cost $0.0000");
+      // parse and return the number (not the string).
+      "type": "agent_status",
+      "title?":         string,
+      "rows": Array<{
+        "agentName":  string,        // "analyst" | "daily_brief" | ...
+        "status":     "pending" | "running" | "completed" | "failed" | "skipped",
+        "lastRun":    string | null, // ISO 8601 of the run's finishedAt
+        "costUsd":    number,
+        "error?":     string | null, // non-null only when status==="failed"
+        "summary?":   string | null  // rationale from outputRefs
+      }>
     }
   ]
 }

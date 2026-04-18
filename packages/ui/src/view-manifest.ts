@@ -174,6 +174,37 @@ const DealScorecardPanel = z.object({
   flags: z.array(z.string()).optional(),
 });
 
+/**
+ * Agent status panel — per-agent operational health card. One row per
+ * known agent, showing last run status, timestamp, cost, error (if any),
+ * and a one-line rationale pulled from the run's outputRefs. Driven by
+ * `retrieval.fetchAgentStatus` which projects agent_runs into the
+ * evidence pack when the user asks about agents.
+ */
+const AgentStatusPanel = z.object({
+  type: z.literal("agent_status"),
+  title: z.string().min(1).optional(),
+  rows: z
+    .array(
+      z.object({
+        agentName: z.string().min(1),
+        status: z.enum([
+          "pending",
+          "running",
+          "completed",
+          "failed",
+          "skipped",
+        ]),
+        /** ISO 8601 timestamp of the last run's finishedAt / startedAt. */
+        lastRun: z.string().nullable(),
+        costUsd: z.number().nonnegative(),
+        error: z.string().nullable().optional(),
+        summary: z.string().nullable().optional(),
+      }),
+    )
+    .min(1),
+});
+
 export const ManifestPanel = z.discriminatedUnion("type", [
   ProfilePanel,
   TablePanel,
@@ -187,6 +218,7 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   ConfirmEntityPanel,
   RouteMapPanel,
   DealScorecardPanel,
+  AgentStatusPanel,
   // Signal-only panel: ManifestCanvas intercepts it to switch workspace
   // mode and show a toast, never renders a concrete component.
   WorkspaceModeSwitchPanel,
