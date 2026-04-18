@@ -304,9 +304,20 @@ jobs:
         run: pnpm -r --filter="./packages/*" run build
 
       - name: Run migrations against the PR branch
+        # @vex/db's migrate uses loadEnv() from @vex/config, which
+        # validates the full env surface — not just the DB URL it
+        # actually touches. Pass placeholders for the rest so the
+        # validator doesn't reject the migration run.
         run: pnpm --filter @vex/db run migrate
         env:
           MIGRATION_DATABASE_URL: ${{ env.MIGRATION_DATABASE_URL }}
+          APPLICATION_DATABASE_URL: ${{ env.APPLICATION_DATABASE_URL }}
+          REDIS_URL: redis://localhost:6379
+          S3_BUCKET: vex-eval
+          S3_ACCESS_KEY_ID: test
+          S3_SECRET_ACCESS_KEY: test
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       - name: Run eval suite against the PR branch
         if: ${{ needs.preflight.outputs.has_anthropic == 'true' }}
