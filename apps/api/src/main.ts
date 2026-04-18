@@ -14,6 +14,7 @@ import {
   ContactRepository,
   EventRepository,
   FuelDealRepository,
+  FuelMarketRateRepository,
   OrganizationRepository,
   RawEventRepository,
   RetrievalService,
@@ -47,6 +48,7 @@ import { CallsModule } from "./calls/calls.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
 import { EventsModule } from "./events/events.module.js";
+import { MarketModule } from "./market/market.module.js";
 import { OrganizationsModule } from "./organizations/organizations.module.js";
 import { SearchModule } from "./search/search.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
@@ -87,6 +89,7 @@ async function bootstrap(): Promise<void> {
   const touchpointRepository = new TouchpointRepository();
   const workspaceRepository = new WorkspaceRepository();
   const fuelDealRepository = new FuelDealRepository();
+  const fuelMarketRateRepository = new FuelMarketRateRepository();
   const contactMembershipRepository = new ContactOrgMembershipRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
@@ -198,6 +201,10 @@ async function bootstrap(): Promise<void> {
         approvals: approvalRepository,
       }),
       events: EventsModule.register({ db }),
+      market: MarketModule.register({
+        db,
+        rates: fuelMarketRateRepository,
+      }),
       organizations: OrganizationsModule.register({
         db,
         organizations: organizationRepository,
