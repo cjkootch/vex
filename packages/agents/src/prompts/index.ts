@@ -10,6 +10,10 @@ export {
   TRANSCRIPT_ACTION_ITEMS_SYSTEM_PROMPT,
   TRANSCRIPT_ACTION_ITEMS_PROMPT_VERSION,
 } from "./voice.js";
+export {
+  INTENT_CLASSIFIER_SYSTEM_PROMPT,
+  INTENT_CLASSIFIER_PROMPT_VERSION,
+} from "./intent-classifier.js";
 
 /** Symbolic prompt registry — convenient for telemetry tagging. */
 export const QueryName = {
@@ -20,5 +24,6 @@ export const QueryName = {
   VoiceRealtime: "voice_realtime",
   TranscriptSummary: "transcript_summary",
   TranscriptActionItems: "transcript_action_items",
+  IntentClassifier: "intent_classifier",
 } as const;
 export type QueryName = (typeof QueryName)[keyof typeof QueryName];
