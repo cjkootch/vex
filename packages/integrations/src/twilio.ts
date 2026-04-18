@@ -6,6 +6,35 @@ export interface TwilioDeps {
   fromNumber: string;
 }
 
+/**
+ * Extra credentials needed to mint browser Voice SDK access tokens
+ * (Sprint J — live-listen + operator-join). The API Key + Secret are
+ * distinct from the Account Auth Token and MUST be generated
+ * separately in the Twilio Console. The TwiML app SID routes
+ * browser-originated calls to the apps/api join-TwiML endpoint which
+ * returns `<Dial><Conference/>` for the requested conference name.
+ */
+export interface TwilioVoiceSdkDeps {
+  apiKey: string;
+  apiSecret: string;
+  twimlAppSid: string;
+}
+
+export interface MintVoiceAccessTokenParams {
+  /** Identity the Voice SDK Device registers as — typically the operator user id. */
+  identity: string;
+  /** Conference name the browser leg will dial into via the TwiML app. */
+  conferenceName: string;
+  /** Token TTL in seconds (default 1h — matches Twilio's max for safety). */
+  ttlSeconds?: number;
+}
+
+export interface MintVoiceAccessTokenResult {
+  token: string;
+  identity: string;
+  expiresAt: string;
+}
+
 export interface CreateOutboundCallParams {
   /** E.164 destination number. */
   to: string;
@@ -133,3 +162,64 @@ export function createTwilioClient(deps: TwilioDeps) {
 }
 
 export type TwilioClient = ReturnType<typeof createTwilioClient>;
+
+/**
+ * Mint a Voice SDK Access Token scoped to a single TwiML application.
+ * The browser's `Device.connect({ conference })` dials through the
+ * TwiML app, whose Voice URL points at apps/api's join-TwiML handler.
+ * That handler inspects the `conference` param and returns
+ * `<Dial><Conference>{name}</Conference></Dial>` so the browser leg
+ * drops into the same Conference room the callee is already in.
+ *
+ * Pure — takes creds + params and returns a JWT. No I/O, safe to
+ * call from a request handler.
+ */
+export function mintVoiceAccessToken(
+  creds: { accountSid: string } & TwilioVoiceSdkDeps,
+  params: MintVoiceAccessTokenParams,
+): MintVoiceAccessTokenResult {
+  const ttl = params.ttlSeconds ?? 3600;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { AccessToken } = (Twilio as any).jwt as {
+    AccessToken: new (
+      accountSid: string,
+      keySid: string,
+      secret: string,
+      options: { identity: string; ttl?: number },
+    ) => {
+      addGrant: (grant: unknown) => void;
+      toJwt: () => string;
+    } & {
+      VoiceGrant: new (options: {
+        incomingAllow?: boolean;
+        outgoingApplicationSid?: string;
+        outgoingApplicationParams?: Record<string, string>;
+      }) => unknown;
+    };
+  };
+  const token = new AccessToken(
+    creds.accountSid,
+    creds.apiKey,
+    creds.apiSecret,
+    { identity: params.identity, ttl },
+  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const VoiceGrant = ((Twilio as any).jwt as any).AccessToken.VoiceGrant as new (
+    options: {
+      incomingAllow?: boolean;
+      outgoingApplicationSid?: string;
+      outgoingApplicationParams?: Record<string, string>;
+    },
+  ) => unknown;
+  const grant = new VoiceGrant({
+    incomingAllow: false,
+    outgoingApplicationSid: creds.twimlAppSid,
+    outgoingApplicationParams: { conference: params.conferenceName },
+  });
+  token.addGrant(grant);
+  return {
+    token: token.toJwt(),
+    identity: params.identity,
+    expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
+  };
+}

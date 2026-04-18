@@ -50,6 +50,22 @@ export const EnvSchema = z.object({
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
   /**
+   * Sprint J — browser live-listen + operator-join use Twilio's Voice
+   * SDK. The SDK authenticates with a short-lived Access Token signed
+   * by an API Key + Secret (distinct from the Account Auth Token).
+   * All three must be set together; when any is missing the
+   * /calls/:id/join endpoint 503s and the UI shows a configuration
+   * error instead of silently failing mid-call.
+   *
+   * Create the API Key + Secret in the Twilio Console (Settings →
+   * API Keys). The TwiML App SID routes browser-originated dials —
+   * in Vex the app's Voice URL should POST to /calls/twilio/join-twiml
+   * so outbound-from-browser lands on the correct Conference.
+   */
+  TWILIO_API_KEY: z.string().optional(),
+  TWILIO_API_SECRET: z.string().optional(),
+  TWILIO_TWIML_APP_SID: z.string().optional(),
+  /**
    * Public base URL Twilio hits for TwiML + status + recording webhooks.
    * Required whenever the Twilio credentials above are set — the
    * OutboundCallWorkflow cannot complete without reachable callback URLs.

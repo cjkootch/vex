@@ -120,13 +120,23 @@ export class CallsController {
   // -------------------------------------------------------------------
 
   /**
-   * Minimal TwiML driver. Twilio fetches this when the call connects;
-   * the response tells Twilio what to say + that it should record.
-   * Recording is driven by the `record: true` flag on calls.create
-   * plus the recordingStatusCallback URL, not by the TwiML itself.
+   * TwiML driver. Twilio fetches this when the outbound leg connects;
+   * the response tells Twilio to dial the callee into a Conference
+   * room named after the workflow id. The operator browser join
+   * endpoint mints an Access Token scoped to the same conference name,
+   * which is how live-listen + takeover work without a second PSTN
+   * hop.
    *
-   * Workflow-aware: the `wf` query param could be used to personalise
-   * the opening line per contact; Sprint 12 keeps it generic.
+   * Conference lifecycle:
+   *   - `startConferenceOnEnter=true` — the callee leg starts the room;
+   *     operator arrivals never kick off a conference by themselves.
+   *   - `endConferenceOnExit=true` — when the callee hangs up the room
+   *     ends for everyone (including any joined operator).
+   *
+   * Recording still flows through the outbound call leg's
+   * `record: true` flag and recordingStatusCallback — the callee leg
+   * captures the full conference audio so Sprint 12's transcription
+   * path is unchanged.
    */
   @Post("twilio/twiml")
   @SkipThrottle()
@@ -134,11 +144,64 @@ export class CallsController {
   @HttpCode(200)
   async twiml(@Req() req: RawBodyRequest<FastifyRequest>): Promise<string> {
     this.verifyTwilio(req);
+    const query = (req.query ?? {}) as Record<string, unknown>;
+    const wf = query["wf"];
+    const workflowId = typeof wf === "string" && wf.length > 0 ? wf : "unknown";
+    const confName = conferenceNameForWorkflow(workflowId);
     return [
       '<?xml version="1.0" encoding="UTF-8"?>',
       "<Response>",
-      "  <Say voice=\"Polly.Joanna\">This is Vex on behalf of Vector Trade Capital. Please hold.</Say>",
-      "  <Pause length=\"1\"/>",
+      "  <Dial>",
+      `    <Conference startConferenceOnEnter="true" endConferenceOnExit="true" beep="false">${escapeXml(confName)}</Conference>`,
+      "  </Dial>",
+      "</Response>",
+    ].join("\n");
+  }
+
+  /**
+   * Sprint J — mint a Twilio Access Token scoped to the conference
+   * room for this workflow so the operator's browser can join as a
+   * Voice SDK participant. The token has no bearer identity from
+   * Twilio's perspective; our own JWT already authorised the user.
+   */
+  @Post(":workflowId/join")
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(200)
+  async joinCall(@Param("workflowId") workflowId: string) {
+    return this.service.mintJoinToken({
+      tenantId: this.tenant.tenantId,
+      workflowId,
+      userId: this.tenant.userId,
+      conferenceName: conferenceNameForWorkflow(workflowId),
+    });
+  }
+
+  /**
+   * Sprint J — browser-originated join TwiML. The Twilio Voice SDK
+   * `Device.connect({ conference })` call routes here via the TwiML
+   * app the Access Token is scoped to. Twilio POSTs the conference
+   * name as a form param; we return a Dial+Conference with muted
+   * beep so the operator audibly drops in without a chime.
+   *
+   * Signature-verified — Twilio still signs TwiML-app requests with
+   * the account auth token.
+   */
+  @Post("twilio/join-twiml")
+  @SkipThrottle()
+  @Header("content-type", "text/xml")
+  @HttpCode(200)
+  async joinTwiml(@Req() req: RawBodyRequest<FastifyRequest>): Promise<string> {
+    const params = this.verifyTwilio(req);
+    const confName = params["conference"];
+    if (!confName) {
+      throw new BadRequestException("missing_conference_param");
+    }
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      "<Response>",
+      "  <Dial>",
+      `    <Conference startConferenceOnEnter="false" endConferenceOnExit="false" beep="false">${escapeXml(confName)}</Conference>`,
+      "  </Dial>",
       "</Response>",
     ].join("\n");
   }
@@ -213,4 +276,24 @@ function reconstructUrl(req: FastifyRequest): string {
   const host = req.headers["host"] as string | undefined;
   const path = req.raw.url ?? req.url;
   return `${proto}://${host}${path}`;
+}
+
+/**
+ * Deterministic Conference room name derived from the workflow id.
+ * Shared by the TwiML endpoint (callee leg) and the join-token minter
+ * (operator leg). Must be stable — Twilio matches participants by
+ * the exact string.
+ */
+export function conferenceNameForWorkflow(workflowId: string): string {
+  return `vex-${workflowId}`;
+}
+
+/** Minimal XML escape for the conference name emitted inside TwiML. */
+function escapeXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }

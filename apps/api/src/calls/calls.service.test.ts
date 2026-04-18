@@ -1,4 +1,9 @@
-import { ForbiddenException, NotFoundException, BadRequestException } from "@nestjs/common";
+import {
+  ForbiddenException,
+  NotFoundException,
+  BadRequestException,
+  ServiceUnavailableException,
+} from "@nestjs/common";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CallsService, OUTBOUND_CALL_AGENT_NAME } from "./calls.service.js";
 
@@ -70,6 +75,7 @@ function buildService(overrides: {
     {} as never, // twilio
     {} as never, // s3
     "vex-main", // taskQueue
+    null, // voiceSdk
   );
 
   return {
@@ -230,6 +236,7 @@ describe("CallsService.requestHumanBackup", () => {
       {} as never,
       {} as never,
       "vex-main",
+      null,
     );
     return {
       service,
@@ -363,5 +370,144 @@ describe("CallsService.requestHumanBackup", () => {
     });
     expect(result.existed).toBe(false);
     expect(mocks.approvalsCreate).toHaveBeenCalledOnce();
+  });
+});
+
+describe("CallsService.mintJoinToken", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  interface JoinFixtureOpts {
+    voiceSdk?: {
+      accountSid: string;
+      apiKey: string;
+      apiSecret: string;
+      twimlAppSid: string;
+    } | null;
+    approval?: unknown | null;
+    activity?: {
+      metadata: Record<string, unknown>;
+      result: string | null;
+    } | null;
+  }
+
+  function buildJoinService(opts: JoinFixtureOpts = {}) {
+    const voiceSdk =
+      opts.voiceSdk === undefined
+        ? {
+            accountSid: "ACtest",
+            apiKey: "SKtest",
+            apiSecret: "secret-abcdefghijklmnopqrstuvwxyz012345",
+            twimlAppSid: "APtest",
+          }
+        : opts.voiceSdk;
+
+    const approvalsFindByWorkflowId = vi
+      .fn()
+      .mockResolvedValue(
+        opts.approval === undefined
+          ? {
+              id: "01HAPP_CALL_00000000000000A",
+              agentRunId: "01HRUN_00000000000000000000A",
+              proposedPayload: { contact_id: "contact-1" },
+            }
+          : opts.approval,
+      );
+    const activitiesFindByTypeAndSessionId = vi
+      .fn()
+      .mockResolvedValue(opts.activity ?? null);
+
+    const service = new CallsService(
+      {} as never,
+      { findById: vi.fn() } as never,
+      { findById: vi.fn() } as never,
+      {} as never,
+      {
+        create: vi.fn(),
+        findByWorkflowId: approvalsFindByWorkflowId,
+        listByDecision: vi.fn(),
+      } as never,
+      { findByTypeAndSessionId: activitiesFindByTypeAndSessionId } as never,
+      {} as never,
+      { insertIfNotExists: vi.fn() } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      "vex-main",
+      voiceSdk,
+    );
+    return {
+      service,
+      mocks: { approvalsFindByWorkflowId, activitiesFindByTypeAndSessionId },
+    };
+  }
+
+  it("throws 503 when Voice SDK env vars aren't configured", async () => {
+    const { service } = buildJoinService({ voiceSdk: null });
+    await expect(
+      service.mintJoinToken({
+        tenantId: TENANT,
+        workflowId: "outbound-call-01HRUN_00000000000000000000A",
+        userId: "user-1",
+        conferenceName: "vex-outbound-call-01HRUN_00000000000000000000A",
+      }),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
+  });
+
+  it("throws 404 when the workflow approval is missing", async () => {
+    const { service } = buildJoinService({ approval: null });
+    await expect(
+      service.mintJoinToken({
+        tenantId: TENANT,
+        workflowId: "outbound-call-unknown",
+        userId: "user-1",
+        conferenceName: "vex-outbound-call-unknown",
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it("throws 400 when the call activity is already in a terminal state", async () => {
+    const { service } = buildJoinService({
+      activity: { metadata: { status: "completed" }, result: "completed" },
+    });
+    await expect(
+      service.mintJoinToken({
+        tenantId: TENANT,
+        workflowId: "outbound-call-01HRUN_00000000000000000000A",
+        userId: "user-1",
+        conferenceName: "vex-outbound-call-01HRUN_00000000000000000000A",
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("mints a JWT with the operator identity when the call is live", async () => {
+    const { service } = buildJoinService({
+      activity: { metadata: { status: "in-progress" }, result: null },
+    });
+    const result = await service.mintJoinToken({
+      tenantId: TENANT,
+      workflowId: "outbound-call-01HRUN_00000000000000000000A",
+      userId: "01HSEEDUSR0000000000000001",
+      conferenceName: "vex-outbound-call-01HRUN_00000000000000000000A",
+    });
+    expect(result.identity).toBe("operator-01HSEEDUSR0000000000000001");
+    expect(result.conferenceName).toBe(
+      "vex-outbound-call-01HRUN_00000000000000000000A",
+    );
+    // JWT sanity — three dot-separated base64 segments.
+    expect(result.token.split(".").length).toBe(3);
+    expect(Date.parse(result.expiresAt)).toBeGreaterThan(Date.now());
+  });
+
+  it("mints a token even when no activity row exists yet (early in the call)", async () => {
+    const { service } = buildJoinService({ activity: null });
+    const result = await service.mintJoinToken({
+      tenantId: TENANT,
+      workflowId: "outbound-call-01HRUN_00000000000000000000A",
+      userId: "user-1",
+      conferenceName: "vex-outbound-call-01HRUN_00000000000000000000A",
+    });
+    expect(result.token.split(".").length).toBe(3);
   });
 });

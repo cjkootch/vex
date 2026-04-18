@@ -252,3 +252,79 @@ test.describe("Call detail page", () => {
     await expect(page.getByTestId("request-backup")).toHaveText("Already pinged");
   });
 });
+
+// -----------------------------------------------------------------
+// Sprint J — live-listen panel state machine
+// -----------------------------------------------------------------
+
+test.describe("Live-listen panel (Sprint J)", () => {
+  test("renders Join-call button while the call is active", async ({ page }) => {
+    await stubCallDetail(page);
+    await page.goto(`/app/calls/${WORKFLOW_ID}`);
+
+    const panel = page.getByTestId("live-listen-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute("data-state", "idle");
+    const join = page.getByTestId("join-call");
+    await expect(join).toHaveText("Join call");
+    await expect(join).toBeEnabled();
+  });
+
+  test("surfaces a clear error when the server reports the SDK isn't configured", async ({
+    page,
+  }) => {
+    await stubCallDetail(page);
+    await page.route(`**/api/calls/${WORKFLOW_ID}/join`, async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      await route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "twilio_voice_sdk_unconfigured" }),
+      });
+    });
+    await page.goto(`/app/calls/${WORKFLOW_ID}`);
+
+    await page.getByTestId("join-call").click();
+    const error = page.getByTestId("live-listen-error");
+    await expect(error).toBeVisible();
+    await expect(error).toContainText("Voice SDK credentials");
+    await expect(page.getByTestId("live-listen-panel")).toHaveAttribute(
+      "data-state",
+      "error",
+    );
+  });
+
+  test("empty-token response (dev stub) surfaces voice_sdk_unavailable", async ({
+    page,
+  }) => {
+    await stubCallDetail(page);
+    await page.route(`**/api/calls/${WORKFLOW_ID}/join`, async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          token: "",
+          identity: "operator-dev",
+          conferenceName: `vex-${WORKFLOW_ID}`,
+          expiresAt: new Date().toISOString(),
+        }),
+      });
+    });
+    await page.goto(`/app/calls/${WORKFLOW_ID}`);
+
+    await page.getByTestId("join-call").click();
+    await expect(page.getByTestId("live-listen-error")).toContainText(
+      "Voice SDK isn't configured",
+    );
+  });
+
+  test("panel hides on a terminal call that never had an active join", async ({
+    page,
+  }) => {
+    await stubCallDetail(page, { status: "completed", durationSeconds: 240 });
+    await page.goto(`/app/calls/${WORKFLOW_ID}`);
+
+    await expect(page.getByTestId("live-listen-panel")).toHaveCount(0);
+  });
+});

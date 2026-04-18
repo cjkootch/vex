@@ -10,7 +10,7 @@ import type {
   SummaryRepository,
   WorkspaceRepository,
 } from "@vex/db";
-import type { S3Uploader, TwilioClient } from "@vex/integrations";
+import type { S3Uploader, TwilioClient, TwilioVoiceSdkDeps } from "@vex/integrations";
 import type { TwilioVerifier } from "../webhooks/twilio-verifier.js";
 import { CallsController } from "./calls.controller.js";
 import { CallsService } from "./calls.service.js";
@@ -27,8 +27,19 @@ import {
   CALLS_TEMPORAL_CLIENT,
   CALLS_TWILIO_CLIENT,
   CALLS_TWILIO_VERIFIER,
+  CALLS_VOICE_SDK_CONFIG,
   CALLS_WORKSPACES_REPO,
 } from "./tokens.js";
+
+/**
+ * Sprint J — Twilio Voice SDK creds resolved at boot. `null` signals
+ * the three env vars weren't set; the join endpoint short-circuits to
+ * 503 in that case (operator gets a clear error instead of a broken
+ * Voice SDK session).
+ */
+export type VoiceSdkConfig =
+  | ({ accountSid: string } & TwilioVoiceSdkDeps)
+  | null;
 
 export interface CallsModuleConfig {
   db: Db;
@@ -43,6 +54,7 @@ export interface CallsModuleConfig {
   twilio: TwilioClient;
   twilioVerifier: TwilioVerifier;
   s3: S3Uploader;
+  voiceSdk: VoiceSdkConfig;
   /** Temporal task queue the outbound-call workflow runs on. */
   taskQueue: string;
 }
@@ -67,6 +79,7 @@ export class CallsModule {
         { provide: CALLS_TWILIO_VERIFIER, useFactory: () => config.twilioVerifier },
         { provide: CALLS_S3_UPLOADER, useFactory: () => config.s3 },
         { provide: CALLS_TASK_QUEUE, useFactory: () => config.taskQueue },
+        { provide: CALLS_VOICE_SDK_CONFIG, useFactory: () => config.voiceSdk },
         CallsService,
       ],
     };
