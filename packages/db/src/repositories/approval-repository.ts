@@ -69,6 +69,30 @@ export class ApprovalRepository {
     return rows[0] ?? null;
   }
 
+  /**
+   * Stamp the approval as applied — writes the created/modified object's
+   * id and the current timestamp. Callers MUST write inside the same
+   * tenant-scoped tx that performs the create, so a crash between the
+   * insert and the mark rolls the whole thing back and the retry sees
+   * a still-unapplied approval. Idempotent: a second call with the same
+   * object id is a noop because the WHERE guards on applied_object_id.
+   */
+  async markApplied(
+    tx: Tx,
+    id: string,
+    appliedObjectId: string,
+  ): Promise<void> {
+    await tx
+      .update(approvals)
+      .set({ appliedObjectId, appliedAt: new Date() })
+      .where(
+        and(
+          eq(approvals.id, id),
+          sql`${approvals.appliedObjectId} IS NULL`,
+        ),
+      );
+  }
+
   async decide(
     tx: Tx,
     id: string,

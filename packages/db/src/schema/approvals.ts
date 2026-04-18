@@ -26,6 +26,15 @@ export const approvals = pgTable(
     }),
     decision: approvalDecisionEnum("decision").notNull().default("pending"),
     decidedAt: timestamp("decided_at", { withTimezone: true }),
+    /**
+     * Non-null once the approval has been successfully applied to the CRM —
+     * stores the id of the created/modified object (fuel_deal, organization,
+     * contact, …). Written inside the same tenant-scoped transaction that
+     * performs the create, so the approval executor can short-circuit a
+     * retry without producing a duplicate side-effect.
+     */
+    appliedObjectId: text("applied_object_id"),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({

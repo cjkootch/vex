@@ -334,7 +334,7 @@ async function applyDealStatusChange(
   tx: Parameters<Parameters<typeof withTenant>[2]>[0],
   deps: ApprovalExecutorDeps,
   tenantId: string,
-  approval: { id: string; proposedPayload: unknown; reviewerId: string | null },
+  approval: ApprovalRow,
 ): Promise<void> {
   const payload = approval.proposedPayload as
     | {
@@ -366,6 +366,14 @@ async function applyDealStatusChange(
     return;
   }
 
+  // Idempotency — if a previous run already applied this approval,
+  // skip the update. The status may have moved further since; re-
+  // applying would rewind it, which is not what the reviewer approved.
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "deal.status_change");
+    return;
+  }
+
   const actor = approval.reviewerId ?? null;
   await deps.deals.updateStatus(
     tx,
@@ -373,6 +381,7 @@ async function applyDealStatusChange(
     toStatus as Parameters<FuelDealRepository["updateStatus"]>[2],
     actor,
   );
+  await deps.approvals.markApplied(tx, approval.id, dealId);
 
   await deps.events.insertIfNotExists(tx, tenantId, {
     verb: "deal.status_changed",
@@ -395,7 +404,18 @@ async function applyDealStatusChange(
   });
 }
 
-type ApprovalRow = { id: string; proposedPayload: unknown; reviewerId: string | null };
+type ApprovalRow = {
+  id: string;
+  proposedPayload: unknown;
+  reviewerId: string | null;
+  /**
+   * Set once the executor has successfully applied this approval —
+   * stores the created/modified entity id. Any retry that sees a
+   * non-null value short-circuits instead of re-running the side
+   * effect.
+   */
+  appliedObjectId: string | null;
+};
 
 async function applyCreateCompany(
   tx: Parameters<Parameters<typeof withTenant>[2]>[0],
@@ -413,6 +433,13 @@ async function applyCreateCompany(
     await recordExecutorFailure(tx, deps, tenantId, approval.id, "crm.create_company", "missing legalName");
     return;
   }
+  // Idempotency: if a prior run of this job already created the org,
+  // skip the insert and the audit. A second attempt without this
+  // short-circuit would mint a fresh id and stamp a duplicate row.
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "crm.create_company");
+    return;
+  }
   const id = createId();
   await deps.organizations.create(tx, tenantId, {
     id,
@@ -420,6 +447,7 @@ async function applyCreateCompany(
     ...(payload.domain ? { domain: payload.domain } : {}),
     ...(payload.industry ? { industry: payload.industry } : {}),
   });
+  await deps.approvals.markApplied(tx, approval.id, id);
   await deps.events.insertIfNotExists(tx, tenantId, {
     verb: "organization.created",
     subjectType: "organization",
@@ -463,6 +491,11 @@ async function applyCreateContact(
     await recordExecutorFailure(tx, deps, tenantId, approval.id, "crm.create_contact", "more than one primary org");
     return;
   }
+  // Idempotency short-circuit — see applyCreateCompany.
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "crm.create_contact");
+    return;
+  }
   const normalisedOrgs =
     primaryCount === 0
       ? payload.orgs.map((o, idx) => ({ ...o, isPrimary: idx === 0 }))
@@ -486,6 +519,7 @@ async function applyCreateContact(
       isPrimary: org.isPrimary ?? false,
     });
   }
+  await deps.approvals.markApplied(tx, approval.id, id);
   await deps.events.insertIfNotExists(tx, tenantId, {
     verb: "contact.created",
     subjectType: "contact",
@@ -541,6 +575,26 @@ async function applyCreateDeal(
     await recordExecutorFailure(tx, deps, tenantId, approval.id, "crm.create_deal", "missing required field");
     return;
   }
+  // Idempotency short-circuit — see applyCreateCompany.
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "crm.create_deal");
+    return;
+  }
+  // Validation parity with POST /deals: the buyer org must exist in
+  // this tenant. Without this, the executor path could silently
+  // accept a payload that the direct API would have rejected.
+  const buyer = await deps.organizations.findById(tx, payload.buyerOrgId);
+  if (!buyer) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "crm.create_deal",
+      `buyerOrgId ${payload.buyerOrgId} not found in tenant`,
+    );
+    return;
+  }
   const id = createId();
   await deps.deals.create(tx, tenantId, {
     id,
@@ -558,6 +612,7 @@ async function applyCreateDeal(
     ...(payload.notes ? { notes: payload.notes } : {}),
     createdBy: approval.reviewerId ?? null,
   });
+  await deps.approvals.markApplied(tx, approval.id, id);
   await deps.events.insertIfNotExists(tx, tenantId, {
     verb: "deal.created",
     subjectType: "fuel_deal",
@@ -576,6 +631,36 @@ async function applyCreateDeal(
       volume_usg: payload.volumeUsg,
       rationale: payload.rationale ?? null,
       applied_by: approval.reviewerId,
+    },
+  });
+}
+
+/**
+ * Emit an observability-only event when the executor skipped a side
+ * effect because the approval was already applied on a prior run.
+ * Idempotency key matches the one the successful run emitted, so
+ * re-running doesn't stack duplicate replay events either.
+ */
+async function recordExecutorReplay(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+  actionType: string,
+): Promise<void> {
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.replayed",
+    subjectType: "approval",
+    subjectId: approval.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor.replayed:${approval.id}`,
+    metadata: {
+      action_type: actionType,
+      applied_object_id: approval.appliedObjectId,
     },
   });
 }

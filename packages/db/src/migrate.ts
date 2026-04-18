@@ -142,6 +142,50 @@ async function main(): Promise<void> {
       );
       const runtimeRole = ownerRow.rows[0]?.owner ?? "neondb_owner";
 
+      // Ownership transfer: tables created by the first migrations
+      // (e.g. \`approvals\`, \`organizations\`, \`contacts\`) predate the
+      // vex_migrator role and are owned by neondb_owner. GRANT ALL
+      // gives every privilege *except* ownership, and ALTER TABLE
+      // requires ownership — so any migration that modifies one of
+      // those old tables fails with \"must be owner of table X\" under
+      // SET ROLE vex_migrator. Transfer ownership of every public
+      // table + sequence to vex_migrator now (as neondb_owner) so
+      // future migrations have a uniform owner.
+      try {
+        await client.query(`
+          DO $take_ownership$ DECLARE
+            r record;
+          BEGIN
+            IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'vex_migrator') THEN
+              FOR r IN
+                SELECT tablename FROM pg_tables WHERE schemaname = 'public'
+              LOOP
+                EXECUTE format(
+                  'ALTER TABLE public.%I OWNER TO vex_migrator',
+                  r.tablename
+                );
+              END LOOP;
+              FOR r IN
+                SELECT sequence_name FROM information_schema.sequences
+                WHERE sequence_schema = 'public'
+              LOOP
+                EXECUTE format(
+                  'ALTER SEQUENCE public.%I OWNER TO vex_migrator',
+                  r.sequence_name
+                );
+              END LOOP;
+            END IF;
+          END $take_ownership$;
+        `);
+        console.log(
+          "migrate: transferred public schema ownership to vex_migrator",
+        );
+      } catch (err) {
+        console.log(
+          `migrate: ownership transfer skipped (${(err as Error).message})`,
+        );
+      }
+
       try {
         await client.query("SET ROLE vex_migrator");
         // eslint-disable-next-line no-console
