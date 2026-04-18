@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, or, sql, type SQL } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { touchpoints, type Touchpoint } from "../schema/touchpoints.js";
@@ -118,6 +118,63 @@ export class TouchpointRepository {
    * Uses Postgres's `||` JSONB concat so concurrent writers don't
    * stomp on each other — the last write wins by key.
    */
+  /**
+   * Unified communications-log feed. Keyset-paginated descending by
+   * `occurred_at`. Filters map to the shape the /app/inbox UI needs:
+   *   - `channelGroups` — a list like `["email", "sms", "whatsapp"]`
+   *     that the repo expands into `channel LIKE 'email.%'` etc.
+   *     Empty/undefined → no channel filter.
+   *   - `direction` — matches `metadata ->> 'direction'`.
+   *   - `contactId`, `campaignId` — exact-match FKs.
+   *   - `before` — keyset cursor. Only rows strictly earlier than this
+   *     `occurred_at` are returned (for reliable "load more" without
+   *     duplicate rows at ties since the caller filters client-side).
+   */
+  async listFeed(
+    tx: Tx,
+    filters: {
+      channelGroups?: readonly string[];
+      direction?: "inbound" | "outbound";
+      contactId?: string;
+      campaignId?: string;
+      before?: Date;
+    },
+    limit = 50,
+  ): Promise<Touchpoint[]> {
+    const clauses: SQL[] = [];
+    if (filters.channelGroups && filters.channelGroups.length > 0) {
+      const perGroup = filters.channelGroups.map(
+        (g) => sql`${touchpoints.channel} LIKE ${g + ".%"}`,
+      );
+      const combined = perGroup.reduce<SQL | undefined>(
+        (acc, cur) => (acc ? or(acc, cur) : cur),
+        undefined,
+      );
+      if (combined) clauses.push(combined);
+    }
+    if (filters.direction) {
+      clauses.push(
+        sql`${touchpoints.metadata} ->> 'direction' = ${filters.direction}`,
+      );
+    }
+    if (filters.contactId) {
+      clauses.push(eq(touchpoints.contactId, filters.contactId));
+    }
+    if (filters.campaignId) {
+      clauses.push(eq(touchpoints.campaignId, filters.campaignId));
+    }
+    if (filters.before) {
+      clauses.push(lt(touchpoints.occurredAt, filters.before));
+    }
+    const where = clauses.length > 0 ? and(...clauses) : undefined;
+    const query = tx
+      .select()
+      .from(touchpoints)
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(limit);
+    return where ? query.where(where) : query;
+  }
+
   async markIntent(
     tx: Tx,
     id: string,
