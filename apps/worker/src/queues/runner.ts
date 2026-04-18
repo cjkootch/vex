@@ -532,28 +532,6 @@ async function applyCreateContact(
       : payload.orgs;
   const primary = normalisedOrgs.find((o) => o.isPrimary)!;
 
-  // FK validation — every orgId in the membership payload must
-  // exist in this tenant before we create the contact, to match
-  // the POST /contacts service-layer guarantee. Without this the
-  // approval path was relying on DB FK constraints and RLS to
-  // refuse bad ids, which produced a cryptic "contact_org_memberships
-  // violates foreign key" error instead of a clean executor-failed
-  // audit pointing at the specific missing org.
-  for (const org of normalisedOrgs) {
-    const exists = await deps.organizations.findById(tx, org.orgId);
-    if (!exists) {
-      await recordExecutorFailure(
-        tx,
-        deps,
-        tenantId,
-        approval.id,
-        "crm.create_contact",
-        `orgId ${org.orgId} not found in tenant`,
-      );
-      return;
-    }
-  }
-
   const newId = createId();
   // Unified email-dedupe — the direct POST /contacts path uses the
   // same helper. If the approved payload lands on an existing
@@ -595,6 +573,26 @@ async function applyCreateContact(
     return;
   }
   const id = created.contact.id;
+  // FK validation — only on the newly-created path. The duplicate
+  // branch above doesn't insert any memberships, so a stale orgId
+  // there shouldn't block the approval from being marked applied
+  // against the matched existing contact. Without this order, an
+  // email-matched duplicate with a stale secondary org would emit
+  // \`approval.executor.failed\` and leave markApplied un-called.
+  for (const org of normalisedOrgs) {
+    const exists = await deps.organizations.findById(tx, org.orgId);
+    if (!exists) {
+      await recordExecutorFailure(
+        tx,
+        deps,
+        tenantId,
+        approval.id,
+        "crm.create_contact",
+        `orgId ${org.orgId} not found in tenant`,
+      );
+      return;
+    }
+  }
   for (const org of normalisedOrgs) {
     await deps.memberships.create(tx, tenantId, {
       contactId: id,
