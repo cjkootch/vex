@@ -10,6 +10,7 @@ import {
   ActivityRepository,
   AgentRunRepository,
   ApprovalRepository,
+  CampaignRepository,
   ContactOrgMembershipRepository,
   ContactRepository,
   EventRepository,
@@ -47,6 +48,7 @@ import { CallsModule } from "./calls/calls.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
 import { EventsModule } from "./events/events.module.js";
+import { MarketingModule } from "./marketing/marketing.module.js";
 import { OrganizationsModule } from "./organizations/organizations.module.js";
 import { SearchModule } from "./search/search.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
@@ -87,6 +89,7 @@ async function bootstrap(): Promise<void> {
   const touchpointRepository = new TouchpointRepository();
   const workspaceRepository = new WorkspaceRepository();
   const fuelDealRepository = new FuelDealRepository();
+  const campaignRepository = new CampaignRepository();
   const contactMembershipRepository = new ContactOrgMembershipRepository();
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
@@ -199,6 +202,11 @@ async function bootstrap(): Promise<void> {
         organizations: organizationRepository,
       }),
       events: EventsModule.register({ db }),
+      marketing: MarketingModule.register({
+        db,
+        campaigns: campaignRepository,
+        touchpoints: touchpointRepository,
+      }),
       organizations: OrganizationsModule.register({
         db,
         organizations: organizationRepository,
