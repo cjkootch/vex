@@ -1,4 +1,4 @@
-import { and, asc, eq, lte } from "drizzle-orm";
+import { and, asc, eq, isNull, lte } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { followUps, type FollowUp } from "../schema/follow-ups.js";
@@ -85,6 +85,46 @@ export class FollowUpRepository {
       .where(and(eq(followUps.status, "open"), lte(followUps.dueAt, before)))
       .orderBy(asc(followUps.dueAt))
       .limit(limit);
+  }
+
+  /**
+   * Sprint Q — open follow-ups the cron notifier hasn't fired for
+   * yet. Keeps notifications strictly at-most-once per row.
+   */
+  async listDueForNotification(
+    tx: Tx,
+    before: Date,
+    limit = 200,
+  ): Promise<FollowUp[]> {
+    return tx
+      .select()
+      .from(followUps)
+      .where(
+        and(
+          eq(followUps.status, "open"),
+          lte(followUps.dueAt, before),
+          isNull(followUps.notifiedAt),
+        ),
+      )
+      .orderBy(asc(followUps.dueAt))
+      .limit(limit);
+  }
+
+  /** Sprint Q — idempotently stamp notifiedAt on a row. */
+  async markNotified(tx: Tx, id: string): Promise<FollowUp> {
+    const [row] = await tx
+      .update(followUps)
+      .set({ notifiedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(followUps.id, id), isNull(followUps.notifiedAt)))
+      .returning();
+    if (!row) {
+      // Another worker already marked it. Return the current row
+      // without throwing so the cron loop stays tolerant of races.
+      const existing = await this.findById(tx, id);
+      if (!existing) throw new Error(`follow_up ${id} not found`);
+      return existing;
+    }
+    return row;
   }
 
   async markCompleted(tx: Tx, id: string): Promise<FollowUp> {

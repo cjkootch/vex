@@ -57,6 +57,13 @@
       "when": 1776931200000,
       "tag": "0007_follow_ups",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1777017600000,
+      "tag": "0008_follow_ups_notified_at",
+      "breakpoints": true
     }
   ]
 }

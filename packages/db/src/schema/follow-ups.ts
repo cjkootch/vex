@@ -27,6 +27,8 @@ export const followUps = pgTable(
     createdBy: text("created_by").notNull(),
     status: text("status").notNull().default("open"),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    /** Sprint Q — set when the cron notifier has fired for this row. */
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
