@@ -149,6 +149,13 @@ export const EnvSchema = z.object({
    * Local dev: ngrok tunnel. Prod: the deployed apps/api domain.
    */
   APP_BASE_URL: z.string().url().optional(),
+  /**
+   * Tavily Search API key for the chat agent's `research_contact`
+   * tool. Optional — when unset, the tool is not registered and the
+   * agent tells the user research is unavailable instead of
+   * fabricating details.
+   */
+  TAVILY_API_KEY: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   /**
    * Resend "from" address for outbound email. Must match a verified

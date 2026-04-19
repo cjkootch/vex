@@ -8,6 +8,8 @@ export {
   type ProposedAction,
   type QueryParams,
   type QueryResult,
+  type ToolDefinition,
+  type ToolRunner,
 } from "./anthropic.js";
 export {
   OpenAIAdapter,
@@ -53,6 +55,13 @@ export {
   type ResendDeps,
   type SendEmailRequest,
 } from "./resend.js";
+export {
+  createTavilyClient,
+  type TavilyClient,
+  type TavilyDeps,
+  type TavilySearchResponse,
+  type TavilySearchResult,
+} from "./tavily.js";
 export { pricing } from "./pricing.js";
 export {
   ResendNormalizer,

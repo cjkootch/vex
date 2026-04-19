@@ -1,6 +1,13 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { withTenant, type Db, type RetrievalService } from "@vex/db";
-import type { AnthropicAdapter, OpenAIAdapter, ProposedAction } from "@vex/integrations";
+import type {
+  AnthropicAdapter,
+  OpenAIAdapter,
+  ProposedAction,
+  TavilyClient,
+  ToolDefinition,
+  ToolRunner,
+} from "@vex/integrations";
 import { QUERY_SYSTEM_PROMPT } from "@vex/agents";
 import { TenantId, type AgentRunId } from "@vex/domain";
 import { manifestFallback, validateManifest, type ViewManifest } from "@vex/ui";
@@ -9,6 +16,7 @@ import {
   DB_CLIENT,
   OPENAI_ADAPTER,
   RETRIEVAL_SERVICE,
+  TAVILY_CLIENT,
 } from "./tokens.js";
 
 export interface HistoryTurn {
@@ -48,6 +56,7 @@ export class QueryService {
     @Inject(RETRIEVAL_SERVICE) private readonly retrieval: RetrievalService,
     @Inject(OPENAI_ADAPTER) private readonly openai: OpenAIAdapter,
     @Inject(ANTHROPIC_ADAPTER) private readonly anthropic: AnthropicAdapter,
+    @Inject(TAVILY_CLIENT) private readonly tavily: TavilyClient | null,
   ) {}
 
   /**
@@ -95,6 +104,62 @@ export class QueryService {
       return emptyWorkspaceResponse();
     }
 
+    const tools: ToolDefinition[] = this.tavily
+      ? [
+          {
+            name: "research_contact",
+            description:
+              "Search the public web for details about a person — likely title, work email, phone, LinkedIn profile. Use only when the user asks you to enrich a contact, or when proposing crm.create_contact with missing optional fields. Returns raw search snippets; the model extracts candidates and cites sources.",
+            input_schema: {
+              type: "object",
+              properties: {
+                fullName: {
+                  type: "string",
+                  description: "Person's name as the user stated it.",
+                },
+                orgName: {
+                  type: "string",
+                  description:
+                    "Company / organisation they work at. Improves result quality significantly.",
+                },
+                context: {
+                  type: "string",
+                  description:
+                    "Free-text context (role hints, industry, location) — appended to the search query.",
+                },
+              },
+              required: ["fullName"],
+            },
+          },
+        ]
+      : [];
+
+    const toolRunner: ToolRunner = async (name, input) => {
+      if (name !== "research_contact" || !this.tavily) {
+        return { error: `tool ${name} not available` };
+      }
+      const fullName = typeof input["fullName"] === "string" ? input["fullName"] : "";
+      const orgName = typeof input["orgName"] === "string" ? input["orgName"] : "";
+      const context = typeof input["context"] === "string" ? input["context"] : "";
+      const q = [fullName, orgName, context, "email title linkedin"]
+        .filter((s) => s.length > 0)
+        .join(" ");
+      const result = await this.tavily.search(q, {
+        depth: "basic",
+        maxResults: 5,
+        includeAnswer: true,
+      });
+      return {
+        query: q,
+        answer: result.answer,
+        results: result.results.map((r) => ({
+          title: r.title,
+          url: r.url,
+          snippet: r.content.slice(0, 800),
+        })),
+      };
+    };
+
     const queryResult = await this.anthropic.query({
       tenantId,
       ...(input.agentRunId !== undefined ? { agentRunId: input.agentRunId } : {}),
@@ -102,6 +167,7 @@ export class QueryService {
       systemPrompt: QUERY_SYSTEM_PROMPT,
       evidencePack: pack,
       userMessage: composeUserMessage(input.message, input.history),
+      ...(tools.length > 0 ? { tools, toolRunner } : {}),
     });
 
     const validated = validateManifest(queryResult.viewManifest);
