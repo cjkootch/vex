@@ -119,7 +119,7 @@ export const EnvSchema = z.object({
    * background noise, line static). OpenAI default is 0.5; we bump
    * to 0.7 for phone-quality audio.
    */
-  OPENAI_REALTIME_CALL_VAD_THRESHOLD: z.coerce.number().min(0).max(1).default(0.7),
+  OPENAI_REALTIME_CALL_VAD_THRESHOLD: z.coerce.number().min(0).max(1).default(0.85),
   /**
    * How much silence (ms) must follow speech before the AI considers
    * the callee's turn finished and starts responding. Longer values
@@ -131,7 +131,7 @@ export const EnvSchema = z.object({
     .int()
     .min(100)
     .max(5000)
-    .default(900),
+    .default(1400),
   /**
    * Audio prefix included before the detected speech start — gives
    * the model a bit of lead-in so it doesn't clip the first syllable.

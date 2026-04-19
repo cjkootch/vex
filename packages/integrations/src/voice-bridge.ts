@@ -208,6 +208,13 @@ export interface VoiceBridgeConfig {
     prefixPaddingMs?: number;
     silenceDurationMs?: number;
   };
+  /**
+   * Delay between Twilio's "start" event and the first
+   * `response.create` on talkback calls. Gives the outbound audio
+   * path time to stabilise so the AI's opening sentence doesn't get
+   * clipped. Default 1500ms.
+   */
+  openingDelayMs?: number;
   /** Optional logger — defaults to no-op. */
   log?: (level: "info" | "warn" | "error", msg: string, meta?: object) => void;
 }
@@ -307,17 +314,20 @@ export function startVoiceBridge(
             tool_choice: "auto",
           },
         });
-        // Kick off AI speech first so the callee hears a greeting
-        // immediately instead of dead silence on pick-up. The
-        // greeting comes from the system instructions (we append it
-        // in the service layer) — response.create without specific
-        // instructions just asks the AI to speak based on its system
-        // prompt.
+        // Kick off AI speech so the callee hears a greeting. Delay
+        // briefly so Twilio's outbound audio path is fully stable —
+        // firing response.create too early reliably clips the first
+        // ~500ms of the AI's opening sentence, which shows up as a
+        // "fumble" on the callee's end.
         if (mode === "talkback") {
-          realtime.send({
-            type: "response.create",
-            response: { modalities: ["audio", "text"] },
-          });
+          const openingDelayMs = config.openingDelayMs ?? 1500;
+          setTimeout(() => {
+            if (closed) return;
+            realtime.send({
+              type: "response.create",
+              response: { modalities: ["audio", "text"] },
+            });
+          }, openingDelayMs);
         }
         log("info", "voice bridge started", {
           workflowId: config.workflowId,
