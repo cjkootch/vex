@@ -43,6 +43,34 @@ export default function DemoMessagePage(): React.ReactElement {
   const [body, setBody] = useState(DEFAULT_SMS_BODY);
   const [emailBody, setEmailBody] = useState(DEFAULT_EMAIL_BODY);
   const [state, setState] = useState<State>({ name: "idle" });
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [drafting, setDrafting] = useState(false);
+  const [draftError, setDraftError] = useState<string | null>(null);
+
+  async function draft(): Promise<void> {
+    const prompt = aiPrompt.trim();
+    if (!prompt) {
+      setDraftError("Tell Vex what the email is about.");
+      return;
+    }
+    setDrafting(true);
+    setDraftError(null);
+    try {
+      const res = await fetch("/api/query/draft-email", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt, tone: "friendly" }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const body = (await res.json()) as { subject?: string; body?: string };
+      if (body.subject) setSubject(body.subject);
+      if (body.body) setEmailBody(body.body);
+    } catch (err) {
+      setDraftError((err as Error).message);
+    } finally {
+      setDrafting(false);
+    }
+  }
 
   async function fire(e: React.FormEvent) {
     e.preventDefault();
@@ -139,19 +167,50 @@ export default function DemoMessagePage(): React.ReactElement {
         </label>
 
         {channel === "email" && (
-          <label className="flex flex-col gap-1">
-            <span className="text-[11px] uppercase tracking-wide text-white/50">
-              Subject
-            </span>
-            <input
-              type="text"
-              required
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              data-testid="demo-message-subject"
-              className="rounded-md border border-line bg-canvas px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
-            />
-          </label>
+          <>
+            <div className="flex flex-col gap-2 rounded-md border border-accent/30 bg-accent/5 p-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] uppercase tracking-wide text-accent">
+                  AI draft
+                </span>
+                <input
+                  type="text"
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                  placeholder="e.g. follow up on fuel inquiry, ask about volume and timeline"
+                  data-testid="demo-message-ai-prompt"
+                  className="rounded-md border border-line bg-canvas px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-accent focus:outline-none"
+                />
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void draft()}
+                  disabled={drafting}
+                  data-testid="demo-message-ai-draft"
+                  className="rounded-md border border-accent bg-accent/20 px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent/30 disabled:opacity-50"
+                >
+                  {drafting ? "Drafting…" : "Draft with Vex"}
+                </button>
+                {draftError && (
+                  <span className="text-xs text-bad">{draftError}</span>
+                )}
+              </div>
+            </div>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] uppercase tracking-wide text-white/50">
+                Subject
+              </span>
+              <input
+                type="text"
+                required
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                data-testid="demo-message-subject"
+                className="rounded-md border border-line bg-canvas px-3 py-2 text-sm text-white focus:border-accent focus:outline-none"
+              />
+            </label>
+          </>
         )}
 
         <label className="flex flex-col gap-1">
