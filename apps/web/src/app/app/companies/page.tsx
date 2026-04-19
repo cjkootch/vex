@@ -15,7 +15,10 @@ interface OrganizationRow {
   industry: string | null;
   fitScore: number | null;
   status: string;
+  kind: string | null;
   contactCount: number;
+  productCount: number;
+  dealCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -78,13 +81,16 @@ export default function CompaniesPage() {
         accessorKey: "legalName",
         header: "Company",
         cell: ({ row }) => (
-          <Link
-            href={`/app/companies/${row.original.id}`}
-            className="font-medium text-accent hover:underline"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {row.original.legalName}
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href={`/app/companies/${row.original.id}`}
+              className="font-medium text-accent hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {row.original.legalName}
+            </Link>
+            <KindBadge kind={row.original.kind} />
+          </div>
         ),
       },
       {
@@ -106,6 +112,16 @@ export default function CompaniesPage() {
         accessorKey: "contactCount",
         header: "Contacts",
         cell: ({ getValue }) => getValue<number>(),
+      },
+      {
+        accessorKey: "productCount",
+        header: "Products",
+        cell: ({ getValue }) => <CountPill value={getValue<number>()} />,
+      },
+      {
+        accessorKey: "dealCount",
+        header: "Deals",
+        cell: ({ getValue }) => <CountPill value={getValue<number>()} />,
       },
       {
         accessorKey: "status",
@@ -151,7 +167,10 @@ export default function CompaniesPage() {
                   "industry",
                   "fit_score",
                   "status",
+                  "kind",
                   "contact_count",
+                  "product_count",
+                  "deal_count",
                   "created_at",
                   "updated_at",
                 ],
@@ -161,7 +180,10 @@ export default function CompaniesPage() {
                   o.industry ?? "",
                   o.fitScore,
                   o.status,
+                  o.kind ?? "",
                   o.contactCount,
+                  o.productCount,
+                  o.dealCount,
                   o.createdAt,
                   o.updatedAt,
                 ]),
@@ -199,7 +221,10 @@ export default function CompaniesPage() {
                     industry: null,
                     fitScore: null,
                     status: "active",
+                    kind: null,
                     contactCount: 0,
+                    productCount: 0,
+                    dealCount: 0,
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                   },
@@ -249,6 +274,34 @@ export default function CompaniesPage() {
         </>
       )}
     </div>
+  );
+}
+
+function KindBadge({ kind }: { kind: string | null }): React.ReactElement | null {
+  if (!kind) return null;
+  const palette: Record<string, string> = {
+    buyer: "bg-accent/20 text-accent",
+    supplier: "bg-good/20 text-good",
+    broker: "bg-warn/20 text-warn",
+    producer: "bg-good/20 text-good",
+    carrier: "bg-muted/60 text-white/70",
+  };
+  const cls = palette[kind] ?? "bg-muted/60 text-white/70";
+  return (
+    <span
+      className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${cls}`}
+    >
+      {kind}
+    </span>
+  );
+}
+
+function CountPill({ value }: { value: number }): React.ReactElement {
+  if (value === 0) return <span className="text-white/30">0</span>;
+  return (
+    <span className="inline-block min-w-[1.5rem] rounded bg-muted/60 px-1.5 py-0.5 text-center text-xs text-white/80">
+      {value}
+    </span>
   );
 }
 
