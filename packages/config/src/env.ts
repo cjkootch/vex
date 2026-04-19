@@ -114,6 +114,35 @@ export const EnvSchema = z.object({
     ])
     .default("verse"),
   /**
+   * Server-VAD threshold for the call-side Realtime session. Range
+   * 0.0–1.0; higher = less sensitive (fewer false triggers on coughs,
+   * background noise, line static). OpenAI default is 0.5; we bump
+   * to 0.7 for phone-quality audio.
+   */
+  OPENAI_REALTIME_CALL_VAD_THRESHOLD: z.coerce.number().min(0).max(1).default(0.7),
+  /**
+   * How much silence (ms) must follow speech before the AI considers
+   * the callee's turn finished and starts responding. Longer values
+   * tolerate coughs, pauses, and "let me think" breaths; shorter
+   * values feel snappier but cut people off. OpenAI default 500ms.
+   */
+  OPENAI_REALTIME_CALL_VAD_SILENCE_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(5000)
+    .default(900),
+  /**
+   * Audio prefix included before the detected speech start — gives
+   * the model a bit of lead-in so it doesn't clip the first syllable.
+   */
+  OPENAI_REALTIME_CALL_VAD_PREFIX_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(2000)
+    .default(300),
+  /**
    * Public base URL Twilio hits for TwiML + status + recording webhooks.
    * Required whenever the Twilio credentials above are set — the
    * OutboundCallWorkflow cannot complete without reachable callback URLs.

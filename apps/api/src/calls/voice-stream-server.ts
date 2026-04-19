@@ -50,6 +50,12 @@ export interface VoiceStreamServerConfig {
   model: string;
   /** Voice preset for talkback mode (ignored in listen mode). */
   voice?: RealtimeVoice;
+  /** Optional server-VAD tuning — overrides the bridge defaults. */
+  turnDetection?: {
+    threshold?: number;
+    prefixPaddingMs?: number;
+    silenceDurationMs?: number;
+  };
   /** Optional instructions override — defaults to the canonical listener prompt. */
   instructions?: string;
   onEscalate: (args: {
@@ -223,6 +229,9 @@ export class VoiceStreamServer {
       tools: [ESCALATION_TOOL],
       mode: args.mode,
       ...(this.config.voice ? { voice: this.config.voice } : {}),
+      ...(this.config.turnDetection
+        ? { turnDetection: this.config.turnDetection }
+        : {}),
       onEscalate: async (payload) => {
         await this.config.onEscalate(payload);
       },
