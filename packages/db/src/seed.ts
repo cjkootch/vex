@@ -78,9 +78,14 @@ async function main(): Promise<void> {
         .join(", ")}`,
     );
 
-    const reset = async (table: string): Promise<void> => {
+    const reset = async (
+      table: string,
+      column: string = "id",
+    ): Promise<void> => {
       try {
-        await client.query(`DELETE FROM ${table} WHERE id LIKE '01HSEED%'`);
+        await client.query(
+          `DELETE FROM ${table} WHERE ${column} LIKE '01HSEED%'`,
+        );
       } catch (err) {
         // Swallow "relation does not exist" (42P01) so a partial
         // migration state doesn't block the rest of the reset. Any
@@ -95,10 +100,18 @@ async function main(): Promise<void> {
         throw err;
       }
     };
+    // Fuel-deal child tables first — delete by deal_id too, so any
+    // orphan rows from a partial prior seed (where ON DELETE CASCADE
+    // didn't run because the parent was missing) are cleared even
+    // when their own id doesn't start with 01HSEED.
     await reset("fuel_deal_cost_stack");
+    await reset("fuel_deal_cost_stack", "deal_id");
     await reset("fuel_deal_cashflow_events");
+    await reset("fuel_deal_cashflow_events", "deal_id");
     await reset("fuel_deal_scenarios");
+    await reset("fuel_deal_scenarios", "deal_id");
     await reset("fuel_deal_documents");
+    await reset("fuel_deal_documents", "deal_id");
     await reset("fuel_deal_counterparty_scores");
     await reset("fuel_deals");
     await reset("fuel_market_rates");

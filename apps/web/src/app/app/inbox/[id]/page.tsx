@@ -155,13 +155,13 @@ export default function InboxDetailPage({
           </div>
           <audio
             controls
-            src={`${recordingUrl}.mp3`}
+            src={`/api/calls/activities/${detail.id}/recording`}
             className="mt-2 w-full"
             data-testid="activity-recording"
           />
           <div className="mt-2 flex items-center gap-3 text-xs text-white/50">
             <a
-              href={`${recordingUrl}.mp3`}
+              href={`/api/calls/activities/${detail.id}/recording`}
               target="_blank"
               rel="noreferrer"
               className="underline hover:text-white/80"

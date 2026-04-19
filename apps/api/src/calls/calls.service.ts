@@ -436,7 +436,12 @@ export class CallsService {
     const duration = Number.parseInt(params["CallDuration"] ?? "", 10);
     await withTenant(this.db, tenantId, async (tx) => {
       const row = await this.activities.findByCallSid(tx, callSid);
-      if (!row) return;
+      if (!row) {
+        this.log.warn(
+          `demo-status: no voice_call activity found for callSid=${callSid} tenant=${tenantId}`,
+        );
+        return;
+      }
       const metaPatch: Record<string, unknown> = { status };
       if (params["From"]) metaPatch["from_number"] = params["From"];
       if (params["To"]) metaPatch["to_number"] = params["To"];
@@ -447,7 +452,34 @@ export class CallsService {
           : {}),
         metadata: metaPatch,
       });
+      this.log.log(
+        `demo-status applied: activity=${row.id} status=${status} duration=${duration}`,
+      );
     });
+  }
+
+  /**
+   * Proxy a Twilio recording through our API so the browser doesn't
+   * need Twilio basic-auth credentials to play it back. The inbox
+   * detail page points its <audio> tag at this endpoint; we stream
+   * the bytes from Twilio using our stored creds.
+   *
+   * Tenant-scoped lookup by activity id ensures the caller's JWT
+   * tenant actually owns the recording they're asking for.
+   */
+  async fetchRecordingAudio(
+    tenantId: string,
+    activityId: string,
+  ): Promise<Buffer> {
+    const row = await withTenant(this.db, tenantId, async (tx) =>
+      this.activities.findById(tx, activityId),
+    );
+    if (!row) throw new NotFoundException();
+    const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    const recordingUrl =
+      typeof meta["recording_url"] === "string" ? meta["recording_url"] : null;
+    if (!recordingUrl) throw new NotFoundException("no recording attached");
+    return this.twilio.downloadRecording(`${recordingUrl}.mp3`);
   }
 
   /**
