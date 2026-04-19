@@ -4,7 +4,7 @@ import {
   type Db,
   type SignalRepository,
 } from "@vex/db";
-import { and, eq, isNotNull, lt, sql } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import { createLogger, withSpan } from "@vex/telemetry";
 
 const log = createLogger("worker.signals");
