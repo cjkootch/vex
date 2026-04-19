@@ -11,6 +11,7 @@ import {
 import { PriorityCard } from "@/components/brief/priority-card";
 import { HeadsUpStrip } from "@/components/brief/heads-up-strip";
 import { DealPipelineRow } from "@/components/brief/deal-pipeline-row";
+import { PipelineSparkline } from "@/components/brief/pipeline-sparkline";
 import { BlockedCard, RiskCard } from "@/components/brief/blocked-card";
 import { fetchWithRetry } from "@/lib/fetch-with-retry";
 
@@ -163,6 +164,7 @@ function AppHomeInner() {
       )}
       {brief.pipeline.length > 0 && (
         <Section title="Deal pipeline">
+          <PipelineSparkline />
           <div className="divide-y divide-line/60 rounded-lg border border-line bg-muted/20">
             {visiblePipeline.map((d) => (
               <DealPipelineRow key={d.dealId} deal={d} />
