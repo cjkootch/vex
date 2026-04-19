@@ -43,6 +43,12 @@ const DemoMessageBody = z.object({
   body: z.string().min(1).max(1_500),
 });
 
+const DemoEmailBody = z.object({
+  to: z.string().email("to must be a valid email address"),
+  subject: z.string().min(1).max(200),
+  body: z.string().min(1).max(5_000),
+});
+
 const DemoCallBody = z.object({
   phone: z
     .string()
@@ -231,6 +237,26 @@ export class CallsController {
       userId: this.tenant.userId,
       channel: parsed.data.channel,
       toNumber: parsed.data.to,
+      body: parsed.data.body,
+    });
+  }
+
+  /**
+   * Admin-only email test send via Resend. Same touchpoint-in-inbox
+   * pattern as the SMS/WhatsApp demo path.
+   */
+  @Post("demo-email")
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @RequireRole(UserRole.Admin)
+  @HttpCode(202)
+  async demoEmail(@Body() raw: unknown) {
+    const parsed = DemoEmailBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    return this.service.sendDemoEmail({
+      tenantId: this.tenant.tenantId,
+      userId: this.tenant.userId,
+      toAddress: parsed.data.to,
+      subject: parsed.data.subject,
       body: parsed.data.body,
     });
   }

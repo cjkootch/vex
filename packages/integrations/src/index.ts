@@ -47,7 +47,11 @@ export {
   type VoiceBridgeConfig,
   type VoiceBridgeHandle,
 } from "./voice-bridge.js";
-export { createResendClient } from "./resend.js";
+export {
+  createResendClient,
+  type ResendDeps,
+  type SendEmailRequest,
+} from "./resend.js";
 export { pricing } from "./pricing.js";
 export {
   ResendNormalizer,

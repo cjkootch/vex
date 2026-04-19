@@ -11,7 +11,14 @@ import type {
   TouchpointRepository,
   WorkspaceRepository,
 } from "@vex/db";
-import type { S3Uploader, TwilioClient, TwilioVoiceSdkDeps } from "@vex/integrations";
+import type {
+  S3Uploader,
+  TwilioClient,
+  TwilioVoiceSdkDeps,
+  createResendClient,
+} from "@vex/integrations";
+
+export type ResendClient = ReturnType<typeof createResendClient>;
 import type { TwilioVerifier } from "../webhooks/twilio-verifier.js";
 import { CallsController } from "./calls.controller.js";
 import { CallsService } from "./calls.service.js";
@@ -19,6 +26,7 @@ import {
   CALLS_ACTIVITIES_REPO,
   CALLS_AGENT_RUNS_REPO,
   CALLS_APP_BASE_URL,
+  CALLS_RESEND_CLIENT,
   CALLS_APPROVALS_REPO,
   CALLS_CONTACTS_REPO,
   CALLS_DB_CLIENT,
@@ -79,6 +87,8 @@ export interface CallsModuleConfig {
   s3: S3Uploader;
   voiceSdk: VoiceSdkConfig;
   voiceListener: VoiceListenerConfig;
+  /** Resend client for demo email sends. Null disables /calls/demo-email. */
+  resend: ResendClient | null;
   /** Public base URL of apps/api — used by the demo-call TwiML. */
   appBaseUrl: string;
   /** Temporal task queue the outbound-call workflow runs on. */
@@ -109,6 +119,7 @@ export class CallsModule {
         { provide: CALLS_VOICE_SDK_CONFIG, useFactory: () => config.voiceSdk },
         { provide: CALLS_VOICE_LISTENER_CONFIG, useFactory: () => config.voiceListener },
         { provide: CALLS_APP_BASE_URL, useFactory: () => config.appBaseUrl },
+        { provide: CALLS_RESEND_CLIENT, useFactory: () => config.resend },
         CallsService,
       ],
     };

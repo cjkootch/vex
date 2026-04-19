@@ -78,6 +78,7 @@ function buildService(overrides: {
     null, // voiceSdk
     "", // appBaseUrl
     { insert: () => ({ id: "01HSTUBTP0" }) } as never, // touchpoints
+    null, // resend
   );
 
   return {
@@ -241,6 +242,7 @@ describe("CallsService.requestHumanBackup", () => {
       null,
       "",
       { insert: () => ({ id: "01HSTUBTP0" }) } as never,
+      null,
     );
     return {
       service,
@@ -442,6 +444,7 @@ describe("CallsService.mintJoinToken", () => {
       voiceSdk,
       "",
       { insert: () => ({ id: "01HSTUBTP0" }) } as never,
+      null,
     );
     return {
       service,
