@@ -24,8 +24,9 @@ describe("seed ids", () => {
   it("contains the expected top-level IDs", () => {
     expect(SEED_WORKSPACE_ID).toHaveLength(26);
     expect(SEED_ADMIN_USER_ID).toHaveLength(26);
-    // 5 pre-Sprint-11 orgs + 3 Caribbean fuel-deal buyers added in Sprint 11.
-    expect(Object.values(SEED_ORG_IDS)).toHaveLength(8);
+    // 5 pre-Sprint-11 orgs + 3 Caribbean fuel-deal buyers (Sprint 11)
+    // + 2 food-deal buyers (Sprint V).
+    expect(Object.values(SEED_ORG_IDS)).toHaveLength(10);
     expect(SEED_CONTACT_IDS).toHaveLength(20);
     expect(Object.values(SEED_CAMPAIGN_IDS)).toHaveLength(3);
   });

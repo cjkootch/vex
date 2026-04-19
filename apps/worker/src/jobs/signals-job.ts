@@ -301,4 +301,77 @@ const RULES: Rule[] = [
       return { fire, resolve: [] };
     },
   },
+  // 5. Food-line deal: laycan within the configured production lead
+  //    time and no production_started milestone on file. VTC's
+  //    pork/chicken deals run 4–5 wks between PO and shipment-
+  //    ready; if the factory isn't on the clock this late, the
+  //    cargo won't make laycan.
+  {
+    id: "food.production_window_risk",
+    severity: "warn",
+    async run(tx, now) {
+      const rows = await tx
+        .select({
+          id: schema.fuelDeals.id,
+          dealRef: schema.fuelDeals.dealRef,
+          laycanEnd: schema.fuelDeals.laycanEnd,
+          productionLeadTimeWeeks:
+            schema.fuelDeals.productionLeadTimeWeeks,
+          status: schema.fuelDeals.status,
+        })
+        .from(schema.fuelDeals)
+        .where(
+          and(
+            eq(schema.fuelDeals.lineOfBusiness, "food"),
+            sql`${schema.fuelDeals.productionLeadTimeWeeks} IS NOT NULL`,
+            sql`${schema.fuelDeals.status} NOT IN ('closed_won', 'closed_lost', 'cancelled', 'settled', 'delivered')`,
+          ),
+        );
+
+      const fire: RuleFire[] = [];
+      const resolve: Array<string | null> = [];
+      for (const row of rows) {
+        const weeks = row.productionLeadTimeWeeks ?? 0;
+        const laycan = row.laycanEnd ? new Date(row.laycanEnd) : null;
+        if (!laycan || weeks === 0) {
+          resolve.push(row.id);
+          continue;
+        }
+        const windowStart = new Date(
+          laycan.getTime() - weeks * 7 * DAY_MS,
+        );
+        if (now.getTime() < windowStart.getTime()) {
+          resolve.push(row.id);
+          continue;
+        }
+        // Inside the window — check if production_started event fired
+        // for this deal. If so, the factory is running on time.
+        const startedCount = (await tx.execute(sql`
+          SELECT COUNT(*)::int AS c
+          FROM events
+          WHERE subject_type = 'fuel_deal'
+            AND subject_id = ${row.id}
+            AND verb = 'deal.milestone.production_started'
+        `)) as unknown as Array<{ c: number }>;
+        const started = Number(startedCount[0]?.c ?? 0) > 0;
+        if (started) {
+          resolve.push(row.id);
+        } else {
+          fire.push({
+            subjectType: "fuel_deal",
+            subjectId: row.id,
+            title: `${row.dealRef}: inside ${weeks}-week production window, factory hasn't started`,
+            body: `Food deal ${row.dealRef} has laycan_end ${row.laycanEnd} and a ${weeks}-week production lead time. The window opened ${windowStart.toISOString().slice(0, 10)} and no deal.milestone.production_started event has been recorded. Ping the supplier — shipment-ready risk.`,
+            metadata: {
+              deal_ref: row.dealRef,
+              laycan_end: row.laycanEnd,
+              lead_time_weeks: weeks,
+              window_start: windowStart.toISOString(),
+            },
+          });
+        }
+      }
+      return { fire, resolve };
+    },
+  },
 ];

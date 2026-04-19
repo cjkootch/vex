@@ -257,6 +257,31 @@ async function main(): Promise<void> {
         externalKeys: { internal: "vtc-buyer-caribair" },
         fieldConfidence: {},
       },
+      // Sprint V — food line of business demo buyers.
+      {
+        id: SEED_ORG_IDS.alimport,
+        tenantId,
+        legalName: "Alimport S.A.",
+        domain: "alimport.test",
+        industry: "Food distribution (state)",
+        geo: { country: "CU", region: "Havana" },
+        fitScore: 0.62,
+        sourceOfTruth: "internal",
+        externalKeys: { internal: "vtc-buyer-alimport" },
+        fieldConfidence: {},
+      },
+      {
+        id: SEED_ORG_IDS.cibao,
+        tenantId,
+        legalName: "Cibao Foods Distribuidora",
+        domain: "cibaofoods.test",
+        industry: "Food distribution",
+        geo: { country: "DO", region: "Santiago" },
+        fitScore: 0.81,
+        sourceOfTruth: "internal",
+        externalKeys: { internal: "vtc-buyer-cibao" },
+        fieldConfidence: {},
+      },
     ]);
 
     const orgIds = Object.values(SEED_ORG_IDS);
@@ -1485,6 +1510,131 @@ async function main(): Promise<void> {
           "State-owned flag carrier. Strong credit profile, preferred counterparty for Jet A-1 volume.",
       },
     ]);
+
+    // ------------------------------------------------------------
+    // Sprint V — food line of business demo deals.
+    //
+    // Deliberately no cost_stack / cashflow / scenarios / documents.
+    // Food deals use a simpler margin view today; those child tables
+    // are fuel-specific in spirit (freight rates per USG, density-
+    // derived MT conversions). The bare deal rows are enough for the
+    // chat agent to reason about the book + for signals to fire.
+    // ------------------------------------------------------------
+
+    // Rice → Cuba, BIS still pending (same compliance pattern as
+    // fuel deal3), laycan ~6 weeks out, 3-week production lead so
+    // the production-window signal stays green for now.
+    await db.insert(schema.fuelDeals).values({
+      id: SEED_FUEL_DEAL_IDS.food1,
+      tenantId,
+      dealRef: SEED_FUEL_DEAL_REFS.food1,
+      status: "draft",
+      dealType: "spot",
+      lineOfBusiness: "food",
+      product: "rice",
+      productGrade: "Long-grain white, 5% broken (Thai origin)",
+      productSpecNotes:
+        "Long-grain parboiled, 5% broken, 14% max moisture. Fumigation cert required on export.",
+      originCountry: "TH",
+      originPort: "Bangkok",
+      destinationCountry: "CU",
+      destinationPort: "Havana",
+      destinationTerminal: "Puerto de La Habana - Terminal Granos",
+      incoterm: "cfr",
+      pricingBasis: "negotiated",
+      pricingFormula: "FOB Bangkok + freight + insurance, fixed in USD",
+      priceLockDate: "2026-04-18",
+      volumeUsg: 2000, // quantity: 2000 MT (volume_unit = 'mt')
+      volumeUnit: "mt",
+      densityKgL: null,
+      volumeTolerancePct: 0.02,
+      currency: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      buyerOrgId: SEED_ORG_IDS.alimport,
+      laycanStart: "2026-06-01",
+      laycanEnd: "2026-06-08",
+      blDateEstimated: "2026-06-05",
+      etaDestination: "2026-06-20",
+      paymentTerms: "lc_sight",
+      tradeFinanceCostPct: 0.005,
+      ofacScreeningStatus: "in_progress",
+      bisLicenseRequired: true,
+      bisLicenseNumber: null,
+      bisLicenseExpiry: null,
+      eeiFilingRequired: true,
+      eeiItn: null,
+      complianceHold: true,
+      complianceNotes:
+        "Cuba export requires BIS licence — application filed 2026-04-12, awaiting adjudication.",
+      productionLeadTimeWeeks: 3,
+      coldChainRequired: false,
+      counterpartyRiskScore: 45,
+      countryRiskScore: 75,
+      politicalRiskInsured: true,
+      notes:
+        "Rice to Alimport — state food importer, strong payment history despite country risk. Fumigation cert must land before vessel nomination.",
+      internalNotes:
+        "VTC demo food deal — seeded to exercise the food LoB path and the BIS-for-Cuba signal.",
+      createdBy: SEED_ADMIN_USER_ID,
+    });
+
+    // Pork → Dominican, cold chain, 5-week production lead. Built so
+    // the production_window_risk signal fires cleanly: laycan set 4
+    // weeks out + no production_started event + 5-week lead time =
+    // window already open, should light up the rule.
+    await db.insert(schema.fuelDeals).values({
+      id: SEED_FUEL_DEAL_IDS.food2,
+      tenantId,
+      dealRef: SEED_FUEL_DEAL_REFS.food2,
+      status: "negotiating",
+      dealType: "spot",
+      lineOfBusiness: "food",
+      product: "pork",
+      productGrade: "Frozen boneless pork shoulder, -18°C",
+      productSpecNotes:
+        "USDA-inspected, frozen blast to -18°C, packed in 20kg master cartons on slip sheets.",
+      originCountry: "US",
+      originPort: "Savannah",
+      destinationCountry: "DO",
+      destinationPort: "Caucedo",
+      destinationTerminal: "DP World Caucedo - Reefer Yard",
+      incoterm: "cif",
+      pricingBasis: "negotiated",
+      pricingFormula: "USDA cutout composite weekly avg × 1.12, fixed at PO",
+      priceLockDate: "2026-04-15",
+      volumeUsg: 18, // quantity: 18 40ft reefers
+      volumeUnit: "containers",
+      densityKgL: null,
+      volumeTolerancePct: 0,
+      currency: "usd",
+      fxRateToUsd: 1,
+      fxHedgeInPlace: false,
+      buyerOrgId: SEED_ORG_IDS.cibao,
+      laycanStart: "2026-05-15",
+      laycanEnd: "2026-05-18",
+      blDateEstimated: "2026-05-17",
+      etaDestination: "2026-05-24",
+      paymentTerms: "prepayment_80_20",
+      tradeFinanceCostPct: 0.006,
+      ofacScreeningStatus: "cleared",
+      bisLicenseRequired: false,
+      eeiFilingRequired: true,
+      eeiItn: null,
+      complianceHold: false,
+      complianceNotes:
+        "Standard USDA export — FSIS 9060-5 export certificate will land with BL packet.",
+      productionLeadTimeWeeks: 5,
+      coldChainRequired: true,
+      counterpartyRiskScore: 25,
+      countryRiskScore: 30,
+      politicalRiskInsured: false,
+      notes:
+        "Pork cutout to Cibao Foods. Reefer booking confirmed with Maersk — cold-chain break is the single biggest risk.",
+      internalNotes:
+        "VTC demo food deal — seeded to exercise the production-window signal rule. Laycan inside the 5-week lead time as of seed date.",
+      createdBy: SEED_ADMIN_USER_ID,
+    });
 
     // eslint-disable-next-line no-console
     console.log("seed complete");

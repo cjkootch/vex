@@ -30,6 +30,9 @@ export const SEED_ORG_IDS = {
   massy: make("CRP", 6), // Massy United Industries (Jamaica) — ULSD buyer
   punta: make("CRP", 7), // Punta Caucedo Energy (DR) — ULSD buyer
   caribAir: make("CRP", 8), // Caribbean Airlines (Trinidad) — Jet A1 buyer
+  // Sprint V — food line of business demo buyers.
+  alimport: make("CRP", 9), // Alimport S.A. (Cuba) — state food importer
+  cibao: make("CRP", 10), // Cibao Foods (DR) — distributor, reefers
 } as const;
 
 export const SEED_CONTACT_IDS = Array.from({ length: 20 }, (_, i) => make("CNT", i + 1));
@@ -61,12 +64,19 @@ export const SEED_FUEL_DEAL_IDS = {
   deal1: make("DEA", 1), // VTC-2026-001 — ULSD → Jamaica, low vessel utilization
   deal2: make("DEA", 2), // VTC-2026-002 — ULSD → Dominican Republic, healthy
   deal3: make("DEA", 3), // VTC-2026-003 — Jet A1 → Trinidad, BIS missing
+  // Sprint V — food line of business demo rows. Use the same table
+  // + id-prefix convention so reset/cleanup logic covers them, but
+  // namespace the deal_ref as VTC-F-YYYY-NNN to signal food.
+  food1: make("DEA", 101), // VTC-F-2026-001 — Rice → Cuba, BIS pending
+  food2: make("DEA", 102), // VTC-F-2026-002 — Pork → Dominican, cold chain
 } as const;
 
 export const SEED_FUEL_DEAL_REFS = {
   deal1: "VTC-2026-001",
   deal2: "VTC-2026-002",
   deal3: "VTC-2026-003",
+  food1: "VTC-F-2026-001",
+  food2: "VTC-F-2026-002",
 } as const;
 
 export const SEED_FUEL_DEAL_COST_STACK_IDS = {
