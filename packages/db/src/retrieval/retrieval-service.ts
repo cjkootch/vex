@@ -242,6 +242,7 @@ export class RetrievalService {
     // proposing a duplicate.
     const followUpItems = await this.fetchOpenFollowUps(tx);
     const documentItems = await this.fetchDocuments(tx);
+    const dealDossierItems = await this.fetchDealDossier(tx);
 
     const allItems = [
       ...(items.length > 0 ? items : fallbackItems),
@@ -249,6 +250,7 @@ export class RetrievalService {
       ...enrollmentItems,
       ...followUpItems,
       ...documentItems,
+      ...dealDossierItems,
     ];
 
     const aggregates = await this.fetchAggregates(tx);
@@ -491,6 +493,121 @@ export class RetrievalService {
    * `campaigns` field so it can match user descriptions ("nurture
    * sequence", "outbound SDR cadence") to real campaign ids.
    */
+  /**
+   * Per-deal dossier — every deal as an evidence item carrying the
+   * comparison-relevant columns (product, volume, margin, revenue,
+   * status, destination, laycan). When the user says "how does 003
+   * compare to our last few jet fuel deals", the chat agent scans
+   * object_type=fuel_deal items for peers (same product / similar
+   * volume) and quotes the numbers. Capped at 30 rows.
+   */
+  private async fetchDealDossier(tx: Tx): Promise<EvidenceItem[]> {
+    const rows = (await tx.execute(sql`
+      SELECT
+        d.id AS id,
+        d.deal_ref AS deal_ref,
+        d.status AS status,
+        d.product AS product,
+        d.product_grade AS product_grade,
+        d.volume_usg AS volume_usg,
+        d.incoterm AS incoterm,
+        d.destination_port AS destination_port,
+        d.destination_country AS destination_country,
+        d.laycan_start AS laycan_start,
+        d.laycan_end AS laycan_end,
+        d.compliance_hold AS compliance_hold,
+        d.created_at AS created_at,
+        d.updated_at AS updated_at,
+        c.gross_margin_pct AS gross_margin_pct,
+        c.net_margin_pct AS net_margin_pct,
+        c.ebitda_usd AS ebitda_usd,
+        c.breakeven_sell_price_usg AS breakeven_sell_price_usg,
+        o.name AS buyer_name
+      FROM fuel_deals d
+      LEFT JOIN fuel_deal_cost_stack c ON c.deal_id = d.id
+      LEFT JOIN organizations o ON o.id = d.buyer_org_id
+      ORDER BY d.updated_at DESC
+      LIMIT 30
+    `)) as unknown as Array<{
+      id: string;
+      deal_ref: string;
+      status: string;
+      product: string;
+      product_grade: string | null;
+      volume_usg: number;
+      incoterm: string;
+      destination_port: string | null;
+      destination_country: string | null;
+      laycan_start: string | null;
+      laycan_end: string | null;
+      compliance_hold: boolean;
+      created_at: Date;
+      updated_at: Date;
+      gross_margin_pct: number | null;
+      net_margin_pct: number | null;
+      ebitda_usd: number | null;
+      breakeven_sell_price_usg: number | null;
+      buyer_name: string | null;
+    }>;
+    if (rows.length === 0) return [];
+    return rows.map((r) => {
+      const volume = Number(r.volume_usg);
+      const gm =
+        r.gross_margin_pct === null
+          ? "n/a"
+          : `${(Number(r.gross_margin_pct) * 100).toFixed(1)}%`;
+      const nm =
+        r.net_margin_pct === null
+          ? "n/a"
+          : `${(Number(r.net_margin_pct) * 100).toFixed(1)}%`;
+      const ebitda =
+        r.ebitda_usd === null
+          ? "n/a"
+          : `$${Math.round(Number(r.ebitda_usd)).toLocaleString()}`;
+      const breakeven =
+        r.breakeven_sell_price_usg === null
+          ? "n/a"
+          : `$${Number(r.breakeven_sell_price_usg).toFixed(3)}/USG`;
+      const chunk = [
+        `Deal ${r.deal_ref} (${r.id})`,
+        `  Status: ${r.status}${r.compliance_hold ? " · compliance_hold" : ""}`,
+        `  Product: ${r.product}${r.product_grade ? ` (${r.product_grade})` : ""}`,
+        `  Volume: ${volume.toLocaleString()} USG`,
+        `  Incoterm: ${r.incoterm}`,
+        r.destination_port
+          ? `  Destination: ${r.destination_port}${r.destination_country ? `, ${r.destination_country}` : ""}`
+          : null,
+        r.buyer_name ? `  Buyer: ${r.buyer_name}` : null,
+        r.laycan_start && r.laycan_end
+          ? `  Laycan: ${r.laycan_start} → ${r.laycan_end}`
+          : null,
+        `  Gross margin: ${gm} · Net margin: ${nm} · EBITDA: ${ebitda} · Breakeven: ${breakeven}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const occurred = r.updated_at instanceof Date ? r.updated_at : new Date();
+      const ageHours = Math.max(
+        0,
+        (Date.now() - occurred.getTime()) / (60 * 60 * 1000),
+      );
+      return {
+        chunk_id: `fuel_deal:${r.id}`,
+        object_type: "fuel_deal",
+        object_id: r.id,
+        chunk_text: chunk,
+        source_ref: `fuel_deal ${r.deal_ref}`,
+        source_type: "hydration",
+        occurred_at: occurred,
+        freshness_hours: ageHours,
+        confidence_score: 0.95,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      } satisfies EvidenceItem;
+    });
+  }
+
   /**
    * Roll-up projections so Vex can answer comparative / aggregate
    * questions without the agent having to page through individual

@@ -8,8 +8,10 @@ export interface ResendDeps {
 export interface SendEmailRequest {
   to: string | readonly string[];
   subject: string;
-  /** Plain-text body. HTML is rendered from typed ViewManifests elsewhere. */
+  /** Plain-text body. Required (email clients + accessibility). */
   text: string;
+  /** Optional HTML body. When present Resend delivers a multipart. */
+  html?: string;
   replyTo?: string;
 }
 
@@ -23,6 +25,7 @@ export function createResendClient(deps: ResendDeps) {
         to: [...req.to],
         subject: req.subject,
         text: req.text,
+        ...(req.html !== undefined ? { html: req.html } : {}),
         ...(req.replyTo !== undefined ? { reply_to: req.replyTo } : {}),
       });
     },
