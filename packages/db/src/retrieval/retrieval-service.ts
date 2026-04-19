@@ -522,7 +522,7 @@ export class RetrievalService {
         c.net_margin_pct AS net_margin_pct,
         c.ebitda_usd AS ebitda_usd,
         c.breakeven_sell_price_usg AS breakeven_sell_price_usg,
-        o.name AS buyer_name
+        o.legal_name AS buyer_name
       FROM fuel_deals d
       LEFT JOIN fuel_deal_cost_stack c ON c.deal_id = d.id
       LEFT JOIN organizations o ON o.id = d.buyer_org_id
@@ -752,13 +752,13 @@ export class RetrievalService {
     const topOrgsRows = (await tx.execute(sql`
       SELECT
         o.id AS org_id,
-        o.name AS name,
+        o.legal_name AS name,
         COUNT(d.id)::int AS deal_count,
         MAX(d.deal_ref) AS latest_deal_ref
       FROM organizations o
       JOIN fuel_deals d ON d.buyer_org_id = o.id
       WHERE d.created_at >= NOW() - INTERVAL '90 days'
-      GROUP BY o.id, o.name
+      GROUP BY o.id, o.legal_name
       ORDER BY deal_count DESC
       LIMIT 10
     `)) as unknown as Array<{
