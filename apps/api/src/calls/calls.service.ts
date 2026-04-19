@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import type { Client as TemporalClient } from "@temporalio/client";
+import type { Redis } from "ioredis";
 import {
   withTenant,
   type ActivityRepository,
@@ -202,7 +203,7 @@ export class CallsService {
     @Inject(CALLS_RESEND_CLIENT)
     private readonly resend: ResendClient | null,
     @Inject(CALLS_REDIS_CLIENT)
-    private readonly redis: import("ioredis").Redis | null,
+    private readonly redis: Redis | null,
   ) {}
 
   /**
