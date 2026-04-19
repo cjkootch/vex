@@ -137,32 +137,52 @@ const CONTEXT_TYPE_MAP: Record<string, ContextChipType> = {
  * are swallowed silently; the badge just stops updating until the
  * next tick succeeds.
  */
-function usePendingApprovalCount(): number {
-  const [count, setCount] = useState(0);
+interface NavCounts {
+  pendingApprovals: number;
+  openSignals: number;
+  overdueFollowUps: number;
+}
+
+/**
+ * Poll three endpoints every 60s to surface unread counts as sidebar
+ * badges: pending approvals, open signals, overdue follow-ups. All
+ * three requests fire in parallel; failures leave the previous value
+ * intact so the badges don't flicker.
+ */
+function useNavCounts(): NavCounts {
+  const [counts, setCounts] = useState<NavCounts>({
+    pendingApprovals: 0,
+    openSignals: 0,
+    overdueFollowUps: 0,
+  });
   useEffect(() => {
     let cancelled = false;
     const tick = async (): Promise<void> => {
-      try {
-        const res = await fetch("/api/approvals?status=pending", {
+      const [approvalsRes, signalsRes, followUpsRes] = await Promise.all([
+        fetch("/api/approvals?status=pending", {
           credentials: "include",
           cache: "no-store",
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as {
-          count?: number;
-          approvals?: unknown[];
-        };
-        if (cancelled) return;
-        const n =
-          typeof data.count === "number"
-            ? data.count
-            : Array.isArray(data.approvals)
-              ? data.approvals.length
-              : 0;
-        setCount(n);
-      } catch {
-        // Keep the previous value on network hiccups.
-      }
+        }).catch(() => null),
+        fetch("/api/signals", {
+          credentials: "include",
+          cache: "no-store",
+        }).catch(() => null),
+        fetch("/api/follow-ups?status=open", {
+          credentials: "include",
+          cache: "no-store",
+        }).catch(() => null),
+      ]);
+      if (cancelled) return;
+
+      const approvalsCount = await extractCount(approvalsRes, "approvals");
+      const signalsCount = await extractCount(signalsRes, "signals");
+      const overdueCount = await extractOverdueCount(followUpsRes);
+
+      setCounts({
+        pendingApprovals: approvalsCount ?? counts.pendingApprovals,
+        openSignals: signalsCount ?? counts.openSignals,
+        overdueFollowUps: overdueCount ?? counts.overdueFollowUps,
+      });
     };
     void tick();
     const interval = setInterval(() => void tick(), 60_000);
@@ -170,8 +190,45 @@ function usePendingApprovalCount(): number {
       cancelled = true;
       clearInterval(interval);
     };
+  // Intentionally empty — we read `counts` via closure on each tick
+  // but don't want the interval torn down when counts update.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  return count;
+  return counts;
+}
+
+async function extractCount(
+  res: Response | null,
+  arrayKey: string,
+): Promise<number | null> {
+  if (!res || !res.ok) return null;
+  try {
+    const body = (await res.json()) as Record<string, unknown>;
+    if (typeof body["count"] === "number") return body["count"];
+    const arr = body[arrayKey];
+    if (Array.isArray(arr)) return arr.length;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function extractOverdueCount(res: Response | null): Promise<number | null> {
+  if (!res || !res.ok) return null;
+  try {
+    const body = (await res.json()) as {
+      followUps?: Array<{ dueAt: string; status?: string }>;
+      follow_ups?: Array<{ dueAt: string; status?: string }>;
+    };
+    const rows = body.followUps ?? body.follow_ups ?? [];
+    const now = Date.now();
+    return rows.filter((r) => {
+      const due = Date.parse(r.dueAt);
+      return Number.isFinite(due) && due < now;
+    }).length;
+  } catch {
+    return null;
+  }
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -186,7 +243,8 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const [sideCollapsed, setSideCollapsed] = useState(false);
   const [autonomyOpen, setAutonomyOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const pending = usePendingApprovalCount();
+  const navCounts = useNavCounts();
+  const pending = navCounts.pendingApprovals;
   const pathname = usePathname() ?? "";
 
   // Close the mobile drawer on route change so tapping a link doesn't
@@ -207,6 +265,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
         onClose={() => setMobileNavOpen(false)}
         pathname={pathname}
         pending={pending}
+        navCounts={navCounts}
       />
       <div className="flex flex-1 overflow-hidden">
         <SideRail
@@ -214,6 +273,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
           onToggle={() => setSideCollapsed((c) => !c)}
           pathname={pathname}
           pending={pending}
+          navCounts={navCounts}
         />
         <main className="flex-1 overflow-auto">{children}</main>
         <AutonomyRail
@@ -317,14 +377,45 @@ function ApprovalBadge({ count }: { count: number }) {
   );
 }
 
+function badgeCountFor(
+  href: string,
+  pending: number,
+  navCounts: NavCounts,
+): number | null {
+  if (href === "/app/approvals" && pending > 0) return pending;
+  if (href === "/app/signals" && navCounts.openSignals > 0) {
+    return navCounts.openSignals;
+  }
+  if (href === "/app/follow-ups" && navCounts.overdueFollowUps > 0) {
+    return navCounts.overdueFollowUps;
+  }
+  return null;
+}
+
+function badgeToneFor(href: string, navCounts: NavCounts): "warn" | "bad" {
+  // Overdue follow-ups are a stronger "handle this" signal than
+  // pending approvals or open signals, so they render red.
+  if (href === "/app/follow-ups" && navCounts.overdueFollowUps > 0) {
+    return "bad";
+  }
+  return "warn";
+}
+
 interface SideRailProps {
   collapsed: boolean;
   onToggle: () => void;
   pathname: string;
   pending: number;
+  navCounts: NavCounts;
 }
 
-function SideRail({ collapsed, onToggle, pathname, pending }: SideRailProps) {
+function SideRail({
+  collapsed,
+  onToggle,
+  pathname,
+  pending,
+  navCounts,
+}: SideRailProps) {
   return (
     <aside
       className={`${collapsed ? "w-14" : "w-60"} hidden flex-shrink-0 flex-col border-r border-line bg-muted/20 transition-[width] md:flex`}
@@ -338,8 +429,8 @@ function SideRail({ collapsed, onToggle, pathname, pending }: SideRailProps) {
               ? pathname === "/app"
               : pathname === item.matchKey ||
                 pathname.startsWith(`${item.matchKey}/`);
-          const badge =
-            item.href === "/app/approvals" && pending > 0 ? pending : null;
+          const badge = badgeCountFor(item.href, pending, navCounts);
+          const badgeTone = badgeToneFor(item.href, navCounts);
           return (
             <Link
               key={item.href}
@@ -354,7 +445,13 @@ function SideRail({ collapsed, onToggle, pathname, pending }: SideRailProps) {
               <Icon path={item.iconPath} />
               {collapsed ? null : <span>{item.label}</span>}
               {!collapsed && badge !== null ? (
-                <span className="ml-auto rounded-full bg-amber-400/20 px-1.5 py-0.5 text-xs text-amber-300">
+                <span
+                  className={`ml-auto rounded-full px-1.5 py-0.5 text-xs ${
+                    badgeTone === "bad"
+                      ? "bg-red-500/20 text-red-300"
+                      : "bg-amber-400/20 text-amber-300"
+                  }`}
+                >
                   {badge}
                 </span>
               ) : null}
@@ -385,11 +482,13 @@ function MobileNav({
   onClose,
   pathname,
   pending,
+  navCounts,
 }: {
   open: boolean;
   onClose: () => void;
   pathname: string;
   pending: number;
+  navCounts: NavCounts;
 }) {
   useEffect(() => {
     if (!open) return;
@@ -439,8 +538,8 @@ function MobileNav({
                 ? pathname === "/app"
                 : pathname === item.matchKey ||
                   pathname.startsWith(`${item.matchKey}/`);
-            const badge =
-              item.href === "/app/approvals" && pending > 0 ? pending : null;
+            const badge = badgeCountFor(item.href, pending, navCounts);
+            const badgeTone = badgeToneFor(item.href, navCounts);
             return (
               <Link
                 key={item.href}
@@ -456,7 +555,13 @@ function MobileNav({
                 <Icon path={item.iconPath} />
                 <span>{item.label}</span>
                 {badge !== null ? (
-                  <span className="ml-auto rounded-full bg-amber-400/20 px-1.5 py-0.5 text-xs text-amber-300">
+                  <span
+                    className={`ml-auto rounded-full px-1.5 py-0.5 text-xs ${
+                      badgeTone === "bad"
+                        ? "bg-red-500/20 text-red-300"
+                        : "bg-amber-400/20 text-amber-300"
+                    }`}
+                  >
                     {badge}
                   </span>
                 ) : null}
