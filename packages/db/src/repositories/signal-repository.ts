@@ -53,21 +53,37 @@ export class SignalRepository {
     return row;
   }
 
-  async listOpen(tx: Tx, limit = 100): Promise<Signal[]> {
+  async listOpen(
+    tx: Tx,
+    limit = 100,
+    subject?: { subjectType: string; subjectId: string },
+  ): Promise<Signal[]> {
+    const clauses = [isNull(signals.acknowledgedAt)];
+    if (subject) {
+      clauses.push(eq(signals.subjectType, subject.subjectType));
+      clauses.push(eq(signals.subjectId, subject.subjectId));
+    }
     return tx
       .select()
       .from(signals)
-      .where(isNull(signals.acknowledgedAt))
+      .where(and(...clauses))
       .orderBy(desc(signals.createdAt))
       .limit(limit);
   }
 
-  async listRecent(tx: Tx, limit = 100): Promise<Signal[]> {
-    return tx
-      .select()
-      .from(signals)
-      .orderBy(desc(signals.createdAt))
-      .limit(limit);
+  async listRecent(
+    tx: Tx,
+    limit = 100,
+    subject?: { subjectType: string; subjectId: string },
+  ): Promise<Signal[]> {
+    const clauses = [] as ReturnType<typeof eq>[];
+    if (subject) {
+      clauses.push(eq(signals.subjectType, subject.subjectType));
+      clauses.push(eq(signals.subjectId, subject.subjectId));
+    }
+    const base = tx.select().from(signals);
+    const filtered = clauses.length > 0 ? base.where(and(...clauses)) : base;
+    return filtered.orderBy(desc(signals.createdAt)).limit(limit);
   }
 
   async acknowledge(
