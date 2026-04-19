@@ -454,6 +454,10 @@ export class CallsController {
     const query = (req.query ?? {}) as Record<string, unknown>;
     const tenant =
       typeof query["tenant"] === "string" ? (query["tenant"] as string) : "";
+    // eslint-disable-next-line no-console
+    console.log(
+      `demo-status in: rawBody=${req.rawBody ? req.rawBody.length : "null"} tenant=${tenant || "MISSING"} callSid=${params["CallSid"] ?? "MISSING"} status=${params["CallStatus"] ?? "MISSING"}`,
+    );
     if (!tenant) return;
     await this.service.handleDemoStatus(tenant, params);
   }

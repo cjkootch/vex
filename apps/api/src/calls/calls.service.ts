@@ -436,7 +436,12 @@ export class CallsService {
     const duration = Number.parseInt(params["CallDuration"] ?? "", 10);
     await withTenant(this.db, tenantId, async (tx) => {
       const row = await this.activities.findByCallSid(tx, callSid);
-      if (!row) return;
+      if (!row) {
+        this.log.warn(
+          `demo-status: no voice_call activity found for callSid=${callSid} tenant=${tenantId}`,
+        );
+        return;
+      }
       const metaPatch: Record<string, unknown> = { status };
       if (params["From"]) metaPatch["from_number"] = params["From"];
       if (params["To"]) metaPatch["to_number"] = params["To"];
@@ -447,6 +452,9 @@ export class CallsService {
           : {}),
         metadata: metaPatch,
       });
+      this.log.log(
+        `demo-status applied: activity=${row.id} status=${status} duration=${duration}`,
+      );
     });
   }
 
