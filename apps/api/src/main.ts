@@ -286,6 +286,76 @@ async function bootstrap(): Promise<void> {
         evalResultsPath:
           process.env["EVAL_RESULTS_PATH"] ??
           resolve(process.cwd(), "evals/results/latest.json"),
+        integrations: [
+          {
+            name: "Anthropic",
+            required: true,
+            configured: Boolean(env.ANTHROPIC_API_KEY),
+            notes: "Chat agent model. Required.",
+          },
+          {
+            name: "OpenAI",
+            required: true,
+            configured: Boolean(env.OPENAI_API_KEY),
+            notes: "Embeddings + realtime voice. Required.",
+          },
+          {
+            name: "Twilio",
+            required: false,
+            configured: Boolean(
+              env.TWILIO_ACCOUNT_SID &&
+                env.TWILIO_AUTH_TOKEN &&
+                env.TWILIO_PHONE_NUMBER,
+            ),
+            notes: "Voice + SMS + WhatsApp. Needs SID, auth token, phone number.",
+          },
+          {
+            name: "Resend",
+            required: false,
+            configured: Boolean(env.RESEND_API_KEY),
+            notes: "Outbound email + daily digest.",
+          },
+          {
+            name: "Tavily",
+            required: false,
+            configured: Boolean(env.TAVILY_API_KEY),
+            notes:
+              "Web search for research_contact chat tool. Disabled when unset.",
+          },
+          {
+            name: "Temporal",
+            required: false,
+            configured: Boolean(temporal),
+            notes:
+              temporal === null
+                ? "Cluster unreachable at boot — workflows will 503 until restart."
+                : "Durable workflows (calls + campaigns).",
+          },
+          {
+            name: "Redis",
+            required: true,
+            configured: Boolean(env.REDIS_URL),
+            notes: "BullMQ queues + cross-process scenario store.",
+          },
+          {
+            name: "S3",
+            required: true,
+            configured: Boolean(
+              env.S3_REGION &&
+                env.S3_BUCKET &&
+                env.S3_ACCESS_KEY_ID &&
+                env.S3_SECRET_ACCESS_KEY,
+            ),
+            notes: "Documents + call recordings.",
+          },
+          {
+            name: "App base URL",
+            required: false,
+            configured: Boolean(env.APP_BASE_URL),
+            notes:
+              "Public URL Twilio + Resend webhooks hit. Required for voice + recording callbacks.",
+          },
+        ],
       }),
       ...(twilio && twilioVerifier
         ? {
