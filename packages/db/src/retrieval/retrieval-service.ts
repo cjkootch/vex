@@ -530,7 +530,7 @@ export class RetrievalService {
       LEFT JOIN organizations o ON o.id = d.buyer_org_id
       ORDER BY d.updated_at DESC
       LIMIT 30
-    `)) as unknown as Array<{
+    `)).rows as unknown as Array<{
       id: string;
       deal_ref: string;
       status: string;
@@ -672,7 +672,7 @@ export class RetrievalService {
       GROUP BY o.id, o.legal_name, o.kind, o.updated_at
       ORDER BY o.updated_at DESC
       LIMIT 60
-    `)) as unknown as Array<{
+    `)).rows as unknown as Array<{
       org_id: string;
       name: string;
       kind: string | null;
@@ -728,7 +728,7 @@ export class RetrievalService {
       FROM fuel_deals
       GROUP BY status
       ORDER BY deal_count DESC
-    `)) as unknown as Array<{
+    `)).rows as unknown as Array<{
       status: string;
       deal_count: number;
       total_volume_usg: number;
@@ -737,7 +737,7 @@ export class RetrievalService {
     const costByDeal = (await tx.execute(sql`
       SELECT deal_id, gross_margin_pct, breakeven_sell_price_usg
       FROM fuel_deal_cost_stack
-    `)) as unknown as Array<{
+    `)).rows as unknown as Array<{
       deal_id: string;
       gross_margin_pct: number | null;
       breakeven_sell_price_usg: number | null;
@@ -851,7 +851,7 @@ export class RetrievalService {
       WHERE acknowledged_at IS NULL
       GROUP BY severity
       ORDER BY count DESC
-    `)) as unknown as Array<{ severity: string; count: number }>;
+    `)).rows as unknown as Array<{ severity: string; count: number }>;
     const signalsByRule = (await tx.execute(sql`
       SELECT rule_id, COUNT(*)::int AS count
       FROM signals
@@ -859,7 +859,7 @@ export class RetrievalService {
       GROUP BY rule_id
       ORDER BY count DESC
       LIMIT 10
-    `)) as unknown as Array<{ rule_id: string; count: number }>;
+    `)).rows as unknown as Array<{ rule_id: string; count: number }>;
     const signalsOpenTotal = signalsBySeverity.reduce(
       (total, row) => total + Number(row.count),
       0,
@@ -877,7 +877,7 @@ export class RetrievalService {
       GROUP BY o.id, o.legal_name
       ORDER BY deal_count DESC
       LIMIT 10
-    `)) as unknown as Array<{
+    `)).rows as unknown as Array<{
       org_id: string;
       name: string;
       deal_count: number;

@@ -88,6 +88,11 @@ async function bootstrap(): Promise<void> {
   if (!env.TWILIO_AUTH_TOKEN) {
     throw new Error("TWILIO_AUTH_TOKEN is required to start the API");
   }
+  if (!env.WEBSITE_CHAT_WEBHOOK_SECRET) {
+    throw new Error(
+      "WEBSITE_CHAT_WEBHOOK_SECRET is required to start the API",
+    );
+  }
   if (!env.NEXTAUTH_SECRET) {
     throw new Error("NEXTAUTH_SECRET is required to start the API");
   }
@@ -209,6 +214,7 @@ async function bootstrap(): Promise<void> {
         normalizationQueue: queues.normalization,
         resendSecret: env.RESEND_WEBHOOK_SECRET,
         twilioAuthToken: env.TWILIO_AUTH_TOKEN,
+        websiteChatSecret: env.WEBSITE_CHAT_WEBHOOK_SECRET,
         resolveTenant: () => "01HSEEDWRK0000000000000001",
       }),
       query: QueryModule.register({ db, retrieval, openai, anthropic, tavily }),

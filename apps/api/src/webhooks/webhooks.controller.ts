@@ -17,6 +17,7 @@ import { addNormalizationJob, type NormalizationJobData } from "@vex/agents";
 import { withTenant, type Db, type RawEventRepository } from "@vex/db";
 import type { ResendVerifier } from "./resend-verifier.js";
 import type { TwilioVerifier } from "./twilio-verifier.js";
+import type { WebsiteChatVerifier } from "./website-chat-verifier.js";
 import {
   DB_CLIENT,
   NORMALIZATION_QUEUE,
@@ -24,6 +25,7 @@ import {
   RESEND_VERIFIER,
   TWILIO_VERIFIER,
   WEBHOOK_TENANT_RESOLVER,
+  WEBSITE_CHAT_VERIFIER,
   type WebhookTenantResolver,
 } from "./tokens.js";
 
@@ -39,6 +41,8 @@ export class WebhooksController {
     private readonly queue: Queue<NormalizationJobData>,
     @Inject(RESEND_VERIFIER) private readonly resend: ResendVerifier,
     @Inject(TWILIO_VERIFIER) private readonly twilio: TwilioVerifier,
+    @Inject(WEBSITE_CHAT_VERIFIER)
+    private readonly websiteChat: WebsiteChatVerifier,
     @Inject(WEBHOOK_TENANT_RESOLVER)
     private readonly resolveTenant: WebhookTenantResolver,
   ) {}
@@ -161,6 +165,92 @@ export class WebhooksController {
         compositeId,
         headersForStorage,
         params,
+        checksum,
+      ),
+    );
+
+    if (result.isNew) {
+      await addNormalizationJob(this.queue, {
+        raw_event_id: result.id,
+        tenant_id: tenantId,
+      });
+    }
+
+    void reply;
+  }
+
+  /**
+   * POST /webhooks/website-chat — inbound lead events from the VTC
+   * marketing site's AI chat. Two event kinds: `conversation.started`
+   * (fires when the gate captures name+email) and `conversation.ended`
+   * (fires on idle/unload with the full transcript).
+   *
+   * Idempotency: the provider_event_id is `<conversation_id>:<event>`
+   * so retries of the same event collapse, while started + ended for
+   * the same conversation are distinct rows.
+   */
+  @Post("website-chat")
+  @HttpCode(204)
+  async websiteChatWebhook(
+    @Req() req: RawBodyRequest<FastifyRequest>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<void> {
+    const rawBody = req.rawBody;
+    if (!rawBody) throw new BadRequestException("missing_body");
+
+    const verdict = this.websiteChat.verify(req.headers, rawBody);
+    if (!verdict.ok) {
+      this.log.warn(`website-chat webhook rejected: ${verdict.reason}`);
+      throw new BadRequestException("invalid_signature");
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawBody.toString("utf8")) as Record<string, unknown>;
+    } catch {
+      throw new BadRequestException("invalid_json");
+    }
+
+    const conversationId =
+      typeof payload["conversation_id"] === "string"
+        ? (payload["conversation_id"] as string)
+        : undefined;
+    const eventKind =
+      typeof payload["event"] === "string"
+        ? (payload["event"] as string)
+        : undefined;
+    if (!conversationId || !eventKind) {
+      throw new BadRequestException("missing_conversation_or_event");
+    }
+    if (
+      eventKind !== "conversation.started" &&
+      eventKind !== "conversation.ended"
+    ) {
+      throw new BadRequestException("unsupported_event");
+    }
+
+    const tenantId = this.resolveTenant("website_chat", payload);
+    const checksum = sha256Hex(rawBody);
+    const headersForStorage = pickHeaders(req.headers, [
+      "x-vtc-timestamp",
+      "x-vtc-signature",
+      "x-idempotency-key",
+      "content-type",
+    ]);
+
+    // Composite id keeps `started` and `ended` as distinct rows while
+    // retries of the same event collapse via the rawEvents unique
+    // constraint on (provider, providerEventId).
+    const providerEventId = `${conversationId}:${eventKind}`;
+
+    const result = await withTenant(this.db, tenantId, async (tx) =>
+      this.rawEvents.insertIfNotExists(
+        tx,
+        tenantId,
+        "website_chat",
+        providerEventId,
+        headersForStorage,
+        payload,
         checksum,
       ),
     );

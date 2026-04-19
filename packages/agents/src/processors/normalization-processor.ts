@@ -3,10 +3,20 @@ import { withTenant, type Db, type RawEventRepository } from "@vex/db";
 import {
   ResendNormalizer,
   TwilioNormalizer,
+  WebsiteChatNormalizer,
   type NormalizerOutcome,
   type RawEventInput,
 } from "@vex/integrations";
-import type { ContactRepository, ActivityRepository, TouchpointRepository, EventRepository } from "@vex/db";
+import type {
+  ActivityRepository,
+  ContactOrgMembershipRepository,
+  ContactRepository,
+  DocumentRepository,
+  EventRepository,
+  LeadRepository,
+  OrganizationRepository,
+  TouchpointRepository,
+} from "@vex/db";
 import type { NormalizationJobData } from "../queues.js";
 
 export interface NormalizationProcessorDeps {
@@ -16,6 +26,11 @@ export interface NormalizationProcessorDeps {
   touchpoints: TouchpointRepository;
   activities: ActivityRepository;
   events: EventRepository;
+  /** Present when the website-chat normalizer needs to be served. */
+  organizations?: OrganizationRepository;
+  memberships?: ContactOrgMembershipRepository;
+  leads?: LeadRepository;
+  documents?: DocumentRepository;
 }
 
 /**
@@ -69,6 +84,10 @@ export function buildNormalizationProcessor(deps: NormalizationProcessorDeps) {
         touchpoints: deps.touchpoints,
         activities: deps.activities,
         events: deps.events,
+        ...(deps.organizations ? { organizations: deps.organizations } : {}),
+        ...(deps.memberships ? { memberships: deps.memberships } : {}),
+        ...(deps.leads ? { leads: deps.leads } : {}),
+        ...(deps.documents ? { documents: deps.documents } : {}),
       } as const;
 
       let outcome: NormalizerOutcome;
@@ -78,6 +97,11 @@ export function buildNormalizationProcessor(deps: NormalizationProcessorDeps) {
           break;
         case "twilio":
           outcome = await new TwilioNormalizer(normalizerDeps).normalize(input);
+          break;
+        case "website_chat":
+          outcome = await new WebsiteChatNormalizer(normalizerDeps).normalize(
+            input,
+          );
           break;
         default:
           throw new Error(`unsupported provider: ${raw.provider}`);

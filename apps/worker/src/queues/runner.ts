@@ -32,6 +32,7 @@ import {
   CampaignStepRepository,
   ContactOrgMembershipRepository,
   ContactRepository,
+  DocumentRepository,
   EventRepository,
   FuelDealRepository,
   LeadRepository,
@@ -149,6 +150,10 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     touchpoints: repos.touchpoints,
     activities: repos.activities,
     events: repos.events,
+    organizations: repos.organizations,
+    memberships: repos.memberships,
+    leads: repos.leads,
+    documents: repos.documents,
   });
   const dlqProcessor = buildDlqProcessor({
     db,
@@ -2045,6 +2050,7 @@ function buildRepos() {
     memberships: new ContactOrgMembershipRepository(),
     organizations: new OrganizationRepository(),
     leads: new LeadRepository(),
+    documents: new DocumentRepository(),
     summaries: new SummaryRepository(),
     threads: new ThreadRepository(),
     campaigns: new CampaignRepository(),
