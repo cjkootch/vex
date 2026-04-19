@@ -232,7 +232,11 @@ describe("startVoiceBridge", () => {
     }
     expect(output.item.type).toBe("function_call_output");
     expect(output.item.call_id).toBe("call-42");
-    expect(JSON.parse(output.item.output)).toEqual({ ok: true });
+    expect(JSON.parse(output.item.output)).toEqual({
+      ok: true,
+      message:
+        "A teammate has been paged. Let the caller know someone will join shortly.",
+    });
   });
 
   it("tolerates malformed tool arguments — defaults reason string + still invokes handler", async () => {
@@ -293,6 +297,8 @@ describe("startVoiceBridge", () => {
     expect(JSON.parse(output.item.output)).toEqual({
       ok: false,
       error: "backup_service_down",
+      message:
+        "Escalation failed — apologise to the caller and offer to take a message.",
     });
   });
 
