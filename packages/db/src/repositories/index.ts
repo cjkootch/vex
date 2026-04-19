@@ -1,4 +1,7 @@
-export { OrganizationRepository } from "./organization-repository.js";
+export {
+  OrganizationRepository,
+  mergeOrganizationInto,
+} from "./organization-repository.js";
 export type { OrganizationUpsertData } from "./organization-repository.js";
 export { ContactRepository } from "./contact-repository.js";
 export {

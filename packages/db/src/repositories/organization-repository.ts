@@ -291,6 +291,116 @@ export function normalizeDomain(raw: string): string {
 }
 
 /**
+ * Merge one organization into another. Repoints every FK reference from
+ * `sourceId` to `targetId`, then archives the source with a
+ * `merged_into` external key so future lookups can resolve the old id.
+ * Unique-index collisions on join tables are handled with DELETE-first
+ * dedupe (keeps the target's row, drops the source's duplicate).
+ *
+ * Returns the counts of rows touched per table so the UI can show a
+ * summary. Caller is responsible for emitting the audit event and for
+ * running inside {@link withTenant} so RLS is active.
+ */
+export async function mergeOrganizationInto(
+  tx: Tx,
+  sourceId: string,
+  targetId: string,
+): Promise<{
+  deals: number;
+  contacts: number;
+  memberships: number;
+  products: number;
+  relationships: number;
+}> {
+  if (sourceId === targetId) {
+    throw new Error("cannot merge an organization into itself");
+  }
+
+  // Deals — four FKs: buyer, seller, buy-side broker, sell-side broker.
+  // Column names are compile-time constants; ids flow as parameters so
+  // this is safe from injection.
+  let dealsTouched = 0;
+  const buyerRes = (await tx.execute(sql`
+    update fuel_deals set buyer_org_id = ${targetId} where buyer_org_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+  dealsTouched += buyerRes.rowCount ?? 0;
+  const sellerRes = (await tx.execute(sql`
+    update fuel_deals set seller_org_id = ${targetId} where seller_org_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+  dealsTouched += sellerRes.rowCount ?? 0;
+  const buyBrokerRes = (await tx.execute(sql`
+    update fuel_deals set buy_side_broker_org_id = ${targetId} where buy_side_broker_org_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+  dealsTouched += buyBrokerRes.rowCount ?? 0;
+  const sellBrokerRes = (await tx.execute(sql`
+    update fuel_deals set sell_side_broker_org_id = ${targetId} where sell_side_broker_org_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+  dealsTouched += sellBrokerRes.rowCount ?? 0;
+
+  // contacts.org_id
+  const contactRes = (await tx.execute(sql`
+    update contacts set org_id = ${targetId} where org_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // contact_org_memberships — drop source rows where the contact already
+  // has a target membership, then repoint the rest.
+  await tx.execute(sql`
+    delete from contact_org_memberships
+    where org_id = ${sourceId}
+      and contact_id in (
+        select contact_id from contact_org_memberships where org_id = ${targetId}
+      )
+  `);
+  const membershipRes = (await tx.execute(sql`
+    update contact_org_memberships set org_id = ${targetId} where org_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // organization_products — dedup + repoint.
+  await tx.execute(sql`
+    delete from organization_products
+    where org_id = ${sourceId}
+      and product in (
+        select product from organization_products where org_id = ${targetId}
+      )
+  `);
+  const productRes = (await tx.execute(sql`
+    update organization_products set org_id = ${targetId} where org_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // organization_relationships — dedup both directions, drop any
+  // self-edges produced by the merge, then repoint.
+  await tx.execute(sql`
+    delete from organization_relationships
+    where (from_org_id = ${sourceId} and to_org_id = ${targetId})
+       or (from_org_id = ${targetId} and to_org_id = ${sourceId})
+  `);
+  const relRes = (await tx.execute(sql`
+    update organization_relationships
+    set from_org_id = case when from_org_id = ${sourceId} then ${targetId} else from_org_id end,
+        to_org_id   = case when to_org_id   = ${sourceId} then ${targetId} else to_org_id   end
+    where from_org_id = ${sourceId} or to_org_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // Archive source + record the merge pointer. Keeps historical event
+  // rows addressable via the old id if any survived outside FKs.
+  await tx.execute(sql`
+    update organizations
+    set status = 'archived',
+        external_keys = coalesce(external_keys, '{}'::jsonb) || jsonb_build_object('merged_into', ${targetId}::text),
+        updated_at = now()
+    where id = ${sourceId}
+  `);
+
+  return {
+    deals: dealsTouched,
+    contacts: contactRes.rowCount ?? 0,
+    memberships: membershipRes.rowCount ?? 0,
+    products: productRes.rowCount ?? 0,
+    relationships: relRes.rowCount ?? 0,
+  };
+}
+
+/**
  * SQL-side normalization for a legal-name column. Must stay in lockstep
  * with the JS side above. Keeps the lookup in a single WHERE clause
  * instead of pulling every row into the node process.
