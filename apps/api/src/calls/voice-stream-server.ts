@@ -10,6 +10,7 @@ import {
   type RealtimeClientEvent,
   type RealtimeServerEvent,
   type RealtimeTransport,
+  type RealtimeVoice,
   type TwilioStreamMessage,
   type TwilioStreamTransport,
   type VoiceBridgeHandle,
@@ -47,6 +48,8 @@ export interface VoiceStreamServerConfig {
   enabled: boolean;
   openaiApiKey: string;
   model: string;
+  /** Voice preset for talkback mode (ignored in listen mode). */
+  voice?: RealtimeVoice;
   /** Optional instructions override — defaults to the canonical listener prompt. */
   instructions?: string;
   onEscalate: (args: {
@@ -138,12 +141,20 @@ export class VoiceStreamServer {
           return;
         }
         const wf = params["wf"] ?? "demo";
+        const customInstructions = params["instructions"];
 
         ws.off("message", onEarly);
 
         void this.handleConnection(
           ws,
-          { workflowId: wf, tenantId: tenant, mode },
+          {
+            workflowId: wf,
+            tenantId: tenant,
+            mode,
+            ...(customInstructions
+              ? { instructions: customInstructions }
+              : {}),
+          },
           req,
           buffered,
         ).catch((err) => {
@@ -180,7 +191,12 @@ export class VoiceStreamServer {
 
   private async handleConnection(
     ws: WebSocket,
-    args: { workflowId: string; tenantId: string; mode: StreamMode },
+    args: {
+      workflowId: string;
+      tenantId: string;
+      mode: StreamMode;
+      instructions?: string;
+    },
     _req: IncomingMessage,
     replay: TwilioStreamMessage[] = [],
   ): Promise<void> {
@@ -195,9 +211,10 @@ export class VoiceStreamServer {
     });
 
     const instructions =
-      args.mode === "talkback"
+      args.instructions ??
+      (args.mode === "talkback"
         ? FUEL_LEAD_QUALIFIER_INSTRUCTIONS
-        : (this.config.instructions ?? ESCALATION_LISTENER_INSTRUCTIONS);
+        : (this.config.instructions ?? ESCALATION_LISTENER_INSTRUCTIONS));
 
     const handle = startVoiceBridge(twilio, realtime, {
       workflowId: args.workflowId,
@@ -205,6 +222,7 @@ export class VoiceStreamServer {
       instructions,
       tools: [ESCALATION_TOOL],
       mode: args.mode,
+      ...(this.config.voice ? { voice: this.config.voice } : {}),
       onEscalate: async (payload) => {
         await this.config.onEscalate(payload);
       },
