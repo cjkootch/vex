@@ -459,6 +459,30 @@ export class CallsService {
   }
 
   /**
+   * Proxy a Twilio recording through our API so the browser doesn't
+   * need Twilio basic-auth credentials to play it back. The inbox
+   * detail page points its <audio> tag at this endpoint; we stream
+   * the bytes from Twilio using our stored creds.
+   *
+   * Tenant-scoped lookup by activity id ensures the caller's JWT
+   * tenant actually owns the recording they're asking for.
+   */
+  async fetchRecordingAudio(
+    tenantId: string,
+    activityId: string,
+  ): Promise<Buffer> {
+    const row = await withTenant(this.db, tenantId, async (tx) =>
+      this.activities.findById(tx, activityId),
+    );
+    if (!row) throw new NotFoundException();
+    const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    const recordingUrl =
+      typeof meta["recording_url"] === "string" ? meta["recording_url"] : null;
+    if (!recordingUrl) throw new NotFoundException("no recording attached");
+    return this.twilio.downloadRecording(`${recordingUrl}.mp3`);
+  }
+
+  /**
    * Attach Twilio's recording URL to a demo call's activity. Twilio
    * fires this after the call ends; the URL is playable via the
    * Twilio media endpoint (auth required by the caller when fetched).

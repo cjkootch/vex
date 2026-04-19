@@ -109,6 +109,20 @@ export class CallsController {
     };
   }
 
+  /**
+   * Proxy a Twilio call recording through our API so the inbox
+   * <audio> tag doesn't prompt the operator for Twilio basic-auth.
+   * JWT-protected; the tenant check happens via findById in
+   * withTenant so another tenant's recordingSid can't be fetched by
+   * guessing an activity id.
+   */
+  @Get("activities/:id/recording")
+  @UseGuards(JwtAuthGuard)
+  @Header("content-type", "audio/mpeg")
+  async recordingAudio(@Param("id") id: string): Promise<Buffer> {
+    return this.service.fetchRecordingAudio(this.tenant.tenantId, id);
+  }
+
   @Get(":workflowId")
   @UseGuards(JwtAuthGuard)
   async status(@Param("workflowId") workflowId: string) {
