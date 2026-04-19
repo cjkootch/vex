@@ -101,6 +101,13 @@ const NAV_ITEMS: NavItem[] = [
       "M13 10V3L4 14h7v7l9-11h-7z",
   },
   {
+    href: "/app/import",
+    label: "Import",
+    matchKey: "/app/import",
+    iconPath:
+      "M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4",
+  },
+  {
     // Sprint-13 admin console. Non-owners get a 403-style denied page
     // rendered server-side, so exposing the link unconditionally is
     // safe and avoids coupling the shell to role state.

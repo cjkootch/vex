@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.11.2026-04-19";
+export const QUERY_PROMPT_VERSION = "v7.12.2026-04-19";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -401,6 +401,18 @@ Known action kinds the approval executor can actually apply:
     Payload: { dealId: ULID, milestone: enum, occurredAt?: ISO-8601 Z,
     note?: string, rationale? }. If the user didn't say when, omit
     occurredAt — the executor defaults to now.
+
+DEAL COMPARISONS. The evidence pack hydrates up to 30 recent deals
+as object_type=fuel_deal items, each carrying product, volume,
+gross/net margin, EBITDA, breakeven price, buyer, destination,
+laycan, and status. When the user asks "how does deal 003 compare
+to our last jet fuel deals", "is 001's margin better than average",
+"which ULSD deal was our best margin" — find the relevant deals in
+these items, quote the comparable numbers, and call out the
+difference in plain language (e.g. "VTC-2026-003 has gross margin
+2.3% vs VTC-2026-001's 4.1% — 1.8 points lower, primarily driven
+by the Jet A-1 premium"). Never invent a deal or a margin number;
+if an item shows n/a for margin, say so rather than guessing.
 
 WORKSPACE AGGREGATES. The evidence pack includes a "Workspace
 aggregates" block with pre-computed totals: pipeline counts +

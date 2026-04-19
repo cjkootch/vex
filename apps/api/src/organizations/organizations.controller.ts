@@ -235,6 +235,100 @@ export class OrganizationsController {
     };
   }
 
+  /**
+   * CSV-import path. Accepts up to 500 rows; each flows through the
+   * same `createWithDedupeCheck` the single-create endpoint uses, so
+   * "Acme" + "Acme Corp" + "acme.com" collapse together. Returns
+   * counts plus per-row outcomes so the UI can surface which rows
+   * matched an existing org vs were newly created.
+   */
+  @Post("bulk")
+  @HttpCode(200)
+  async bulkCreate(
+    @Body() raw: unknown,
+  ): Promise<{
+    imported: number;
+    duplicates: number;
+    failed: number;
+    rows: Array<{
+      index: number;
+      status: "created" | "duplicate" | "failed";
+      id?: string;
+      error?: string;
+    }>;
+  }> {
+    const parsed = z
+      .object({
+        rows: z.array(CreateOrganizationBody).min(1).max(500),
+      })
+      .safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const { tenantId, userId } = this.tenant;
+
+    const results: Array<{
+      index: number;
+      status: "created" | "duplicate" | "failed";
+      id?: string;
+      error?: string;
+    }> = [];
+
+    for (let i = 0; i < parsed.data.rows.length; i += 1) {
+      const input = parsed.data.rows[i]!;
+      try {
+        const id = createId();
+        const outcome = await withTenant(this.db, tenantId, async (tx) => {
+          const result = await this.organizations.createWithDedupeCheck(tx, tenantId, {
+            id,
+            legalName: input.legalName,
+            ...(input.domain ? { domain: input.domain } : {}),
+            ...(input.industry ? { industry: input.industry } : {}),
+          });
+          if (result.kind === "duplicate") {
+            return {
+              status: "duplicate" as const,
+              id: result.organization.id,
+            };
+          }
+          await this.events.insertIfNotExists(tx, tenantId, {
+            verb: "organization.created",
+            subjectType: "organization",
+            subjectId: id,
+            actorType: "user",
+            actorId: userId,
+            objectType: "organization",
+            objectId: id,
+            occurredAt: new Date(),
+            idempotencyKey: `organization.created:${id}`,
+            metadata: {
+              legal_name: input.legalName,
+              domain: input.domain ?? null,
+              created_by: userId,
+              import_batch: true,
+            },
+          });
+          return { status: "created" as const, id };
+        });
+        results.push({ index: i, ...outcome });
+      } catch (err) {
+        results.push({
+          index: i,
+          status: "failed",
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    const imported = results.filter((r) => r.status === "created").length;
+    const duplicates = results.filter((r) => r.status === "duplicate").length;
+    const failed = results.filter((r) => r.status === "failed").length;
+    this.log.log(
+      `bulk org import: imported=${imported} duplicates=${duplicates} failed=${failed} by=${userId}`,
+    );
+    return { imported, duplicates, failed, rows: results };
+  }
+
   @Patch(":id")
   async update(
     @Param("id") id: string,

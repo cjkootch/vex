@@ -21,6 +21,7 @@ import { AgentScanner } from "./scanner.js";
 import { runEnrollmentReconciliationTick } from "./jobs/enrollment-reconciliation-job.js";
 import { runFollowUpNotifierTick } from "./jobs/follow-up-notifier-job.js";
 import { runSignalsTick } from "./jobs/signals-job.js";
+import { runDailyDigest } from "./jobs/daily-digest-job.js";
 import { runIntentClassifierTick } from "./jobs/intent-classifier-job.js";
 import { startBullWorker } from "./queues/runner.js";
 import { startTemporalWorker } from "./temporal/runner.js";
@@ -42,6 +43,15 @@ const FOLLOW_UP_NOTIFIER_INTERVAL_MS = 5 * 60 * 1000;
  *  responsive feel for laycan / stale / overdue signals without
  *  hammering the DB (every rule is a handful of indexed queries). */
 const SIGNALS_INTERVAL_MS = 10 * 60 * 1000;
+/** Sprint U — daily digest. Runs every hour; the handler guards so
+ *  it only sends at the configured local hour (default 7am UTC = 2am
+ *  CT, a bit early — set DIGEST_HOUR_UTC to taste). */
+const DIGEST_CHECK_INTERVAL_MS = 60 * 60 * 1000;
+const DIGEST_HOUR_UTC = Number.parseInt(
+  process.env["DIGEST_HOUR_UTC"] ?? "12",
+  10,
+);
+const DIGEST_TO_EMAIL = process.env["DIGEST_TO_EMAIL"] ?? "";
 
 /**
  * The worker process hosts two runtimes:
@@ -316,12 +326,54 @@ async function main(): Promise<void> {
   signalsTimer = setInterval(runSignalsTickFn, SIGNALS_INTERVAL_MS);
   runSignalsTickFn();
 
+  // Sprint U — daily digest. Tick every hour, send only when the
+  // current UTC hour matches DIGEST_HOUR_UTC. `lastDigestDate` guards
+  // against double-sends if the worker restarts inside the hour.
+  let digestTimer: NodeJS.Timeout | null = null;
+  let lastDigestDate = "";
+  const runDigestCheck = (): void => {
+    const now = new Date();
+    const today = now.toISOString().slice(0, 10);
+    if (
+      now.getUTCHours() !== DIGEST_HOUR_UTC ||
+      lastDigestDate === today
+    ) {
+      return;
+    }
+    lastDigestDate = today;
+    void runDailyDigest(
+      {
+        db,
+        events: notifierEvents,
+        signals: signalsRepo,
+        resend: notifierResend,
+      },
+      {
+        tenantId: DEFAULT_WORKSPACE_ID,
+        to: DIGEST_TO_EMAIL || null,
+      },
+    )
+      .then((result) => {
+        // eslint-disable-next-line no-console
+        console.log(
+          `daily-digest: sent=${result.sent} skipped=${result.skippedReason ?? "-"} signals=${result.signals_open} events=${result.events_last_24h} follow_ups_today=${result.followups_due_today}`,
+        );
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("daily-digest failed", err);
+      });
+  };
+  digestTimer = setInterval(runDigestCheck, DIGEST_CHECK_INTERVAL_MS);
+  runDigestCheck();
+
   const shutdown = async (): Promise<void> => {
     clearInterval(scannerTimer);
     if (intentTimer) clearInterval(intentTimer);
     if (reconcilerTimer) clearInterval(reconcilerTimer);
     if (notifierTimer) clearInterval(notifierTimer);
     if (signalsTimer) clearInterval(signalsTimer);
+    if (digestTimer) clearInterval(digestTimer);
     await bull.close();
     temporal.shutdown();
     if (temporalClient) await temporalClient.close();

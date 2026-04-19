@@ -131,6 +131,93 @@ export class ContactsController {
     return { contact, memberships };
   }
 
+  /**
+   * CSV-import path. Each row attaches to a single target org
+   * (orgId is required on the wrapper, not per-row). Dedupe by
+   * primary email — a row matching an existing contact's email in
+   * the same tenant skips insert but records "duplicate" so the UI
+   * can surface how many rows collapsed onto existing records.
+   */
+  @Post("bulk")
+  @HttpCode(200)
+  async bulkCreate(@Body() raw: unknown): Promise<{
+    imported: number;
+    duplicates: number;
+    failed: number;
+    rows: Array<{
+      index: number;
+      status: "created" | "duplicate" | "failed";
+      id?: string;
+      error?: string;
+    }>;
+  }> {
+    const BulkRow = z.object({
+      fullName: z.string().min(1).max(200),
+      title: z.string().max(200).optional(),
+      emails: z.array(z.string().email()).max(10).optional(),
+      phones: z.array(z.string().max(40)).max(10).optional(),
+    });
+    const parsed = z
+      .object({
+        orgId: z.string().min(1),
+        rows: z.array(BulkRow).min(1).max(500),
+      })
+      .safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+
+    const results: Array<{
+      index: number;
+      status: "created" | "duplicate" | "failed";
+      id?: string;
+      error?: string;
+    }> = [];
+
+    for (let i = 0; i < parsed.data.rows.length; i += 1) {
+      const row = parsed.data.rows[i]!;
+      try {
+        const outcome = await this.service.create({
+          tenantId: this.tenant.tenantId,
+          actorUserId: this.tenant.userId,
+          fullName: row.fullName,
+          ...(row.title ? { title: row.title } : {}),
+          ...(row.emails ? { emails: row.emails } : {}),
+          ...(row.phones ? { phones: row.phones } : {}),
+          orgs: [
+            {
+              orgId: parsed.data.orgId,
+              role: null,
+              isPrimary: true,
+            },
+          ],
+        });
+        results.push({
+          index: i,
+          status: "created",
+          id: outcome.contact.id,
+        });
+      } catch (err) {
+        const message = (err as Error).message;
+        // `ContactsService.create` throws a 409-shaped error when the
+        // primary email already matches an existing contact. Surface
+        // that as "duplicate" rather than "failed" so the UI reports
+        // the distinction usefully.
+        const isDup = /exists|duplicate/i.test(message);
+        results.push({
+          index: i,
+          status: isDup ? "duplicate" : "failed",
+          error: message,
+        });
+      }
+    }
+
+    const imported = results.filter((r) => r.status === "created").length;
+    const duplicates = results.filter((r) => r.status === "duplicate").length;
+    const failed = results.filter((r) => r.status === "failed").length;
+    return { imported, duplicates, failed, rows: results };
+  }
+
   @Post(":id/memberships")
   @HttpCode(201)
   async addMembership(@Param("id") id: string, @Body() raw: unknown) {
