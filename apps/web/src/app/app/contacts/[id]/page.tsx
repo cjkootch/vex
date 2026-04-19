@@ -6,6 +6,7 @@ import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { EditContactForm } from "@/components/crm/edit-contact-form";
 import { QuickActions } from "@/components/crm/quick-actions";
+import { SignalsPanel } from "@/components/signals/signals-panel";
 import { Tabs } from "@/components/ui/tabs";
 
 interface Membership {
@@ -217,6 +218,8 @@ export default function ContactDetailPage({
           },
         ]}
       />
+
+      <SignalsPanel subjectType="contact" subjectId={contact.id} />
 
       <EditContactForm
         open={editOpen}

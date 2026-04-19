@@ -6,6 +6,7 @@ import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
 import { QuickActions } from "@/components/crm/quick-actions";
+import { SignalsPanel } from "@/components/signals/signals-panel";
 import { EditDealForm } from "@/components/crm/edit-deal-form";
 import { Tabs } from "@/components/ui/tabs";
 
@@ -161,6 +162,8 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
           },
         ]}
       />
+
+      <SignalsPanel subjectType="fuel_deal" subjectId={deal.id} />
 
       <EditDealForm
         open={editOpen}

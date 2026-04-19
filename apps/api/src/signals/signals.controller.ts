@@ -42,12 +42,16 @@ export class SignalsController {
   @Get()
   async list(
     @Query("include") includeRaw?: string,
+    @Query("subject_type") subjectType?: string,
+    @Query("subject_id") subjectId?: string,
   ): Promise<{ signals: SignalResponse[] }> {
     const includeAll = includeRaw === "all";
+    const subject =
+      subjectType && subjectId ? { subjectType, subjectId } : undefined;
     const rows = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
       includeAll
-        ? this.signals.listRecent(tx, 200)
-        : this.signals.listOpen(tx, 200),
+        ? this.signals.listRecent(tx, 200, subject)
+        : this.signals.listOpen(tx, 200, subject),
     );
     return {
       signals: rows.map((r) => ({

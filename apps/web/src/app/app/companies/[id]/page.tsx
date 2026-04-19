@@ -7,6 +7,7 @@ import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { OrgProductsPanel } from "@/components/crm/org-products-panel";
 import { OrgRelationshipsPanel } from "@/components/crm/org-relationships-panel";
 import { QuickActions } from "@/components/crm/quick-actions";
+import { SignalsPanel } from "@/components/signals/signals-panel";
 import { EditCompanyForm } from "@/components/crm/edit-company-form";
 import { Tabs } from "@/components/ui/tabs";
 
@@ -154,6 +155,8 @@ export default function CompanyDetailPage({
           },
         ]}
       />
+
+      <SignalsPanel subjectType="organization" subjectId={org.id} />
 
       <EditCompanyForm
         open={editOpen}
