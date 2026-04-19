@@ -33,12 +33,31 @@ export interface EvidenceItem {
 }
 
 /**
+ * Concise descriptor for an existing campaign plan. Fed to the chat
+ * agent in the evidence pack's "Campaigns catalog" section so it can
+ * propose `campaign.enroll_batch` actions against real campaigns
+ * (never invent campaign ids).
+ */
+export interface EvidenceCampaign {
+  id: string;
+  name: string;
+  /** Channels present in the plan: e.g. ["email", "sms"]. */
+  channels: string[];
+  /** Total step count in the plan. */
+  step_count: number;
+  /** Most common tier across the steps — T1 / T2 / T3. */
+  tier?: string;
+}
+
+/**
  * Bundle of evidence for one query: a few high-level summaries + many
  * chunk-level items. The pack respects a token budget (28k by default).
  */
 export interface EvidencePack {
   items: EvidenceItem[];
   summaries: EvidenceItem[];
+  /** Existing campaigns the agent can enroll contacts into. */
+  campaigns?: EvidenceCampaign[];
   estimated_tokens: number;
 }
 

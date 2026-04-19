@@ -154,6 +154,18 @@ export class ContactsService {
   }
 
   /**
+   * List contacts whose primary org matches `orgId`. Used by the chat
+   * agent's campaign.enroll_batch proposal flow — the agent needs
+   * concrete contact IDs for a given company before it can propose
+   * who to enroll.
+   */
+  async listByOrgId(tenantId: string, orgId: string): Promise<Contact[]> {
+    return withTenant(this.db, tenantId, async (tx) =>
+      this.contacts.findByOrgId(tx, orgId),
+    );
+  }
+
+  /**
    * Create a contact with one or more org memberships. The caller is
    * responsible for designating at most one primary; if none is
    * flagged the first entry becomes primary by default. `contacts.org_id`
