@@ -22,6 +22,10 @@ interface DealRow {
   laycanEnd: string | null;
   complianceHold: boolean;
   ofacStatus: string;
+  lineOfBusiness?: string;
+  volumeUnit?: string;
+  productionLeadTimeWeeks?: number | null;
+  coldChainRequired?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -39,24 +43,46 @@ const STATUS_FILTERS = [
 
 const PRODUCT_LABELS: Record<string, string> = {
   ulsd: "ULSD",
+  jet_a: "Jet A",
   jet_a1: "Jet A1",
-  gasoline: "Gasoline",
-  marine_gasoil: "Marine Gasoil",
-  hsfo: "HSFO",
-  vlsfo: "VLSFO",
+  gasoline_87: "Gasoline 87",
+  gasoline_91: "Gasoline 91",
+  avgas: "Avgas",
+  lfo: "LFO",
+  hfo: "HFO",
+  lng: "LNG",
+  lpg: "LPG",
+  biodiesel_b20: "Biodiesel B20",
+  // Food line of business
+  rice: "Rice",
+  beans: "Beans",
+  pork: "Pork",
+  chicken: "Chicken",
+  cooking_oil: "Cooking oil",
+  powdered_milk: "Powdered milk",
 };
+
+const LOB_FILTERS = [
+  { label: "All", value: "" },
+  { label: "Fuel", value: "fuel" },
+  { label: "Food", value: "food" },
+] as const;
 
 export default function DealsPage() {
   const [deals, setDeals] = useState<DealRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("");
+  const [lobFilter, setLobFilter] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
-    const qs = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : "";
+    const params = new URLSearchParams();
+    if (statusFilter) params.set("status", statusFilter);
+    if (lobFilter) params.set("line_of_business", lobFilter);
+    const qs = params.toString() ? `?${params.toString()}` : "";
     fetchWithRetry(`/api/deals${qs}`, {
       onWaking: () => {
         if (!cancelled) setError("API is waking up…");
@@ -98,7 +124,7 @@ export default function DealsPage() {
     return () => {
       cancelled = true;
     };
-  }, [statusFilter]);
+  }, [statusFilter, lobFilter]);
 
   const columns = useMemo<ColumnDef<DealRow, unknown>[]>(
     () => [
@@ -306,6 +332,23 @@ export default function DealsPage() {
             </button>
           ))}
         </div>
+      </div>
+      <div className="flex items-center gap-1 text-xs">
+        <span className="mr-1 uppercase tracking-wide text-white/40">Line</span>
+        {LOB_FILTERS.map((l) => (
+          <button
+            key={l.value}
+            type="button"
+            onClick={() => setLobFilter(l.value)}
+            className={`rounded-md px-2 py-1 transition-colors ${
+              lobFilter === l.value
+                ? "bg-accent text-white"
+                : "bg-muted/40 text-white/70 hover:bg-muted/60"
+            }`}
+          >
+            {l.label}
+          </button>
+        ))}
       </div>
       <SavedViews
         currentStatus={statusFilter}

@@ -56,8 +56,34 @@ export const ProductType = {
   Lng: "lng",
   Lpg: "lpg",
   BiodieselB20: "biodiesel_b20",
+  // Food line of business (sprint V) — staples that VTC trades
+  // alongside the fuel book. Same commercial mechanics (origin →
+  // vessel → BL → discharge → invoice), different product cost
+  // inputs and a longer production lead time on protein.
+  Rice: "rice",
+  Beans: "beans",
+  Pork: "pork",
+  Chicken: "chicken",
+  CookingOil: "cooking_oil",
+  PowderedMilk: "powdered_milk",
 } as const;
 export type ProductType = (typeof ProductType)[keyof typeof ProductType];
+
+export const LineOfBusiness = {
+  Fuel: "fuel",
+  Food: "food",
+} as const;
+export type LineOfBusiness =
+  (typeof LineOfBusiness)[keyof typeof LineOfBusiness];
+
+export const VolumeUnit = {
+  Usg: "usg", // US gallons — fuel default
+  Mt: "mt", // metric tons — food default
+  Kg: "kg",
+  Lbs: "lbs",
+  Containers: "containers",
+} as const;
+export type VolumeUnit = (typeof VolumeUnit)[keyof typeof VolumeUnit];
 
 export const IncotermType = {
   Fob: "fob",

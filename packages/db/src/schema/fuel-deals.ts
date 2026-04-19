@@ -3,6 +3,7 @@ import {
   date,
   doublePrecision,
   index,
+  integer,
   pgTable,
   text,
   timestamp,
@@ -59,8 +60,28 @@ export const fuelDeals = pgTable(
     volumeUsg: doublePrecision("volume_usg").notNull(),
     volumeMt: doublePrecision("volume_mt"),
     volumeBbls: doublePrecision("volume_bbls"),
-    densityKgL: doublePrecision("density_kg_l").notNull(),
+    /**
+     * Fuel-specific. Nullable after 0011_food_line_of_business —
+     * food deals (line_of_business='food') have no density.
+     */
+    densityKgL: doublePrecision("density_kg_l"),
     volumeTolerancePct: doublePrecision("volume_tolerance_pct").notNull().default(0),
+    /**
+     * Sprint V — discriminator. 'fuel' (default, legacy behaviour) or
+     * 'food' (rice, beans, pork, chicken, cooking oil, powdered milk).
+     */
+    lineOfBusiness: text("line_of_business").notNull().default("fuel"),
+    /** Unit the `volume_usg` column is denominated in for this row. */
+    volumeUnit: text("volume_unit").notNull().default("usg"),
+    /**
+     * Food-specific. Suppliers of pork / chicken / processed goods
+     * typically need 3–6 weeks between PO and shipment; the rule
+     * engine can fire a signal if a deal is near laycan without any
+     * production milestone events.
+     */
+    productionLeadTimeWeeks: integer("production_lead_time_weeks"),
+    /** Pork, chicken, and some dairy need reefer containers. */
+    coldChainRequired: boolean("cold_chain_required").notNull().default(false),
 
     currency: dealCurrencyEnum("currency").notNull().default("usd"),
     fxRateToUsd: doublePrecision("fx_rate_to_usd").notNull().default(1),
