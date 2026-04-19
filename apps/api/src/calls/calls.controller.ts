@@ -60,6 +60,8 @@ const DemoCallBody = z.object({
    * Default false preserves the Sprint-L-predecessor demo behaviour.
    */
   mode: z.enum(["polly", "ai"]).default("polly"),
+  /** Custom AI scenario prompt — overrides the default fuel-qualifier when mode="ai". */
+  instructions: z.string().min(1).max(5_000).optional(),
 });
 
 /**
@@ -274,6 +276,7 @@ export class CallsController {
       toNumber: string;
       mode: "polly" | "ai";
       script?: string;
+      instructions?: string;
     } = {
       tenantId: this.tenant.tenantId,
       userId: this.tenant.userId,
@@ -281,6 +284,9 @@ export class CallsController {
       mode: parsed.data.mode,
     };
     if (parsed.data.script !== undefined) args.script = parsed.data.script;
+    if (parsed.data.instructions !== undefined) {
+      args.instructions = parsed.data.instructions;
+    }
     return this.service.initiateDemoCall(args);
   }
 
@@ -354,7 +360,8 @@ export class CallsController {
       "/calls/twilio/stream",
       "/calls/twilio/ai-stream",
     );
-    return [
+    const scenario = this.service.takeScenario(wf);
+    const lines = [
       '<?xml version="1.0" encoding="UTF-8"?>',
       "<Response>",
       // Short pause so the callee has a moment after pick-up before
@@ -364,10 +371,14 @@ export class CallsController {
       `    <Stream url="${escapeXml(streamUrl)}">`,
       `      <Parameter name="wf" value="${escapeXml(wf)}" />`,
       `      <Parameter name="tenant" value="${escapeXml(tenant)}" />`,
-      "    </Stream>",
-      "  </Connect>",
-      "</Response>",
-    ].join("\n");
+    ];
+    if (scenario) {
+      lines.push(
+        `      <Parameter name="instructions" value="${escapeXml(scenario)}" />`,
+      );
+    }
+    lines.push("    </Stream>", "  </Connect>", "</Response>");
+    return lines.join("\n");
   }
 
   /**

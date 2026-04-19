@@ -95,6 +95,25 @@ export const EnvSchema = z.object({
     .string()
     .default("gpt-4o-realtime-preview-2024-12-17"),
   /**
+   * Voice preset for the AI talkback session. OpenAI Realtime options:
+   * alloy, ash, ballad, coral, echo, sage, shimmer, verse. `verse` is
+   * the most animated/expressive; `ballad` and `coral` are next. Tune
+   * via `fly secrets set OPENAI_REALTIME_CALL_VOICE=...` without a
+   * redeploy to A/B different tones.
+   */
+  OPENAI_REALTIME_CALL_VOICE: z
+    .enum([
+      "alloy",
+      "ash",
+      "ballad",
+      "coral",
+      "echo",
+      "sage",
+      "shimmer",
+      "verse",
+    ])
+    .default("verse"),
+  /**
    * Public base URL Twilio hits for TwiML + status + recording webhooks.
    * Required whenever the Twilio credentials above are set — the
    * OutboundCallWorkflow cannot complete without reachable callback URLs.

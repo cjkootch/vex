@@ -111,6 +111,40 @@ export interface CallStatusResult {
 export class CallsService {
   private readonly log = new Logger(CallsService.name);
 
+  /**
+   * Short-lived store of custom AI conversation scenarios keyed by
+   * workflow id (`demo-<timestamp>`). Populated by `initiateDemoCall`
+   * when the caller provides `instructions`; drained by the ai-twiml
+   * handler which emits them as a `<Parameter>` child on the Stream.
+   * Entries expire after 5 minutes to prevent unbounded growth if an
+   * ai-twiml request never fires (Twilio failed to dial, etc.).
+   */
+  private readonly scenarios = new Map<
+    string,
+    { instructions: string; createdAt: number }
+  >();
+  private static readonly SCENARIO_TTL_MS = 5 * 60 * 1000;
+
+  registerScenario(wf: string, instructions: string): void {
+    this.scenarios.set(wf, { instructions, createdAt: Date.now() });
+    this.pruneScenarios();
+  }
+
+  takeScenario(wf: string): string | null {
+    const entry = this.scenarios.get(wf);
+    this.scenarios.delete(wf);
+    if (!entry) return null;
+    if (Date.now() - entry.createdAt > CallsService.SCENARIO_TTL_MS) return null;
+    return entry.instructions;
+  }
+
+  private pruneScenarios(): void {
+    const cutoff = Date.now() - CallsService.SCENARIO_TTL_MS;
+    for (const [key, entry] of this.scenarios) {
+      if (entry.createdAt < cutoff) this.scenarios.delete(key);
+    }
+  }
+
   constructor(
     @Inject(CALLS_DB_CLIENT) private readonly db: Db,
     @Inject(CALLS_WORKSPACES_REPO) private readonly workspaces: WorkspaceRepository,
@@ -327,6 +361,8 @@ export class CallsService {
     toNumber: string;
     mode?: "polly" | "ai";
     script?: string;
+    /** Custom scenario prompt for AI conversation mode — overrides the default fuel-qualifier. */
+    instructions?: string;
   }): Promise<{ callSid: string; status: string; activityId: string }> {
     if (!this.appBaseUrl) {
       throw new ServiceUnavailableException(
@@ -336,9 +372,13 @@ export class CallsService {
     const mode = args.mode ?? "polly";
     const baseUrl = this.appBaseUrl.replace(/\/$/, "");
     const script = args.script ?? DEFAULT_DEMO_SCRIPT;
+    const wf = `demo-${Date.now()}`;
+    if (mode === "ai" && args.instructions) {
+      this.registerScenario(wf, args.instructions);
+    }
     const twimlUrl =
       mode === "ai"
-        ? `${baseUrl}/calls/twilio/ai-twiml?tenant=${encodeURIComponent(args.tenantId)}&wf=demo-${Date.now()}`
+        ? `${baseUrl}/calls/twilio/ai-twiml?tenant=${encodeURIComponent(args.tenantId)}&wf=${encodeURIComponent(wf)}`
         : `${baseUrl}/calls/twilio/demo-twiml?text=${encodeURIComponent(script)}`;
     const statusCallback = `${baseUrl}/calls/twilio/demo-status`;
 

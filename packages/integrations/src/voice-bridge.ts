@@ -82,6 +82,16 @@ export type TwilioStreamMessage =
 // OpenAI Realtime events — minimal slice we actually emit/consume.
 // ---------------------------------------------------------------------------
 
+export type RealtimeVoice =
+  | "alloy"
+  | "ash"
+  | "ballad"
+  | "coral"
+  | "echo"
+  | "sage"
+  | "shimmer"
+  | "verse";
+
 export type RealtimeClientEvent =
   | {
       type: "session.update";
@@ -99,15 +109,7 @@ export type RealtimeClientEvent =
         tool_choice?: "auto" | "none" | "required";
         modalities?: readonly ("audio" | "text")[];
         /** Voice preset for audio output. Only used in talkback mode. */
-        voice?:
-          | "alloy"
-          | "ash"
-          | "ballad"
-          | "coral"
-          | "echo"
-          | "sage"
-          | "shimmer"
-          | "verse";
+        voice?: RealtimeVoice;
       };
     }
   | { type: "input_audio_buffer.append"; audio: string }
@@ -193,15 +195,7 @@ export interface VoiceBridgeConfig {
    */
   mode?: "listen" | "talkback";
   /** Voice preset used when mode = "talkback". Default `"shimmer"`. */
-  voice?:
-    | "alloy"
-    | "ash"
-    | "ballad"
-    | "coral"
-    | "echo"
-    | "sage"
-    | "shimmer"
-    | "verse";
+  voice?: RealtimeVoice;
   /** Optional logger — defaults to no-op. */
   log?: (level: "info" | "warn" | "error", msg: string, meta?: object) => void;
 }
