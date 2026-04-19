@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
+import { downloadCsv, toCsv } from "@/lib/csv";
 
 /**
  * /app/signals — proactive-signal inbox.
@@ -75,15 +76,55 @@ export default function SignalsPage(): React.ReactElement {
             Acknowledge to clear once handled.
           </p>
         </div>
-        <label className="flex items-center gap-2 text-xs text-white/60">
-          <input
-            type="checkbox"
-            checked={includeAcknowledged}
-            onChange={(e) => setIncludeAcknowledged(e.target.checked)}
-            className="rounded border-line bg-canvas"
-          />
-          Show acknowledged
-        </label>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            disabled={!signals || signals.length === 0}
+            onClick={() => {
+              if (!signals) return;
+              const csv = toCsv(
+                [
+                  "id",
+                  "rule_id",
+                  "severity",
+                  "subject_type",
+                  "subject_id",
+                  "title",
+                  "body",
+                  "created_at",
+                  "acknowledged_at",
+                ],
+                signals.map((s) => [
+                  s.id,
+                  s.ruleId,
+                  s.severity,
+                  s.subjectType ?? "",
+                  s.subjectId ?? "",
+                  s.title,
+                  s.body ?? "",
+                  s.createdAt,
+                  s.acknowledgedAt ?? "",
+                ]),
+              );
+              downloadCsv(
+                `signals-${new Date().toISOString().slice(0, 10)}.csv`,
+                csv,
+              );
+            }}
+            className="rounded-md border border-line bg-muted/40 px-3 py-1 text-xs text-white/80 hover:bg-muted/60 disabled:opacity-40"
+          >
+            Download CSV
+          </button>
+          <label className="flex items-center gap-2 text-xs text-white/60">
+            <input
+              type="checkbox"
+              checked={includeAcknowledged}
+              onChange={(e) => setIncludeAcknowledged(e.target.checked)}
+              className="rounded border-line bg-canvas"
+            />
+            Show acknowledged
+          </label>
+        </div>
       </header>
 
       {error && (

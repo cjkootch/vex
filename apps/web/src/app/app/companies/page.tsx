@@ -6,6 +6,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
 import { NewCompanyForm } from "@/components/crm/new-company-form";
 import { fetchWithRetry } from "@/lib/fetch-with-retry";
+import { downloadCsv, toCsv } from "@/lib/csv";
 
 interface OrganizationRow {
   id: string;
@@ -132,13 +133,51 @@ export default function CompaniesPage() {
             All organizations in your workspace. Click a name to research it with Vex.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
-        >
-          + New company
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={!organizations || organizations.length === 0}
+            onClick={() => {
+              if (!organizations) return;
+              const csv = toCsv(
+                [
+                  "legal_name",
+                  "domain",
+                  "industry",
+                  "fit_score",
+                  "status",
+                  "contact_count",
+                  "created_at",
+                  "updated_at",
+                ],
+                organizations.map((o) => [
+                  o.legalName,
+                  o.domain ?? "",
+                  o.industry ?? "",
+                  o.fitScore,
+                  o.status,
+                  o.contactCount,
+                  o.createdAt,
+                  o.updatedAt,
+                ]),
+              );
+              downloadCsv(
+                `companies-${new Date().toISOString().slice(0, 10)}.csv`,
+                csv,
+              );
+            }}
+            className="rounded-md border border-line bg-muted/40 px-3 py-1.5 text-sm text-white/80 hover:bg-muted/60 disabled:opacity-40"
+          >
+            CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+          >
+            + New company
+          </button>
+        </div>
       </header>
 
       <NewCompanyForm

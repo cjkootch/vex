@@ -280,6 +280,49 @@ export function renderEvidencePack(pack: EvidencePack): string {
       );
     }
   }
+  if (pack.aggregates) {
+    lines.push("\n## Workspace aggregates");
+    lines.push(
+      "Pre-computed roll-ups for comparative / totals questions. Quote the " +
+        "numbers here when the user asks 'how many open deals', 'which " +
+        "product has the best margin', 'show me pipeline by status' — " +
+        "don't re-derive from item lists.",
+    );
+    const agg = pack.aggregates;
+    lines.push(
+      `- Pipeline totals: open=${agg.pipeline.totals.open_deal_count} closed_won=${agg.pipeline.totals.closed_won_deal_count} compliance_hold=${agg.pipeline.totals.compliance_hold_count}`,
+    );
+    for (const row of agg.pipeline.by_status) {
+      lines.push(
+        `- Status ${row.status}: ${row.deal_count} deal(s), ${Math.round(row.total_volume_usg).toLocaleString()} USG, revenue≈$${row.total_revenue_usd.toLocaleString()}`,
+      );
+    }
+    for (const row of agg.pipeline.by_product) {
+      const margin =
+        row.avg_margin_pct === null
+          ? "n/a"
+          : `${(row.avg_margin_pct * 100).toFixed(1)}%`;
+      lines.push(
+        `- Product ${row.product}: ${row.deal_count} deal(s), ${Math.round(row.total_volume_usg).toLocaleString()} USG, avg margin ${margin}`,
+      );
+    }
+    if (agg.signals.open_total > 0) {
+      lines.push(
+        `- Open signals: ${agg.signals.open_total} (${agg.signals.by_severity.map((s) => `${s.severity}=${s.count}`).join(", ")})`,
+      );
+      for (const r of agg.signals.by_rule) {
+        lines.push(`  · ${r.rule_id}: ${r.count}`);
+      }
+    }
+    if (agg.top_counterparties.length > 0) {
+      lines.push("- Top counterparties (deals in last 90d):");
+      for (const c of agg.top_counterparties) {
+        lines.push(
+          `  · org=${c.org_id} name=${JSON.stringify(c.name)} deals=${c.deal_count}${c.latest_deal_ref ? ` latest=${c.latest_deal_ref}` : ""}`,
+        );
+      }
+    }
+  }
   return lines.join("\n");
 }
 
