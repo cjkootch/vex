@@ -9,6 +9,7 @@ import {
   useWorkspaceMode,
 } from "@/lib/workspace-mode-context";
 import { PriorityCard } from "@/components/brief/priority-card";
+import { HeadsUpStrip } from "@/components/brief/heads-up-strip";
 import { DealPipelineRow } from "@/components/brief/deal-pipeline-row";
 import { BlockedCard, RiskCard } from "@/components/brief/blocked-card";
 import { fetchWithRetry } from "@/lib/fetch-with-retry";
@@ -139,6 +140,7 @@ function AppHomeInner() {
   return (
     <main className="mx-auto max-w-5xl space-y-10 px-8 py-10 text-white">
       <Hero brief={brief} />
+      <HeadsUpStrip />
       {brief.priorities.length > 0 && (
         <Section title="Needs your attention" count={brief.priorities.length}>
           <div className="space-y-3">
