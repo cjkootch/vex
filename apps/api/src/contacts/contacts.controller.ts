@@ -313,6 +313,38 @@ export class ContactsController {
     });
     return { contact };
   }
+
+  /**
+   * POST /contacts/:id/merge-into — merge this contact into the target.
+   * Repoints touchpoints / memberships / deals / leads / enrollments
+   * to the target, unions emails + phones, and archives the source.
+   */
+  @Post(":id/merge-into")
+  async mergeInto(
+    @Param("id") sourceId: string,
+    @Body() raw: unknown,
+  ): Promise<{
+    ok: true;
+    moved: {
+      touchpoints: number;
+      memberships: number;
+      deals: number;
+      leads: number;
+      enrollments: number;
+    };
+  }> {
+    const parsed = z
+      .object({ targetId: z.string().min(1) })
+      .safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const result = await this.service.merge({
+      tenantId: this.tenant.tenantId,
+      actorUserId: this.tenant.userId,
+      sourceId,
+      targetId: parsed.data.targetId,
+    });
+    return { ok: true, moved: result.moved };
+  }
 }
 
 function clampLimit(raw: string | undefined): number {
