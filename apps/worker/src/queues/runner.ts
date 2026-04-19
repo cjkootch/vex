@@ -1,4 +1,5 @@
 import type { Job, Worker } from "bullmq";
+import type { Redis } from "ioredis";
 import {
   AgentRunner,
   DailyBriefAgent,
@@ -366,7 +367,7 @@ export interface ApprovalExecutorDeps {
    * aiInstructions set. The API reads the same key when rendering
    * the AI TwiML for the dialed call.
    */
-  redis: import("ioredis").Redis;
+  redis: Redis;
 }
 
 /**
