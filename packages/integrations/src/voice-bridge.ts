@@ -447,9 +447,23 @@ export function startVoiceBridge(
         item: {
           type: "function_call_output",
           call_id: event.call_id,
-          output: JSON.stringify({ ok: true }),
+          output: JSON.stringify({
+            ok: true,
+            message:
+              "A teammate has been paged. Let the caller know someone will join shortly.",
+          }),
         },
       });
+      // Critical: Realtime doesn't auto-speak after a tool call —
+      // without this the AI stays silent after escalation and the
+      // callee hears dead air. Prompt a fresh audio response so the
+      // AI acknowledges the hand-off.
+      if (mode === "talkback") {
+        realtime.send({
+          type: "response.create",
+          response: { modalities: ["audio", "text"] },
+        });
+      }
       log("info", "escalation fired", {
         workflowId: config.workflowId,
         reason,
@@ -463,9 +477,17 @@ export function startVoiceBridge(
           output: JSON.stringify({
             ok: false,
             error: (err as Error).message,
+            message:
+              "Escalation failed — apologise to the caller and offer to take a message.",
           }),
         },
       });
+      if (mode === "talkback") {
+        realtime.send({
+          type: "response.create",
+          response: { modalities: ["audio", "text"] },
+        });
+      }
       log("error", `escalation handler threw: ${(err as Error).message}`, {
         workflowId: config.workflowId,
       });
