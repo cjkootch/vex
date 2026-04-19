@@ -7,6 +7,7 @@ export const RAW_EVENT_REPO = Symbol("RAW_EVENT_REPO");
 export const NORMALIZATION_QUEUE = Symbol("NORMALIZATION_QUEUE");
 export const RESEND_VERIFIER = Symbol("RESEND_VERIFIER");
 export const TWILIO_VERIFIER = Symbol("TWILIO_VERIFIER");
+export const WEBSITE_CHAT_VERIFIER = Symbol("WEBSITE_CHAT_VERIFIER");
 export const WEBHOOK_TENANT_RESOLVER = Symbol("WEBHOOK_TENANT_RESOLVER");
 
 /**
@@ -15,6 +16,6 @@ export const WEBHOOK_TENANT_RESOLVER = Symbol("WEBHOOK_TENANT_RESOLVER");
  * tenantId from a per-provider routing config.
  */
 export type WebhookTenantResolver = (
-  provider: "resend" | "twilio",
+  provider: "resend" | "twilio" | "website_chat",
   payload: unknown,
 ) => string;

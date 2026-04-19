@@ -66,6 +66,7 @@ export { pricing } from "./pricing.js";
 export {
   ResendNormalizer,
   TwilioNormalizer,
+  WebsiteChatNormalizer,
   type NormalizerDeps,
   type NormalizerOutcome,
   type RawEventInput,

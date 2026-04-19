@@ -5,7 +5,7 @@ export {
   ContactOrgMembershipRepository,
   type MembershipCreateInput,
 } from "./contact-org-membership-repository.js";
-export { LeadRepository } from "./lead-repository.js";
+export { LeadRepository, type LeadCreateInput } from "./lead-repository.js";
 export { RawEventRepository, type RawEventStatus } from "./raw-event-repository.js";
 export { SummaryRepository } from "./summary-repository.js";
 export type { SummaryUpsertData } from "./summary-repository.js";

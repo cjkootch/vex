@@ -5,6 +5,7 @@ import type { NormalizationJobData } from "@vex/agents";
 import { WebhooksController } from "./webhooks.controller.js";
 import { ResendVerifier } from "./resend-verifier.js";
 import { TwilioVerifier } from "./twilio-verifier.js";
+import { WebsiteChatVerifier } from "./website-chat-verifier.js";
 import {
   DB_CLIENT,
   NORMALIZATION_QUEUE,
@@ -12,6 +13,7 @@ import {
   RESEND_VERIFIER,
   TWILIO_VERIFIER,
   WEBHOOK_TENANT_RESOLVER,
+  WEBSITE_CHAT_VERIFIER,
   type WebhookTenantResolver,
 } from "./tokens.js";
 
@@ -21,6 +23,7 @@ export interface WebhooksModuleConfig {
   normalizationQueue: Queue<NormalizationJobData>;
   resendSecret: string;
   twilioAuthToken: string;
+  websiteChatSecret: string;
   resolveTenant: WebhookTenantResolver;
 }
 
@@ -41,6 +44,11 @@ export class WebhooksModule {
         {
           provide: TWILIO_VERIFIER,
           useFactory: () => new TwilioVerifier({ authToken: config.twilioAuthToken }),
+        },
+        {
+          provide: WEBSITE_CHAT_VERIFIER,
+          useFactory: () =>
+            new WebsiteChatVerifier({ secret: config.websiteChatSecret }),
         },
         { provide: WEBHOOK_TENANT_RESOLVER, useFactory: () => config.resolveTenant },
       ],
