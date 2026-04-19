@@ -42,6 +42,13 @@ export const organizations = pgTable(
       .default({}),
     /** Sprint O — free-form tags appended by the chat agent. */
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
+    /**
+     * Sprint W — counterparty role. One of: buyer, supplier, broker,
+     * buyer_broker, internal, competitor. Null for pre-sprint-W rows
+     * that haven't been classified yet. Stored as text (not enum) so
+     * the vocabulary can evolve without a migration.
+     */
+    kind: text("kind"),
     status: recordStatusEnum("status").notNull().default("active"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -103,6 +103,26 @@ export const fuelDeals = pgTable(
       onDelete: "set null",
     }),
     intermediaryRole: text("intermediary_role"),
+    // Sprint W — two-sided brokers. Deals sometimes have a broker
+    // on the buy side AND the sell side, each with their own
+    // commission + payment terms. `intermediaryOrgId` stays for
+    // back-compat; new deals populate these explicit slots.
+    buySideBrokerOrgId: text("buy_side_broker_org_id").references(
+      () => organizations.id,
+      { onDelete: "set null" },
+    ),
+    buySideBrokerCommissionPct: doublePrecision(
+      "buy_side_broker_commission_pct",
+    ),
+    buySideBrokerPaymentTerms: text("buy_side_broker_payment_terms"),
+    sellSideBrokerOrgId: text("sell_side_broker_org_id").references(
+      () => organizations.id,
+      { onDelete: "set null" },
+    ),
+    sellSideBrokerCommissionPct: doublePrecision(
+      "sell_side_broker_commission_pct",
+    ),
+    sellSideBrokerPaymentTerms: text("sell_side_broker_payment_terms"),
 
     leadId: text("lead_id").references(() => leads.id, { onDelete: "set null" }),
     campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),

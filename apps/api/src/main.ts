@@ -19,6 +19,8 @@ import {
   SignalRepository,
   EventRepository,
   FuelDealRepository,
+  OrganizationProductRepository,
+  OrganizationRelationshipRepository,
   OrganizationRepository,
   RawEventRepository,
   RetrievalService,
@@ -97,6 +99,9 @@ async function bootstrap(): Promise<void> {
   const activityRepository = new ActivityRepository();
   const eventRepository = new EventRepository();
   const organizationRepository = new OrganizationRepository();
+  const organizationProductRepository = new OrganizationProductRepository();
+  const organizationRelationshipRepository =
+    new OrganizationRelationshipRepository();
   const contactRepository = new ContactRepository();
   const summaryRepository = new SummaryRepository();
   const touchpointRepository = new TouchpointRepository();
@@ -270,6 +275,8 @@ async function bootstrap(): Promise<void> {
         db,
         organizations: organizationRepository,
         events: eventRepository,
+        orgProducts: organizationProductRepository,
+        orgRelationships: organizationRelationshipRepository,
       }),
       search: SearchModule.register({ db }),
       admin: AdminModule.register({
