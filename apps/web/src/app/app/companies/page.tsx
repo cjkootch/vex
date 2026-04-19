@@ -22,6 +22,7 @@ interface OrganizationRow {
 
 export default function CompaniesPage() {
   const [organizations, setOrganizations] = useState<OrganizationRow[] | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -139,6 +140,10 @@ export default function CompaniesPage() {
             disabled={!organizations || organizations.length === 0}
             onClick={() => {
               if (!organizations) return;
+              const target =
+                selectedIds.size > 0
+                  ? organizations.filter((o) => selectedIds.has(o.id))
+                  : organizations;
               const csv = toCsv(
                 [
                   "legal_name",
@@ -150,7 +155,7 @@ export default function CompaniesPage() {
                   "created_at",
                   "updated_at",
                 ],
-                organizations.map((o) => [
+                target.map((o) => [
                   o.legalName,
                   o.domain ?? "",
                   o.industry ?? "",
@@ -168,7 +173,7 @@ export default function CompaniesPage() {
             }}
             className="rounded-md border border-line bg-muted/40 px-3 py-1.5 text-sm text-white/80 hover:bg-muted/60 disabled:opacity-40"
           >
-            CSV
+            {selectedIds.size > 0 ? `CSV (${selectedIds.size})` : "CSV"}
           </button>
           <button
             type="button"
@@ -216,12 +221,32 @@ export default function CompaniesPage() {
           Loading companies…
         </div>
       ) : (
-        <DataTable
-          data={organizations}
-          columns={columns}
-          filterPlaceholder="Filter by name, domain, industry…"
-          emptyState="No companies yet. Load organizations via ingestion or seed to populate this list."
-        />
+        <>
+          {selectedIds.size > 0 && (
+            <div className="mb-2 flex items-center justify-between rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
+              <span className="text-white">
+                <span className="font-mono">{selectedIds.size}</span> compan
+                {selectedIds.size === 1 ? "y" : "ies"} selected
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="text-xs text-white/60 hover:text-white"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+          <DataTable
+            data={organizations}
+            columns={columns}
+            filterPlaceholder="Filter by name, domain, industry…"
+            emptyState="No companies yet. Load organizations via ingestion or seed to populate this list."
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
+            getRowId={(o) => o.id}
+          />
+        </>
       )}
     </div>
   );

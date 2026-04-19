@@ -43,6 +43,7 @@ export default function ContactsPage() {
   const [orgLookup, setOrgLookup] = useState<OrgLookup>({});
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "suppressed">("active");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -220,6 +221,10 @@ export default function ContactsPage() {
             disabled={!contacts || contacts.length === 0}
             onClick={() => {
               if (!contacts) return;
+              const target =
+                selectedIds.size > 0
+                  ? contacts.filter((c) => selectedIds.has(c.id))
+                  : contacts;
               const csv = toCsv(
                 [
                   "full_name",
@@ -232,7 +237,7 @@ export default function ContactsPage() {
                   "opt_out_reason",
                   "updated_at",
                 ],
-                contacts.map((c) => [
+                target.map((c) => [
                   c.fullName,
                   c.title ?? "",
                   c.emails[0] ?? "",
@@ -253,7 +258,7 @@ export default function ContactsPage() {
             }}
             className="rounded-md border border-line bg-muted/40 px-3 py-1.5 text-sm text-white/80 hover:bg-muted/60 disabled:opacity-40"
           >
-            CSV
+            {selectedIds.size > 0 ? `CSV (${selectedIds.size})` : "CSV"}
           </button>
           <button
             type="button"
@@ -304,16 +309,36 @@ export default function ContactsPage() {
           Loading contacts…
         </div>
       ) : (
-        <DataTable
-          data={contacts}
-          columns={columns}
-          filterPlaceholder="Filter by name, title, email…"
-          emptyState={
-            tab === "suppressed"
-              ? "No suppressed contacts. Opt-outs recorded here."
-              : "No active contacts. Load contacts via ingestion or seed."
-          }
-        />
+        <>
+          {selectedIds.size > 0 && (
+            <div className="mb-2 flex items-center justify-between rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
+              <span className="text-white">
+                <span className="font-mono">{selectedIds.size}</span> contact
+                {selectedIds.size === 1 ? "" : "s"} selected
+              </span>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="text-xs text-white/60 hover:text-white"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+          <DataTable
+            data={contacts}
+            columns={columns}
+            filterPlaceholder="Filter by name, title, email…"
+            emptyState={
+              tab === "suppressed"
+                ? "No suppressed contacts. Opt-outs recorded here."
+                : "No active contacts. Load contacts via ingestion or seed."
+            }
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
+            getRowId={(c) => c.id}
+          />
+        </>
       )}
     </div>
   );
