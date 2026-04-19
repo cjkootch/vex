@@ -2,6 +2,7 @@ import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import {
   approxTokens,
   packTokens,
+  type EvidenceAggregates,
   type EvidenceCampaign,
   type EvidenceItem,
   type EvidencePack,
@@ -250,11 +251,14 @@ export class RetrievalService {
       ...documentItems,
     ];
 
+    const aggregates = await this.fetchAggregates(tx);
+
     const cap = options.tokenCap ?? DEFAULT_TOKEN_CAP;
     let pack: EvidencePack = {
       summaries: summariesItems,
       items: allItems,
       campaigns: campaignsCatalog,
+      aggregates,
       estimated_tokens: packTokens({
         summaries: summariesItems,
         items: allItems,
@@ -487,6 +491,188 @@ export class RetrievalService {
    * `campaigns` field so it can match user descriptions ("nurture
    * sequence", "outbound SDR cadence") to real campaign ids.
    */
+  /**
+   * Roll-up projections so Vex can answer comparative / aggregate
+   * questions without the agent having to page through individual
+   * evidence items and sum them itself. Three rollups:
+   *   - pipeline: deal counts + volume + revenue bucketed by status
+   *               and product, plus whole-workspace totals.
+   *   - signals: open signal counts by severity and rule.
+   *   - top_counterparties: orgs ranked by deal count in the last
+   *     90 days (the window most relevant to VTC's active book).
+   */
+  private async fetchAggregates(tx: Tx): Promise<EvidenceAggregates> {
+    const pipelineByStatus = (await tx.execute(sql`
+      SELECT
+        status,
+        COUNT(*)::int AS deal_count,
+        COALESCE(SUM(volume_usg), 0)::double precision AS total_volume_usg
+      FROM fuel_deals
+      GROUP BY status
+      ORDER BY deal_count DESC
+    `)) as unknown as Array<{
+      status: string;
+      deal_count: number;
+      total_volume_usg: number;
+    }>;
+
+    const costByDeal = (await tx.execute(sql`
+      SELECT deal_id, gross_margin_pct, breakeven_sell_price_usg
+      FROM fuel_deal_cost_stack
+    `)) as unknown as Array<{
+      deal_id: string;
+      gross_margin_pct: number | null;
+      breakeven_sell_price_usg: number | null;
+    }>;
+    const marginByDeal = new Map<string, number | null>(
+      costByDeal.map((r) => [r.deal_id, r.gross_margin_pct]),
+    );
+
+    const dealsForRevenue = await tx
+      .select({
+        id: fuelDeals.id,
+        status: fuelDeals.status,
+        product: fuelDeals.product,
+        volumeUsg: fuelDeals.volumeUsg,
+        complianceHold: fuelDeals.complianceHold,
+      })
+      .from(fuelDeals);
+
+    const byStatusRevenue = new Map<string, number>();
+    for (const d of dealsForRevenue) {
+      const bp = costByDeal.find((c) => c.deal_id === d.id);
+      const revenue =
+        bp?.breakeven_sell_price_usg !== undefined &&
+        bp?.breakeven_sell_price_usg !== null
+          ? bp.breakeven_sell_price_usg * d.volumeUsg
+          : 0;
+      byStatusRevenue.set(
+        d.status,
+        (byStatusRevenue.get(d.status) ?? 0) + revenue,
+      );
+    }
+
+    const productBuckets = new Map<
+      string,
+      { count: number; volume: number; margins: number[] }
+    >();
+    for (const d of dealsForRevenue) {
+      const key = d.product;
+      const bucket = productBuckets.get(key) ?? {
+        count: 0,
+        volume: 0,
+        margins: [],
+      };
+      bucket.count += 1;
+      bucket.volume += d.volumeUsg;
+      const margin = marginByDeal.get(d.id);
+      if (margin !== null && margin !== undefined) bucket.margins.push(margin);
+      productBuckets.set(key, bucket);
+    }
+
+    const openStatuses = new Set([
+      "draft",
+      "negotiating",
+      "pending_approval",
+      "approved",
+      "loading",
+      "in_transit",
+    ]);
+    let openDealCount = 0;
+    let settledDealCount = 0;
+    let complianceHoldCount = 0;
+    for (const d of dealsForRevenue) {
+      if (openStatuses.has(d.status)) openDealCount += 1;
+      if (d.status === "settled" || d.status === "delivered") {
+        settledDealCount += 1;
+      }
+      if (d.complianceHold) complianceHoldCount += 1;
+    }
+
+    const pipeline: EvidenceAggregates["pipeline"] = {
+      by_status: pipelineByStatus.map((r) => ({
+        status: r.status,
+        deal_count: Number(r.deal_count),
+        total_volume_usg: Number(r.total_volume_usg),
+        total_revenue_usd: Math.round(byStatusRevenue.get(r.status) ?? 0),
+      })),
+      by_product: [...productBuckets.entries()].map(([product, bucket]) => ({
+        product,
+        deal_count: bucket.count,
+        total_volume_usg: bucket.volume,
+        avg_margin_pct:
+          bucket.margins.length === 0
+            ? null
+            : bucket.margins.reduce((a, b) => a + b, 0) / bucket.margins.length,
+      })),
+      totals: {
+        open_deal_count: openDealCount,
+        closed_won_deal_count: settledDealCount,
+        compliance_hold_count: complianceHoldCount,
+      },
+    };
+
+    const signalsBySeverity = (await tx.execute(sql`
+      SELECT severity, COUNT(*)::int AS count
+      FROM signals
+      WHERE acknowledged_at IS NULL
+      GROUP BY severity
+      ORDER BY count DESC
+    `)) as unknown as Array<{ severity: string; count: number }>;
+    const signalsByRule = (await tx.execute(sql`
+      SELECT rule_id, COUNT(*)::int AS count
+      FROM signals
+      WHERE acknowledged_at IS NULL
+      GROUP BY rule_id
+      ORDER BY count DESC
+      LIMIT 10
+    `)) as unknown as Array<{ rule_id: string; count: number }>;
+    const signalsOpenTotal = signalsBySeverity.reduce(
+      (total, row) => total + Number(row.count),
+      0,
+    );
+
+    const topOrgsRows = (await tx.execute(sql`
+      SELECT
+        o.id AS org_id,
+        o.name AS name,
+        COUNT(d.id)::int AS deal_count,
+        MAX(d.deal_ref) AS latest_deal_ref
+      FROM organizations o
+      JOIN fuel_deals d ON d.buyer_org_id = o.id
+      WHERE d.created_at >= NOW() - INTERVAL '90 days'
+      GROUP BY o.id, o.name
+      ORDER BY deal_count DESC
+      LIMIT 10
+    `)) as unknown as Array<{
+      org_id: string;
+      name: string;
+      deal_count: number;
+      latest_deal_ref: string | null;
+    }>;
+
+    return {
+      pipeline,
+      signals: {
+        open_total: signalsOpenTotal,
+        by_severity: signalsBySeverity.map((r) => ({
+          severity: r.severity,
+          count: Number(r.count),
+        })),
+        by_rule: signalsByRule.map((r) => ({
+          rule_id: r.rule_id,
+          count: Number(r.count),
+        })),
+      },
+      top_counterparties: topOrgsRows.map((r) => ({
+        org_id: r.org_id,
+        name: r.name,
+        deal_count: Number(r.deal_count),
+        latest_deal_ref: r.latest_deal_ref,
+      })),
+    };
+  }
+
   private async fetchCampaignsCatalog(tx: Tx): Promise<EvidenceCampaign[]> {
     const rows = await tx
       .select({

@@ -7,6 +7,7 @@ import { DataTable } from "@/components/data-table/data-table";
 import { NewDealForm } from "@/components/crm/new-deal-form";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
 import { fetchWithRetry } from "@/lib/fetch-with-retry";
+import { downloadCsv, toCsv } from "@/lib/csv";
 
 interface DealRow {
   id: string;
@@ -202,6 +203,50 @@ export default function DealsPage() {
           </p>
         </div>
         <div className="flex flex-shrink-0 items-center gap-2">
+          <button
+            type="button"
+            disabled={!deals || deals.length === 0}
+            onClick={() => {
+              if (!deals) return;
+              const csv = toCsv(
+                [
+                  "deal_ref",
+                  "status",
+                  "product",
+                  "volume_usg",
+                  "incoterm",
+                  "buyer",
+                  "laycan_start",
+                  "laycan_end",
+                  "compliance_hold",
+                  "ofac_status",
+                  "created_at",
+                  "updated_at",
+                ],
+                deals.map((d) => [
+                  d.dealRef,
+                  d.status,
+                  d.product,
+                  d.volumeUsg,
+                  d.incoterm,
+                  d.buyerName ?? d.buyerOrgId,
+                  d.laycanStart ?? "",
+                  d.laycanEnd ?? "",
+                  d.complianceHold,
+                  d.ofacStatus,
+                  d.createdAt,
+                  d.updatedAt,
+                ]),
+              );
+              downloadCsv(
+                `deals-${new Date().toISOString().slice(0, 10)}.csv`,
+                csv,
+              );
+            }}
+            className="inline-flex h-9 items-center rounded-md border border-line bg-muted/40 px-3 text-sm text-white/80 hover:bg-muted/60 disabled:opacity-40"
+          >
+            CSV
+          </button>
           <Link
             href="/app/chat?ask=Show%20me%20all%20deals%20with%20compliance%20holds"
             aria-label="Ask Vex about deals"

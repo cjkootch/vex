@@ -6,6 +6,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
 import { NewContactForm } from "@/components/crm/new-contact-form";
 import { fetchWithRetry } from "@/lib/fetch-with-retry";
+import { downloadCsv, toCsv } from "@/lib/csv";
 
 interface ContactOrgLink {
   orgId: string;
@@ -213,13 +214,55 @@ export default function ContactsPage() {
             automation.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setCreating(true)}
-          className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
-        >
-          + New contact
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={!contacts || contacts.length === 0}
+            onClick={() => {
+              if (!contacts) return;
+              const csv = toCsv(
+                [
+                  "full_name",
+                  "title",
+                  "primary_email",
+                  "primary_phone",
+                  "status",
+                  "orgs",
+                  "opt_out_at",
+                  "opt_out_reason",
+                  "updated_at",
+                ],
+                contacts.map((c) => [
+                  c.fullName,
+                  c.title ?? "",
+                  c.emails[0] ?? "",
+                  c.phones[0] ?? "",
+                  c.status,
+                  c.orgs
+                    .map((l) => orgLookup[l.orgId] ?? l.orgId)
+                    .join("; "),
+                  c.optOutAt ?? "",
+                  c.optOutReason ?? "",
+                  c.updatedAt,
+                ]),
+              );
+              downloadCsv(
+                `contacts-${new Date().toISOString().slice(0, 10)}.csv`,
+                csv,
+              );
+            }}
+            className="rounded-md border border-line bg-muted/40 px-3 py-1.5 text-sm text-white/80 hover:bg-muted/60 disabled:opacity-40"
+          >
+            CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => setCreating(true)}
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+          >
+            + New contact
+          </button>
+        </div>
       </header>
 
       <NewContactForm

@@ -50,6 +50,49 @@ export interface EvidenceCampaign {
 }
 
 /**
+ * Aggregate projections Vex can reference when the user asks
+ * comparative or roll-up questions — "how many open deals",
+ * "margin on Jet A-1 vs ULSD", "which counterparties show up the
+ * most". These sit alongside per-row evidence items so the agent
+ * doesn't have to re-derive totals from hand-hydrated lists.
+ */
+export interface EvidenceAggregates {
+  /** Deal pipeline by status and product. */
+  pipeline: {
+    by_status: Array<{
+      status: string;
+      deal_count: number;
+      total_volume_usg: number;
+      total_revenue_usd: number;
+    }>;
+    by_product: Array<{
+      product: string;
+      deal_count: number;
+      total_volume_usg: number;
+      avg_margin_pct: number | null;
+    }>;
+    totals: {
+      open_deal_count: number;
+      closed_won_deal_count: number;
+      compliance_hold_count: number;
+    };
+  };
+  /** Open proactive signals grouped by severity and rule. */
+  signals: {
+    open_total: number;
+    by_severity: Array<{ severity: string; count: number }>;
+    by_rule: Array<{ rule_id: string; count: number }>;
+  };
+  /** Top counterparties by deal count in the last 90 days. */
+  top_counterparties: Array<{
+    org_id: string;
+    name: string;
+    deal_count: number;
+    latest_deal_ref: string | null;
+  }>;
+}
+
+/**
  * Bundle of evidence for one query: a few high-level summaries + many
  * chunk-level items. The pack respects a token budget (28k by default).
  */
@@ -58,6 +101,8 @@ export interface EvidencePack {
   summaries: EvidenceItem[];
   /** Existing campaigns the agent can enroll contacts into. */
   campaigns?: EvidenceCampaign[];
+  /** Optional aggregate projections (pipeline / signals / counterparties). */
+  aggregates?: EvidenceAggregates;
   estimated_tokens: number;
 }
 
