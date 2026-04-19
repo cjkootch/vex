@@ -211,3 +211,115 @@ export class ContactRepository {
     return row;
   }
 }
+
+/**
+ * Merge one contact into another. Repoints every FK referencing the
+ * source (touchpoints, memberships, fuel_deals.buyer_contact_id,
+ * leads, campaign_enrollments) to the target, unions the emails +
+ * phones arrays, then archives the source (opt_out_at now,
+ * opt_out_reason = "merged_into:<id>") so the row stays queryable but
+ * won't be messaged again.
+ *
+ * Unique-index collisions on join tables are handled DELETE-first.
+ * Caller runs inside {@link withTenant} so RLS is active and is
+ * responsible for emitting the audit event.
+ */
+export async function mergeContactInto(
+  tx: Tx,
+  sourceId: string,
+  targetId: string,
+): Promise<{
+  touchpoints: number;
+  memberships: number;
+  deals: number;
+  leads: number;
+  enrollments: number;
+}> {
+  if (sourceId === targetId) {
+    throw new Error("cannot merge a contact into itself");
+  }
+
+  // touchpoints — no unique constraint, straight repoint.
+  const tpRes = (await tx.execute(sql`
+    update touchpoints set contact_id = ${targetId} where contact_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // contact_org_memberships — PK is (contact_id, org_id). Drop source
+  // rows that would collide with existing target rows before repointing.
+  await tx.execute(sql`
+    delete from contact_org_memberships
+    where contact_id = ${sourceId}
+      and org_id in (
+        select org_id from contact_org_memberships where contact_id = ${targetId}
+      )
+  `);
+  const memRes = (await tx.execute(sql`
+    update contact_org_memberships set contact_id = ${targetId} where contact_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // fuel_deals.buyer_contact_id — no uniqueness, straight repoint.
+  const dealRes = (await tx.execute(sql`
+    update fuel_deals set buyer_contact_id = ${targetId} where buyer_contact_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // leads.contact_id — no unique constraint.
+  const leadRes = (await tx.execute(sql`
+    update leads set contact_id = ${targetId} where contact_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // campaign_enrollments — unique (tenant_id, campaign_id, contact_id).
+  // Drop source enrollments for campaigns that already have the target
+  // enrolled, then repoint the rest.
+  await tx.execute(sql`
+    delete from campaign_enrollments
+    where contact_id = ${sourceId}
+      and campaign_id in (
+        select campaign_id from campaign_enrollments where contact_id = ${targetId}
+      )
+  `);
+  const enrRes = (await tx.execute(sql`
+    update campaign_enrollments set contact_id = ${targetId} where contact_id = ${sourceId}
+  `)) as unknown as { rowCount?: number };
+
+  // Union emails + phones onto the target, dedup while preserving order.
+  await tx.execute(sql`
+    update contacts t
+    set emails = coalesce((
+          select jsonb_agg(distinct x order by x)
+          from (
+            select jsonb_array_elements_text(t.emails) as x
+            union
+            select jsonb_array_elements_text(s.emails) as x from contacts s where s.id = ${sourceId}
+          ) u
+        ), t.emails),
+        phones = coalesce((
+          select jsonb_agg(distinct x order by x)
+          from (
+            select jsonb_array_elements_text(t.phones) as x
+            union
+            select jsonb_array_elements_text(s.phones) as x from contacts s where s.id = ${sourceId}
+          ) u
+        ), t.phones),
+        updated_at = now()
+    where t.id = ${targetId}
+  `);
+
+  // Soft-archive the source. Keeps the row around for historical lookups
+  // but flags it so Vex never re-messages it.
+  await tx.execute(sql`
+    update contacts
+    set opt_out_at = coalesce(opt_out_at, now()),
+        opt_out_reason = ${`merged_into:${targetId}`},
+        status = 'archived',
+        updated_at = now()
+    where id = ${sourceId}
+  `);
+
+  return {
+    touchpoints: tpRes.rowCount ?? 0,
+    memberships: memRes.rowCount ?? 0,
+    deals: dealRes.rowCount ?? 0,
+    leads: leadRes.rowCount ?? 0,
+    enrollments: enrRes.rowCount ?? 0,
+  };
+}

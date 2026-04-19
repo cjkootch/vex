@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { EditContactForm } from "@/components/crm/edit-contact-form";
+import { MergeContactDialog } from "@/components/crm/merge-contact-dialog";
 import { QuickActions } from "@/components/crm/quick-actions";
 import { SignalsPanel } from "@/components/signals/signals-panel";
 import { Tabs } from "@/components/ui/tabs";
@@ -56,12 +58,14 @@ export default function ContactDetailPage({
 }: {
   params: { id: string };
 }) {
+  const router = useRouter();
   const [data, setData] = useState<ContactResponse | null>(null);
   const [orgNames, setOrgNames] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [activeTab, setActiveTab] = useState("overview");
   const [editOpen, setEditOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -194,6 +198,13 @@ export default function ContactDetailPage({
           >
             Edit
           </button>
+          <button
+            type="button"
+            onClick={() => setMergeOpen(true)}
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-bad hover:text-bad"
+          >
+            Merge…
+          </button>
           <Link
             href={`/app/chat?ask=${encodeURIComponent(`What do I know about ${contact.fullName}?`)}`}
             className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
@@ -202,6 +213,16 @@ export default function ContactDetailPage({
           </Link>
         </div>
       </header>
+
+      <MergeContactDialog
+        open={mergeOpen}
+        source={{ id: contact.id, fullName: contact.fullName }}
+        onClose={() => setMergeOpen(false)}
+        onMerged={(targetId) => {
+          setMergeOpen(false);
+          router.push(`/app/contacts/${targetId}`);
+        }}
+      />
 
       <QuickActions
         items={[

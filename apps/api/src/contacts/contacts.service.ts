@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { desc, eq } from "drizzle-orm";
 import {
+  mergeContactInto,
   schema,
   withTenant,
   type Contact,
@@ -541,6 +542,69 @@ export class ContactsService {
       });
       const memberships = await this.memberships.listByContact(tx, args.contactId);
       return { contact, memberships };
+    });
+  }
+
+  /**
+   * Merge one contact into another. Repoints every FK referencing the
+   * source (touchpoints, memberships, deals, leads, enrollments) to
+   * the target, unions emails + phones, and soft-archives the source
+   * with a merged_into:<targetId> opt-out reason so the row stays
+   * queryable but won't be messaged again.
+   */
+  async merge(args: {
+    tenantId: string;
+    actorUserId: string;
+    sourceId: string;
+    targetId: string;
+  }): Promise<{
+    moved: {
+      touchpoints: number;
+      memberships: number;
+      deals: number;
+      leads: number;
+      enrollments: number;
+    };
+  }> {
+    if (args.sourceId === args.targetId) {
+      throw new BadRequestException(
+        "targetId must differ from the source contact",
+      );
+    }
+    return withTenant(this.db, args.tenantId, async (tx) => {
+      const source = await this.contacts.findById(tx, args.sourceId);
+      if (!source) {
+        throw new NotFoundException(
+          `contact ${args.sourceId} not found`,
+        );
+      }
+      const target = await this.contacts.findById(tx, args.targetId);
+      if (!target) {
+        throw new NotFoundException(
+          `target contact ${args.targetId} not found`,
+        );
+      }
+      const moved = await mergeContactInto(tx, args.sourceId, args.targetId);
+      await this.events.insertIfNotExists(tx, args.tenantId, {
+        verb: "contact.merged",
+        subjectType: "contact",
+        subjectId: args.targetId,
+        actorType: "user",
+        actorId: args.actorUserId,
+        objectType: "contact",
+        objectId: args.sourceId,
+        occurredAt: new Date(),
+        idempotencyKey: `contact.merged:${args.sourceId}->${args.targetId}`,
+        metadata: {
+          source_full_name: source.fullName,
+          target_full_name: target.fullName,
+          moved,
+        },
+      });
+      this.log.log(
+        `contact ${args.sourceId} merged into ${args.targetId} by ${args.actorUserId}`,
+      );
+      return { moved };
     });
   }
 }
