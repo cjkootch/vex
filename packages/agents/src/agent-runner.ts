@@ -7,6 +7,7 @@ import {
   type ContactRepository,
   type CostLedgerRepository,
   type Db,
+  type DocumentRepository,
   type EventRepository,
   type LeadRepository,
   type OrganizationRepository,
@@ -57,6 +58,7 @@ export interface AgentRunnerDeps {
   organizations: OrganizationRepository;
   contacts: ContactRepository;
   leads: LeadRepository;
+  documents: DocumentRepository;
   summaries: SummaryRepository;
   touchpoints: TouchpointRepository;
   activities: ActivityRepository;
@@ -180,6 +182,7 @@ export class AgentRunner {
         organizations: this.deps.organizations,
         contacts: this.deps.contacts,
         leads: this.deps.leads,
+        documents: this.deps.documents,
         summaries: this.deps.summaries,
         touchpoints: this.deps.touchpoints,
         activities: this.deps.activities,
