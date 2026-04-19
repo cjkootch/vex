@@ -35,6 +35,8 @@ import {
   EventRepository,
   FuelDealRepository,
   LeadRepository,
+  OrganizationProductRepository,
+  OrganizationRelationshipRepository,
   OrganizationRepository,
   PostgresCostLedgerRepository,
   RawEventRepository,
@@ -44,10 +46,12 @@ import {
   ThreadRepository,
   TouchpointRepository,
   WorkspaceRepository,
+  schema,
   withTenant,
   createDb,
   type Db,
 } from "@vex/db";
+import { eq } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Client as TemporalClient } from "@temporalio/client";
 import {
@@ -223,6 +227,8 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       touchpoints: repos.touchpoints,
       followUps: repos.followUps,
       events: repos.events,
+      orgProducts: repos.orgProducts,
+      orgRelationships: repos.orgRelationships,
       temporal: options.temporal ?? null,
       twilio: twilioForExecutor,
       resend: resendForExecutor,
@@ -343,6 +349,8 @@ export interface ApprovalExecutorDeps {
   touchpoints: TouchpointRepository;
   followUps: FollowUpRepository;
   events: EventRepository;
+  orgProducts: OrganizationProductRepository;
+  orgRelationships: OrganizationRelationshipRepository;
   /**
    * Best-effort Temporal client for the `campaign.enroll_batch`
    * branch. When null, the executor still materialises the
@@ -455,6 +463,22 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         }
         if (approval.actionType === "unsupported_request") {
           await applyUnsupportedRequest(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "org.set_kind") {
+          await applyOrgSetKind(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "org.add_product") {
+          await applyOrgAddProduct(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "org.link_relationship") {
+          await applyOrgLinkRelationship(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "deal.set_broker") {
+          await applyDealSetBroker(tx, deps, workspace_id, approval);
           return;
         }
       }
@@ -1179,6 +1203,234 @@ async function applyUnsupportedRequest(
   });
 }
 
+async function applyOrgSetKind(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { orgId?: string; orgKind?: string }
+    | null;
+  const orgId = payload?.orgId;
+  const orgKind = payload?.orgKind;
+  if (!orgId || !orgKind) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "org.set_kind",
+      "missing orgId / orgKind",
+    );
+    return;
+  }
+  await tx
+    .update(schema.organizations)
+    .set({ kind: orgKind })
+    .where(eq(schema.organizations.id, orgId));
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "organization.kind_set",
+    subjectType: "organization",
+    subjectId: orgId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: { action_type: "org.set_kind", org_id: orgId, kind: orgKind },
+  });
+}
+
+async function applyOrgAddProduct(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { orgId?: string; product?: string; notes?: string }
+    | null;
+  const orgId = payload?.orgId;
+  const product = payload?.product;
+  if (!orgId || !product) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "org.add_product",
+      "missing orgId / product",
+    );
+    return;
+  }
+  const row = await deps.orgProducts.upsert(tx, tenantId, {
+    orgId,
+    product,
+    notes: payload?.notes ?? null,
+    addedBy: approval.reviewerId ?? "chat_agent",
+  });
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "organization.product_added",
+    subjectType: "organization",
+    subjectId: orgId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "org.add_product",
+      org_id: orgId,
+      product,
+      org_product_id: row.id,
+    },
+  });
+}
+
+async function applyOrgLinkRelationship(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        fromOrgId?: string;
+        toOrgId?: string;
+        relationshipType?: string;
+        product?: string;
+        notes?: string;
+      }
+    | null;
+  const fromOrgId = payload?.fromOrgId;
+  const toOrgId = payload?.toOrgId;
+  const relationshipType = payload?.relationshipType;
+  if (!fromOrgId || !toOrgId || !relationshipType) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "org.link_relationship",
+      "missing fromOrgId / toOrgId / relationshipType",
+    );
+    return;
+  }
+  if (fromOrgId === toOrgId) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "org.link_relationship",
+      "from_org and to_org must differ",
+    );
+    return;
+  }
+  const row = await deps.orgRelationships.upsert(tx, tenantId, {
+    fromOrgId,
+    toOrgId,
+    relationshipType,
+    product: payload?.product ?? null,
+    notes: payload?.notes ?? null,
+    addedBy: approval.reviewerId ?? "chat_agent",
+  });
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "organization.relationship_linked",
+    subjectType: "organization",
+    subjectId: fromOrgId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "org.link_relationship",
+      from_org_id: fromOrgId,
+      to_org_id: toOrgId,
+      relationship_type: relationshipType,
+      product: payload?.product ?? null,
+      relationship_id: row.id,
+    },
+  });
+}
+
+async function applyDealSetBroker(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        dealId?: string;
+        side?: "buy" | "sell";
+        brokerOrgId?: string;
+        commissionPct?: number;
+        paymentTerms?: string;
+      }
+    | null;
+  const dealId = payload?.dealId;
+  const side = payload?.side;
+  const brokerOrgId = payload?.brokerOrgId;
+  if (!dealId || !side || !brokerOrgId) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "deal.set_broker",
+      "missing dealId / side / brokerOrgId",
+    );
+    return;
+  }
+  const patch: Record<string, unknown> = {};
+  if (side === "buy") {
+    patch["buy_side_broker_org_id"] = brokerOrgId;
+    if (payload?.commissionPct !== undefined) {
+      patch["buy_side_broker_commission_pct"] = payload.commissionPct;
+    }
+    if (payload?.paymentTerms !== undefined) {
+      patch["buy_side_broker_payment_terms"] = payload.paymentTerms;
+    }
+  } else {
+    patch["sell_side_broker_org_id"] = brokerOrgId;
+    if (payload?.commissionPct !== undefined) {
+      patch["sell_side_broker_commission_pct"] = payload.commissionPct;
+    }
+    if (payload?.paymentTerms !== undefined) {
+      patch["sell_side_broker_payment_terms"] = payload.paymentTerms;
+    }
+  }
+  await tx
+    .update(schema.fuelDeals)
+    .set(patch)
+    .where(eq(schema.fuelDeals.id, dealId));
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: `deal.broker.${side}_side_set`,
+    subjectType: "fuel_deal",
+    subjectId: dealId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "deal.set_broker",
+      deal_id: dealId,
+      side,
+      broker_org_id: brokerOrgId,
+      commission_pct: payload?.commissionPct ?? null,
+      payment_terms: payload?.paymentTerms ?? null,
+    },
+  });
+}
+
 async function emitExecutorFailed(
   tx: Parameters<Parameters<typeof withTenant>[2]>[0],
   deps: ApprovalExecutorDeps,
@@ -1782,6 +2034,8 @@ function buildRepos() {
     contacts: new ContactRepository(),
     touchpoints: new TouchpointRepository(),
     followUps: new FollowUpRepository(),
+    orgProducts: new OrganizationProductRepository(),
+    orgRelationships: new OrganizationRelationshipRepository(),
     activities: new ActivityRepository(),
     events: new EventRepository(),
     workspaces: new WorkspaceRepository(),

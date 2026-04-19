@@ -354,6 +354,111 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     /** Closest supported action, if any. Empty when there's no good fit. */
     suggestion: z.string().max(500).optional(),
   }),
+  // Sprint W — counterparty modelling.
+  //
+  // org.set_kind: classify an org as buyer / supplier / broker /
+  // buyer_broker / internal / competitor. Tier T1 (low risk, purely
+  // an attribute flip, fully reversible). Use when the user says
+  // "Acme is a rice broker", "tag Cibao Foods as a buyer", etc.
+  z.object({
+    kind: z.literal("org.set_kind"),
+    tier: z.literal(ApprovalTier.T1),
+    orgId: zUlid,
+    orgKind: z.enum([
+      "buyer",
+      "supplier",
+      "broker",
+      "buyer_broker",
+      "internal",
+      "competitor",
+    ]),
+    rationale: z.string().max(500).optional(),
+  }),
+  // org.add_product: tag an org with a product it deals in.
+  // Attaches to both suppliers and brokers. A broker whose upstream
+  // suppliers are unknown gets product rows without relationships —
+  // that's the clean "opaque upstream" pattern. Tier T1.
+  z.object({
+    kind: z.literal("org.add_product"),
+    tier: z.literal(ApprovalTier.T1),
+    orgId: zUlid,
+    product: z.enum([
+      "ulsd",
+      "gasoline_87",
+      "gasoline_91",
+      "jet_a",
+      "jet_a1",
+      "avgas",
+      "lfo",
+      "hfo",
+      "lng",
+      "lpg",
+      "biodiesel_b20",
+      "rice",
+      "beans",
+      "pork",
+      "chicken",
+      "cooking_oil",
+      "powdered_milk",
+    ]),
+    notes: z.string().max(1000).optional(),
+    rationale: z.string().max(500).optional(),
+  }),
+  // org.link_relationship: directed edge between two orgs. Primary
+  // use-case is "Broker A brokers_for Supplier B" with optional
+  // product. Leave product null when the relationship spans every
+  // product they have in common. Tier T1.
+  z.object({
+    kind: z.literal("org.link_relationship"),
+    tier: z.literal(ApprovalTier.T1),
+    fromOrgId: zUlid,
+    toOrgId: zUlid,
+    relationshipType: z.enum([
+      "brokers_for",
+      "sources_from",
+      "partners_with",
+      "subsidiary_of",
+    ]),
+    product: z
+      .enum([
+        "ulsd",
+        "gasoline_87",
+        "gasoline_91",
+        "jet_a",
+        "jet_a1",
+        "avgas",
+        "lfo",
+        "hfo",
+        "lng",
+        "lpg",
+        "biodiesel_b20",
+        "rice",
+        "beans",
+        "pork",
+        "chicken",
+        "cooking_oil",
+        "powdered_milk",
+      ])
+      .optional(),
+    notes: z.string().max(1000).optional(),
+    rationale: z.string().max(500).optional(),
+  }),
+  // deal.set_broker: attach a buy-side or sell-side broker to an
+  // existing deal with their own commission + payment terms.
+  // Payment terms are free-form text so the agent can capture
+  // whatever structure the user describes ("1.5% on delivery",
+  // "$0.002/USG wired at BL", "flat $5k on signing"). Tier T2 —
+  // material impact on deal economics.
+  z.object({
+    kind: z.literal("deal.set_broker"),
+    tier: z.literal(ApprovalTier.T2),
+    dealId: zUlid,
+    side: z.enum(["buy", "sell"]),
+    brokerOrgId: zUlid,
+    commissionPct: z.number().min(0).max(1).optional(),
+    paymentTerms: z.string().max(500).optional(),
+    rationale: z.string().max(500).optional(),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;

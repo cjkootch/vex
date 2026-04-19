@@ -9,6 +9,8 @@ export * from "./campaign-steps.js";
 export * from "./campaign-enrollments.js";
 export * from "./follow-ups.js";
 export * from "./signals.js";
+export * from "./organization-products.js";
+export * from "./organization-relationships.js";
 export * from "./touchpoints.js";
 export * from "./threads.js";
 export * from "./messages.js";

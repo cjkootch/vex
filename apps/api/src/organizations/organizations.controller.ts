@@ -3,6 +3,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Inject,
@@ -17,7 +18,12 @@ import {
 import { count, desc, eq, or } from "drizzle-orm";
 import { z } from "zod";
 import { createId } from "@vex/domain";
-import type { EventRepository, OrganizationRepository } from "@vex/db";
+import type {
+  EventRepository,
+  OrganizationProductRepository,
+  OrganizationRelationshipRepository,
+  OrganizationRepository,
+} from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
 
@@ -36,6 +42,10 @@ import { schema, withTenant, type Db, type Tx } from "@vex/db";
 export const ORGANIZATIONS_DB_CLIENT = Symbol("ORGANIZATIONS_DB_CLIENT");
 export const ORGANIZATIONS_REPO = Symbol("ORGANIZATIONS_REPO");
 export const ORGANIZATIONS_EVENT_REPO = Symbol("ORGANIZATIONS_EVENT_REPO");
+export const ORGANIZATIONS_PRODUCTS_REPO = Symbol("ORGANIZATIONS_PRODUCTS_REPO");
+export const ORGANIZATIONS_RELATIONSHIPS_REPO = Symbol(
+  "ORGANIZATIONS_RELATIONSHIPS_REPO",
+);
 
 const CreateOrganizationBody = z.object({
   legalName: z.string().min(1).max(200),
@@ -111,6 +121,10 @@ export class OrganizationsController {
     @Inject(ORGANIZATIONS_DB_CLIENT) private readonly db: Db,
     @Inject(ORGANIZATIONS_REPO) private readonly organizations: OrganizationRepository,
     @Inject(ORGANIZATIONS_EVENT_REPO) private readonly events: EventRepository,
+    @Inject(ORGANIZATIONS_PRODUCTS_REPO)
+    private readonly orgProducts: OrganizationProductRepository,
+    @Inject(ORGANIZATIONS_RELATIONSHIPS_REPO)
+    private readonly orgRelationships: OrganizationRelationshipRepository,
   ) {}
 
   @Get()
@@ -554,6 +568,148 @@ export class OrganizationsController {
     if (!organization)
       throw new NotFoundException(`organization ${id} not found`);
     return { organization };
+  }
+
+  // -------------------------------------------------------------------
+  // Sprint W — products + broker/supplier relationships
+  // -------------------------------------------------------------------
+
+  @Get(":id/products")
+  async listProducts(@Param("id") id: string): Promise<{
+    products: Array<{
+      id: string;
+      product: string;
+      notes: string | null;
+      addedAt: string;
+    }>;
+  }> {
+    const rows = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.orgProducts.listForOrg(tx, id),
+    );
+    return {
+      products: rows.map((r) => ({
+        id: r.id,
+        product: r.product,
+        notes: r.notes,
+        addedAt: r.addedAt.toISOString(),
+      })),
+    };
+  }
+
+  @Post(":id/products")
+  @HttpCode(201)
+  async addProduct(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ id: string; product: string }> {
+    const parsed = z
+      .object({
+        product: z.string().min(1).max(120),
+        notes: z.string().max(1000).optional(),
+      })
+      .safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const row = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.orgProducts.upsert(tx, this.tenant.tenantId, {
+        orgId: id,
+        product: parsed.data.product,
+        notes: parsed.data.notes ?? null,
+        addedBy: this.tenant.userId,
+      }),
+    );
+    return { id: row.id, product: row.product };
+  }
+
+  @Delete(":id/products/:productId")
+  @HttpCode(204)
+  async removeProduct(
+    @Param("id") _orgId: string,
+    @Param("productId") productId: string,
+  ): Promise<void> {
+    await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.orgProducts.deleteById(tx, productId),
+    );
+  }
+
+  @Get(":id/relationships")
+  async listRelationships(@Param("id") id: string): Promise<{
+    relationships: Array<{
+      id: string;
+      fromOrgId: string;
+      toOrgId: string;
+      relationshipType: string;
+      product: string | null;
+      notes: string | null;
+      addedAt: string;
+    }>;
+  }> {
+    const rows = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.orgRelationships.listForOrg(tx, id),
+    );
+    return {
+      relationships: rows.map((r) => ({
+        id: r.id,
+        fromOrgId: r.fromOrgId,
+        toOrgId: r.toOrgId,
+        relationshipType: r.relationshipType,
+        product: r.product,
+        notes: r.notes,
+        addedAt: r.addedAt.toISOString(),
+      })),
+    };
+  }
+
+  @Post(":id/relationships")
+  @HttpCode(201)
+  async addRelationship(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ id: string; relationshipType: string }> {
+    const parsed = z
+      .object({
+        toOrgId: z.string().min(1),
+        relationshipType: z.enum([
+          "brokers_for",
+          "sources_from",
+          "partners_with",
+          "subsidiary_of",
+        ]),
+        product: z.string().max(120).optional(),
+        notes: z.string().max(1000).optional(),
+      })
+      .safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    if (parsed.data.toOrgId === id) {
+      throw new BadRequestException(
+        "from_org and to_org must be different organizations",
+      );
+    }
+    const row = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.orgRelationships.upsert(tx, this.tenant.tenantId, {
+        fromOrgId: id,
+        toOrgId: parsed.data.toOrgId,
+        relationshipType: parsed.data.relationshipType,
+        product: parsed.data.product ?? null,
+        notes: parsed.data.notes ?? null,
+        addedBy: this.tenant.userId,
+      }),
+    );
+    return { id: row.id, relationshipType: row.relationshipType };
+  }
+
+  @Delete(":id/relationships/:relId")
+  @HttpCode(204)
+  async removeRelationship(
+    @Param("id") _orgId: string,
+    @Param("relId") relId: string,
+  ): Promise<void> {
+    await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.orgRelationships.deleteById(tx, relId),
+    );
   }
 }
 

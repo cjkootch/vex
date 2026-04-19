@@ -68,3 +68,11 @@ export {
   SignalRepository,
   type SignalFire,
 } from "./signal-repository.js";
+export {
+  OrganizationProductRepository,
+  type OrganizationProductInsert,
+} from "./organization-product-repository.js";
+export {
+  OrganizationRelationshipRepository,
+  type OrganizationRelationshipInsert,
+} from "./organization-relationship-repository.js";
