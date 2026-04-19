@@ -659,11 +659,13 @@ async function applyOutboundCall(
         orgId?: string;
         toNumber?: string;
         rationale?: string;
+        aiMode?: boolean;
       }
     | null;
   const contactId = payload?.contactId;
   const orgId = payload?.orgId;
   const toNumber = payload?.toNumber;
+  const aiMode = payload?.aiMode === true;
   if (!contactId || !orgId || !toNumber) {
     await emitExecutorFailed(
       tx,
@@ -730,6 +732,7 @@ async function applyOutboundCall(
         toNumber,
         agentRunId: agentRun.id,
         initiatedByUserId: "chat_agent",
+        ...(aiMode ? { aiMode: true } : {}),
       },
     ],
   });

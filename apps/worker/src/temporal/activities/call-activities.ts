@@ -92,6 +92,8 @@ export interface CreateTwilioCallInput {
   agentRunId: string;
   toNumber: string;
   approvalId: string;
+  /** When true, the TwiML endpoint emits the AI-talkback variant. */
+  aiMode?: boolean;
 }
 
 export interface CreateTwilioCallResult {
@@ -339,6 +341,7 @@ export function buildCallActivities(deps: CallActivitiesDeps) {
               deps.twimlUrl,
               input.workflowId,
               input.tenantId,
+              input.aiMode,
             ),
             statusCallback: withCallParams(
               deps.statusCallbackUrl,
@@ -665,9 +668,11 @@ function withCallParams(
   baseUrl: string,
   workflowId: string,
   tenantId: string,
+  aiMode?: boolean,
 ): string {
   const joinChar = baseUrl.includes("?") ? "&" : "?";
-  return `${baseUrl}${joinChar}wf=${encodeURIComponent(workflowId)}&tenant=${encodeURIComponent(tenantId)}`;
+  const extras = aiMode ? "&aiMode=true" : "";
+  return `${baseUrl}${joinChar}wf=${encodeURIComponent(workflowId)}&tenant=${encodeURIComponent(tenantId)}${extras}`;
 }
 
 /** Minimal evidence pack wrapping a call transcript for the summary prompt. */

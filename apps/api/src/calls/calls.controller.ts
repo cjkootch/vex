@@ -196,7 +196,44 @@ export class CallsController {
     const query = (req.query ?? {}) as Record<string, unknown>;
     const wf = query["wf"];
     const tenant = query["tenant"];
+    const aiMode = query["aiMode"] === "true";
     const workflowId = typeof wf === "string" && wf.length > 0 ? wf : "unknown";
+
+    // Sprint L2 — AI-talkback branch. When the workflow was started
+    // with aiMode=true, Vex holds the conversation directly via
+    // OpenAI Realtime instead of bridging into a conference. The AI
+    // TwiML uses <Connect><Stream> with Parameter children so
+    // tenant/wf/instructions reach the bridge (Twilio strips query
+    // strings off <Connect><Stream> URLs).
+    if (
+      aiMode &&
+      this.voiceListener.enabled &&
+      typeof tenant === "string" &&
+      tenant.length > 0
+    ) {
+      const streamUrl = this.voiceListener.streamUrl.replace(
+        "/calls/twilio/stream",
+        "/calls/twilio/ai-stream",
+      );
+      const scenario = this.service.takeScenario(workflowId);
+      const aiLines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<Response>",
+        '  <Pause length="1"/>',
+        "  <Connect>",
+        `    <Stream url="${escapeXml(streamUrl)}">`,
+        `      <Parameter name="wf" value="${escapeXml(workflowId)}" />`,
+        `      <Parameter name="tenant" value="${escapeXml(tenant)}" />`,
+      ];
+      if (scenario) {
+        aiLines.push(
+          `      <Parameter name="instructions" value="${escapeXml(scenario)}" />`,
+        );
+      }
+      aiLines.push("    </Stream>", "  </Connect>", "</Response>");
+      return aiLines.join("\n");
+    }
+
     const confName = conferenceNameForWorkflow(workflowId);
 
     const lines = ['<?xml version="1.0" encoding="UTF-8"?>', "<Response>"];
