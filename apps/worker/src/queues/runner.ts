@@ -225,6 +225,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       temporal: options.temporal ?? null,
       twilio: twilioForExecutor,
       resend: resendForExecutor,
+      redis: connection,
     }),
     connection,
   );
@@ -359,6 +360,13 @@ export interface ApprovalExecutorDeps {
    * RESEND_API_KEY isn't set.
    */
   resend: ResendClient | null;
+  /**
+   * Redis client used to push custom AI-call scenario prompts over
+   * the worker→API boundary for `outbound_call` approvals with
+   * aiInstructions set. The API reads the same key when rendering
+   * the AI TwiML for the dialed call.
+   */
+  redis: import("ioredis").Redis;
 }
 
 /**
@@ -668,12 +676,14 @@ async function applyOutboundCall(
         toNumber?: string;
         rationale?: string;
         aiMode?: boolean;
+        aiInstructions?: string;
       }
     | null;
   const contactId = payload?.contactId;
   const orgId = payload?.orgId;
   const toNumber = payload?.toNumber;
   const aiMode = payload?.aiMode === true;
+  const aiInstructions = payload?.aiInstructions ?? null;
   if (!contactId || !orgId || !toNumber) {
     await emitExecutorFailed(
       tx,
@@ -727,6 +737,40 @@ async function applyOutboundCall(
     },
   });
   await deps.approvals.decide(tx, innerApproval.id, "approved", "chat_agent");
+
+  // When the user supplied custom AI instructions, stash them in
+  // Redis before starting the workflow. The API's twiml handler
+  // reads the same key when Twilio fetches the TwiML and threads the
+  // prompt through to the OpenAI Realtime session as the system
+  // instructions. 5-min TTL matches the demo-call scenario store.
+  if (aiMode && aiInstructions) {
+    try {
+      await deps.redis.setex(
+        `vex:call-scenario:${workflowId}`,
+        300,
+        aiInstructions,
+      );
+    } catch (err) {
+      // Non-fatal — the call still fires, it'll use the default
+      // fuel-qualifier prompt. Audit so operators can see if Redis
+      // writes are silently dropping.
+      await deps.events.insertIfNotExists(tx, tenantId, {
+        verb: "call.scenario.register_failed",
+        subjectType: "approval",
+        subjectId: approval.id,
+        actorType: "system",
+        actorId: "approval_executor",
+        objectType: "approval",
+        objectId: approval.id,
+        occurredAt: new Date(),
+        idempotencyKey: `call.scenario.register_failed:${approval.id}`,
+        metadata: {
+          workflow_id: workflowId,
+          error: (err as Error).message,
+        },
+      });
+    }
+  }
 
   await deps.temporal.workflow.start("outboundCallWorkflow", {
     taskQueue: TEMPORAL_TASK_QUEUE,

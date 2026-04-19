@@ -10,8 +10,14 @@ import {
 } from "@nestjs/common";
 import { z } from "zod";
 import { UserRole } from "@vex/domain";
+import {
+  withTenant,
+  type Db,
+  type EventRepository,
+} from "@vex/db";
 import { JwtAuthGuard, RequireRole, RolesGuard, TenantContext } from "../auth/index.js";
 import { AdminService } from "./admin.service.js";
+import { ADMIN_DB_CLIENT, ADMIN_EVENTS_REPO } from "./tokens.js";
 
 const SettingsPatchSchema = z
   .object({
@@ -36,6 +42,8 @@ export class AdminController {
   constructor(
     @Inject(TenantContext) private readonly tenant: TenantContext,
     @Inject(AdminService) private readonly service: AdminService,
+    @Inject(ADMIN_DB_CLIENT) private readonly db: Db,
+    @Inject(ADMIN_EVENTS_REPO) private readonly events: EventRepository,
   ) {}
 
   @Get("settings")
@@ -84,5 +92,67 @@ export class AdminController {
       return { status: "no_results", message: "No eval run results available yet." };
     }
     return { status: "ok", results };
+  }
+
+  /**
+   * Capability-gap feed — rows where the chat agent emitted
+   * `unsupported_request` because no existing action could fulfil
+   * the user's command. Operators review these to prioritise new
+   * action types. Newest-first, keyset-paginated by `before`.
+   */
+  @Get("feature-requests")
+  async getFeatureRequests(
+    @Query("before") before?: string,
+    @Query("limit") limitRaw?: string,
+  ): Promise<{
+    items: Array<{
+      id: string;
+      occurredAt: string;
+      actorId: string | null;
+      originalCommand: string;
+      reason: string;
+      suggestion: string | null;
+    }>;
+    nextBefore: string | null;
+  }> {
+    const limit = Math.min(Number.parseInt(limitRaw ?? "50", 10) || 50, 200);
+    const beforeDate = before ? new Date(before) : undefined;
+    const rows = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.events.listByVerb(
+        tx,
+        "chat.unsupported_request",
+        limit,
+        beforeDate && !Number.isNaN(beforeDate.getTime())
+          ? beforeDate
+          : undefined,
+      ),
+    );
+    const items = rows.map((r) => {
+      const meta = (r.metadata ?? {}) as Record<string, unknown>;
+      return {
+        id: r.id,
+        occurredAt: r.occurredAt.toISOString(),
+        actorId: r.actorId,
+        originalCommand:
+          typeof meta["original_command"] === "string"
+            ? (meta["original_command"] as string)
+            : "",
+        reason:
+          typeof meta["reason"] === "string"
+            ? (meta["reason"] as string)
+            : "",
+        suggestion:
+          typeof meta["suggestion"] === "string"
+            ? (meta["suggestion"] as string)
+            : null,
+      };
+    });
+    return {
+      items,
+      nextBefore:
+        items.length === limit && items[items.length - 1]
+          ? items[items.length - 1]!.occurredAt
+          : null,
+    };
   }
 }

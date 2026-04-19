@@ -215,7 +215,7 @@ export class CallsController {
         "/calls/twilio/stream",
         "/calls/twilio/ai-stream",
       );
-      const scenario = this.service.takeScenario(workflowId);
+      const scenario = await this.service.takeScenario(workflowId);
       const aiLines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         "<Response>",
@@ -411,7 +411,7 @@ export class CallsController {
       "/calls/twilio/stream",
       "/calls/twilio/ai-stream",
     );
-    const scenario = this.service.takeScenario(wf);
+    const scenario = await this.service.takeScenario(wf);
     const lines = [
       '<?xml version="1.0" encoding="UTF-8"?>',
       "<Response>",

@@ -289,6 +289,7 @@ async function bootstrap(): Promise<void> {
               },
               appBaseUrl: env.APP_BASE_URL ?? "",
               resend,
+              redis,
               taskQueue: TEMPORAL_TASK_QUEUE,
             }),
           }

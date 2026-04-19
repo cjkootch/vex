@@ -11,6 +11,7 @@ import type {
   TouchpointRepository,
   WorkspaceRepository,
 } from "@vex/db";
+import type { Redis } from "ioredis";
 import type {
   S3Uploader,
   TwilioClient,
@@ -31,6 +32,7 @@ import {
   CALLS_CONTACTS_REPO,
   CALLS_DB_CLIENT,
   CALLS_EVENTS_REPO,
+  CALLS_REDIS_CLIENT,
   CALLS_S3_UPLOADER,
   CALLS_SUMMARIES_REPO,
   CALLS_TASK_QUEUE,
@@ -93,6 +95,14 @@ export interface CallsModuleConfig {
   appBaseUrl: string;
   /** Temporal task queue the outbound-call workflow runs on. */
   taskQueue: string;
+  /**
+   * Optional Redis client. When provided, AI-call scenarios (custom
+   * system prompts) are read from `vex:call-scenario:{workflowId}`
+   * keys so cross-process writers (the worker's approval executor)
+   * can attach scenarios to chat-triggered AI calls. Falls back to
+   * the in-memory store when null — demo calls still work.
+   */
+  redis: Redis | null;
 }
 
 @Module({})
@@ -120,6 +130,7 @@ export class CallsModule {
         { provide: CALLS_VOICE_LISTENER_CONFIG, useFactory: () => config.voiceListener },
         { provide: CALLS_APP_BASE_URL, useFactory: () => config.appBaseUrl },
         { provide: CALLS_RESEND_CLIENT, useFactory: () => config.resend },
+        { provide: CALLS_REDIS_CLIENT, useFactory: () => config.redis },
         CallsService,
       ],
     };

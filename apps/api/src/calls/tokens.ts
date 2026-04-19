@@ -41,3 +41,11 @@ export const CALLS_APP_BASE_URL = Symbol("CALLS_APP_BASE_URL");
  * set — the demo-email endpoint returns 503 in that case.
  */
 export const CALLS_RESEND_CLIENT = Symbol("CALLS_RESEND_CLIENT");
+
+/**
+ * Optional Redis client — when provided, AI-call scenarios are read
+ * from `vex:call-scenario:{workflowId}` keys set by the worker's
+ * approval executor. Enables custom AI system prompts for
+ * chat-triggered calls (not just demo calls).
+ */
+export const CALLS_REDIS_CLIENT = Symbol("CALLS_REDIS_CLIENT");
