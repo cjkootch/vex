@@ -77,6 +77,10 @@ export class VoiceStreamServer {
    * other upgrade URLs are left for other listeners.
    */
   attach(server: HttpServer): void {
+    this.config.log("info", "voice stream server attaching", {
+      paths: Object.keys(STREAM_PATHS),
+      enabled: this.config.enabled,
+    });
     server.on("upgrade", (req, socket, head) => {
       const url = (() => {
         try {
@@ -85,6 +89,10 @@ export class VoiceStreamServer {
           return null;
         }
       })();
+      this.config.log("info", "voice stream upgrade received", {
+        url: req.url ?? null,
+        pathname: url?.pathname ?? null,
+      });
       const streamMode = url ? STREAM_PATHS[url.pathname] : undefined;
       if (!url || !streamMode) return;
 

@@ -317,6 +317,24 @@ async function bootstrap(): Promise<void> {
   // attempts against /calls/twilio/stream receive an immediate 503
   // so the call transparently falls back to conference-only.
   let voiceStreamServer: VoiceStreamServer | null = null;
+
+  const shutdown = async (): Promise<void> => {
+    if (voiceStreamServer) voiceStreamServer.close();
+    await app.close();
+    await queues.close();
+    redis.disconnect();
+    if (temporal) await temporal.close();
+    await shutdownOtel();
+  };
+  process.on("SIGINT", () => void shutdown());
+  process.on("SIGTERM", () => void shutdown());
+
+  await app.listen(env.PORT, "0.0.0.0");
+
+  // Attach the WS bridge AFTER Fastify has bound the HTTP server.
+  // Before `.listen()` the underlying Node server may not yet route
+  // `upgrade` events reliably — attaching here guarantees we hook the
+  // actual bound listener.
   if (env.VEX_AI_VOICE_ENABLED && twilio && twilioVerifier) {
     try {
       const callsService = app.get(CallsService, { strict: false });
@@ -348,20 +366,12 @@ async function bootstrap(): Promise<void> {
         `voice bridge mount failed: ${(err as Error).message} — continuing without AI listener`,
       );
     }
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `voice bridge skipped — enabled=${env.VEX_AI_VOICE_ENABLED} twilio=${Boolean(twilio)} verifier=${Boolean(twilioVerifier)}`,
+    );
   }
-
-  const shutdown = async (): Promise<void> => {
-    if (voiceStreamServer) voiceStreamServer.close();
-    await app.close();
-    await queues.close();
-    redis.disconnect();
-    if (temporal) await temporal.close();
-    await shutdownOtel();
-  };
-  process.on("SIGINT", () => void shutdown());
-  process.on("SIGTERM", () => void shutdown());
-
-  await app.listen(env.PORT, "0.0.0.0");
 }
 
 void bootstrap();
