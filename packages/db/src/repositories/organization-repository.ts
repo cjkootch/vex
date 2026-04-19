@@ -228,6 +228,38 @@ export class OrganizationRepository {
       .orderBy(asc(organizations.updatedAt))
       .limit(limit);
   }
+
+  /**
+   * Sprint O — append a tag (no-op if it's already on the row). The
+   * distinct filter guards against concurrent writers adding the
+   * same tag twice.
+   */
+  async appendTag(tx: Tx, id: string, tag: string): Promise<Organization> {
+    const [row] = await tx
+      .update(organizations)
+      .set({
+        tags: sql`(SELECT jsonb_agg(DISTINCT t) FROM jsonb_array_elements_text(${organizations.tags} || ${JSON.stringify([tag])}::jsonb) AS t)`,
+        updatedAt: new Date(),
+      })
+      .where(eq(organizations.id, id))
+      .returning();
+    if (!row) throw new Error(`organization ${id} not found`);
+    return row;
+  }
+
+  /** Sprint O — remove a tag (no-op if it isn't on the row). */
+  async removeTag(tx: Tx, id: string, tag: string): Promise<Organization> {
+    const [row] = await tx
+      .update(organizations)
+      .set({
+        tags: sql`COALESCE((SELECT jsonb_agg(t) FROM jsonb_array_elements_text(${organizations.tags}) AS t WHERE t <> ${tag}), '[]'::jsonb)`,
+        updatedAt: new Date(),
+      })
+      .where(eq(organizations.id, id))
+      .returning();
+    if (!row) throw new Error(`organization ${id} not found`);
+    return row;
+  }
 }
 
 // ---------------------------------------------------------------------------

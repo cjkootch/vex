@@ -210,6 +210,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     buildApprovalExecutor({
       db,
       approvals: repos.approvals,
+      agentRuns: repos.agentRuns,
       deals: repos.deals,
       organizations: repos.organizations,
       contacts: repos.contacts,
@@ -327,6 +328,7 @@ function buildAgentProcessor(runner: AgentRunner) {
 export interface ApprovalExecutorDeps {
   db: Db;
   approvals: ApprovalRepository;
+  agentRuns: AgentRunRepository;
   deals: FuelDealRepository;
   organizations: OrganizationRepository;
   contacts: ContactRepository;
@@ -412,6 +414,23 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         }
         if (approval.actionType === "contact.opt_out") {
           await applyContactOptOut(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "outbound_call") {
+          await applyOutboundCall(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "enrollment.control") {
+          await applyEnrollmentControl(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (
+          approval.actionType === "org.tag" ||
+          approval.actionType === "org.untag" ||
+          approval.actionType === "contact.tag" ||
+          approval.actionType === "contact.untag"
+        ) {
+          await applyTagChange(tx, deps, workspace_id, approval);
           return;
         }
       }
@@ -613,6 +632,279 @@ async function applyContactOptOut(
   });
 }
 
+/**
+ * Sprint O — chat-initiated outbound call. Mirrors POST /calls:
+ * creates an agent_run + a T3 approval pre-decided as approved +
+ * starts the OutboundCallWorkflow + signals it so the approval
+ * wait in the workflow resolves immediately. The chat approval
+ * that triggered this executor is the upstream audit record; the
+ * workflow-side approval is internal to the call machinery.
+ */
+async function applyOutboundCall(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        contactId?: string;
+        orgId?: string;
+        toNumber?: string;
+        rationale?: string;
+      }
+    | null;
+  const contactId = payload?.contactId;
+  const orgId = payload?.orgId;
+  const toNumber = payload?.toNumber;
+  if (!contactId || !orgId || !toNumber) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "outbound_call",
+      "missing contactId / orgId / toNumber",
+    );
+    return;
+  }
+  if (!deps.temporal) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "outbound_call",
+      "temporal_unavailable",
+    );
+    return;
+  }
+
+  const agentRun = await deps.agentRuns.create(tx, tenantId, {
+    agentName: "outbound_call",
+    inputRefs: {
+      contact_id: contactId,
+      org_id: orgId,
+      initiated_by: "chat_agent",
+      to_number: toNumber,
+      chat_approval_id: approval.id,
+    },
+  });
+  const workflowId = WorkflowId.outboundCall(agentRun.id);
+
+  // Pre-create the approval the workflow expects + auto-decide it.
+  // The workflow's createApprovalRow activity is idempotent on
+  // workflow_id so it will return this row. We then signal the
+  // decision so the workflow's approval.decision wait resolves.
+  const innerApproval = await deps.approvals.create(tx, tenantId, {
+    agentRunId: agentRun.id,
+    actionType: "outbound_call",
+    proposedPayload: {
+      tier: "T3",
+      workflow_id: workflowId,
+      contact_id: contactId,
+      org_id: orgId,
+      to_number: toNumber,
+      initiated_by: "chat_agent",
+      chat_approval_id: approval.id,
+    },
+  });
+  await deps.approvals.decide(tx, innerApproval.id, "approved", "chat_agent");
+
+  await deps.temporal.workflow.start("outboundCallWorkflow", {
+    taskQueue: TEMPORAL_TASK_QUEUE,
+    workflowId,
+    args: [
+      {
+        tenantId,
+        workspaceId: tenantId,
+        contactId,
+        orgId,
+        toNumber,
+        agentRunId: agentRun.id,
+        initiatedByUserId: "chat_agent",
+      },
+    ],
+  });
+
+  // Temporal buffers signals sent before handlers register, so this
+  // resolves cleanly even when it arrives during workflow init.
+  const handle = deps.temporal.workflow.getHandle(workflowId);
+  await handle.signal("approval.decision", {
+    approvalId: innerApproval.id,
+    decision: "approved",
+    reviewerId: "chat_agent",
+  });
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType: "approval",
+    subjectId: approval.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "outbound_call",
+      workflow_id: workflowId,
+      agent_run_id: agentRun.id,
+      inner_approval_id: innerApproval.id,
+    },
+  });
+}
+
+/**
+ * Sprint O — steer an in-flight CampaignEnrollmentWorkflow by
+ * signalling its enrollment.control handler. Looks up the workflow
+ * by the deterministic workflow-id pattern
+ * `campaign-enrollment-<enrollmentId>`.
+ */
+async function applyEnrollmentControl(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        enrollmentId?: string;
+        action?: "pause" | "resume" | "unsubscribe";
+        note?: string;
+      }
+    | null;
+  const enrollmentId = payload?.enrollmentId;
+  const action = payload?.action;
+  if (!enrollmentId || !action) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "enrollment.control",
+      "missing enrollmentId / action",
+    );
+    return;
+  }
+  if (!deps.temporal) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "enrollment.control",
+      "temporal_unavailable",
+    );
+    return;
+  }
+
+  const workflowId = WorkflowId.campaignEnrollment(enrollmentId);
+  try {
+    const handle = deps.temporal.workflow.getHandle(workflowId);
+    await handle.signal("enrollment.control", {
+      action,
+      ...(payload?.note ? { note: payload.note } : {}),
+    });
+  } catch (err) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "enrollment.control",
+      (err as Error).message,
+    );
+    return;
+  }
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType: "enrollment",
+    subjectId: enrollmentId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: { action_type: "enrollment.control", signal_action: action },
+  });
+}
+
+/**
+ * Sprint O — append/remove a tag on an org or contact. Shared
+ * handler for org.tag / org.untag / contact.tag / contact.untag.
+ */
+async function applyTagChange(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { orgId?: string; contactId?: string; tag?: string }
+    | null;
+  const tag = payload?.tag;
+  if (!tag) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      approval.actionType,
+      "missing tag",
+    );
+    return;
+  }
+
+  try {
+    if (approval.actionType === "org.tag" && payload?.orgId) {
+      await deps.organizations.appendTag(tx, payload.orgId, tag);
+    } else if (approval.actionType === "org.untag" && payload?.orgId) {
+      await deps.organizations.removeTag(tx, payload.orgId, tag);
+    } else if (approval.actionType === "contact.tag" && payload?.contactId) {
+      await deps.contacts.appendTag(tx, payload.contactId, tag);
+    } else if (approval.actionType === "contact.untag" && payload?.contactId) {
+      await deps.contacts.removeTag(tx, payload.contactId, tag);
+    } else {
+      await emitExecutorFailed(
+        tx,
+        deps,
+        tenantId,
+        approval.id,
+        approval.actionType,
+        "missing orgId / contactId",
+      );
+      return;
+    }
+  } catch (err) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      approval.actionType,
+      (err as Error).message,
+    );
+    return;
+  }
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType:
+      approval.actionType.startsWith("org.") ? "organization" : "contact",
+    subjectId: payload?.orgId ?? payload?.contactId ?? approval.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: { action_type: approval.actionType, tag },
+  });
+}
+
 async function emitExecutorFailed(
   tx: Parameters<Parameters<typeof withTenant>[2]>[0],
   deps: ApprovalExecutorDeps,
@@ -711,6 +1003,7 @@ async function applyDealStatusChange(
 
 type ApprovalRow = {
   id: string;
+  actionType: string;
   proposedPayload: unknown;
   reviewerId: string | null;
   /**
