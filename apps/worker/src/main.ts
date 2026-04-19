@@ -3,6 +3,7 @@ import {
   CampaignEnrollmentRepository,
   EventRepository,
   FollowUpRepository,
+  SignalRepository,
   OrganizationRepository,
   TouchpointRepository,
   WorkspaceRepository,
@@ -19,6 +20,7 @@ import { InMemoryCostLedger, initOtel, shutdownOtel } from "@vex/telemetry";
 import { AgentScanner } from "./scanner.js";
 import { runEnrollmentReconciliationTick } from "./jobs/enrollment-reconciliation-job.js";
 import { runFollowUpNotifierTick } from "./jobs/follow-up-notifier-job.js";
+import { runSignalsTick } from "./jobs/signals-job.js";
 import { runIntentClassifierTick } from "./jobs/intent-classifier-job.js";
 import { startBullWorker } from "./queues/runner.js";
 import { startTemporalWorker } from "./temporal/runner.js";
@@ -36,6 +38,10 @@ const ENROLLMENT_RECONCILIATION_INTERVAL_MS = 15 * 60 * 1000;
  *  (reminders fire within a few minutes of due_at) against email
  *  provider rate-limiting and cost. */
 const FOLLOW_UP_NOTIFIER_INTERVAL_MS = 5 * 60 * 1000;
+/** Sprint T — proactive-signal rule engine. 10 minutes gives a
+ *  responsive feel for laycan / stale / overdue signals without
+ *  hammering the DB (every rule is a handful of indexed queries). */
+const SIGNALS_INTERVAL_MS = 10 * 60 * 1000;
 
 /**
  * The worker process hosts two runtimes:
@@ -283,11 +289,39 @@ async function main(): Promise<void> {
   );
   runNotifierTick();
 
+  // Sprint T — proactive-signal rule engine. Laycan / stale / overdue
+  // / silent-contact rules run every 10 minutes and idempotently
+  // fire signals via the unique-index dedupe on (tenant, rule,
+  // subject) WHERE acknowledged_at IS NULL.
+  let signalsTimer: NodeJS.Timeout | null = null;
+  const signalsRepo = new SignalRepository();
+  const runSignalsTickFn = (): void => {
+    void runSignalsTick(
+      { db, signals: signalsRepo },
+      { tenantId: DEFAULT_WORKSPACE_ID },
+    )
+      .then((result) => {
+        if (result.fired > 0 || result.resolved > 0) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `signals: fired=${result.fired} resolved=${result.resolved} rules=${result.rulesRun}`,
+          );
+        }
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("signals tick failed", err);
+      });
+  };
+  signalsTimer = setInterval(runSignalsTickFn, SIGNALS_INTERVAL_MS);
+  runSignalsTickFn();
+
   const shutdown = async (): Promise<void> => {
     clearInterval(scannerTimer);
     if (intentTimer) clearInterval(intentTimer);
     if (reconcilerTimer) clearInterval(reconcilerTimer);
     if (notifierTimer) clearInterval(notifierTimer);
+    if (signalsTimer) clearInterval(signalsTimer);
     await bull.close();
     temporal.shutdown();
     if (temporalClient) await temporalClient.close();

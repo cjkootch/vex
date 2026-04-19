@@ -25,6 +25,7 @@
     "@vex/integrations": "workspace:*",
     "@vex/telemetry": "workspace:*",
     "bullmq": "5.12.0",
+    "drizzle-orm": "0.32.0",
     "ioredis": "5.4.1"
   },
   "devDependencies": {

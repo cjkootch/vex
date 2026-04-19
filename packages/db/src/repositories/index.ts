@@ -64,3 +64,7 @@ export {
   DocumentRepository,
   type DocumentInsert,
 } from "./document-repository.js";
+export {
+  SignalRepository,
+  type SignalFire,
+} from "./signal-repository.js";
