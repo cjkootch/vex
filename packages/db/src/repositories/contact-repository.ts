@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Tx } from "../client.js";
 import { contacts, type Contact } from "../schema/contacts.js";
 import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
@@ -177,5 +177,37 @@ export class ContactRepository {
       .where(eq(contacts.status, "active"))
       .orderBy(asc(contacts.fullName))
       .limit(limit);
+  }
+
+  /**
+   * Sprint O — append a tag (no-op if it's already on the row). Uses
+   * Postgres's jsonb `||` + a distinct-by-value filter so concurrent
+   * writers can't produce duplicates.
+   */
+  async appendTag(tx: Tx, id: string, tag: string): Promise<Contact> {
+    const [row] = await tx
+      .update(contacts)
+      .set({
+        tags: sql`(SELECT jsonb_agg(DISTINCT t) FROM jsonb_array_elements_text(${contacts.tags} || ${JSON.stringify([tag])}::jsonb) AS t)`,
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, id))
+      .returning();
+    if (!row) throw new Error(`contact ${id} not found`);
+    return row;
+  }
+
+  /** Sprint O — remove a tag (no-op if it isn't on the row). */
+  async removeTag(tx: Tx, id: string, tag: string): Promise<Contact> {
+    const [row] = await tx
+      .update(contacts)
+      .set({
+        tags: sql`COALESCE((SELECT jsonb_agg(t) FROM jsonb_array_elements_text(${contacts.tags}) AS t WHERE t <> ${tag}), '[]'::jsonb)`,
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, id))
+      .returning();
+    if (!row) throw new Error(`contact ${id} not found`);
+    return row;
   }
 }

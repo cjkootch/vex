@@ -8,6 +8,7 @@ import {
 } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { campaigns } from "../schema/campaigns.js";
+import { campaignEnrollments } from "../schema/campaign-enrollments.js";
 import { campaignSteps } from "../schema/campaign-steps.js";
 import { contacts } from "../schema/contacts.js";
 import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
@@ -228,9 +229,15 @@ export class RetrievalService {
     // own section in the prompt) rather than the chunk list.
     const campaignsCatalog = await this.fetchCampaignsCatalog(tx);
 
+    // Sprint O — hydrate active enrollments so the chat agent can
+    // propose enrollment.control (pause/resume/unsubscribe) actions
+    // with concrete enrollment ids.
+    const enrollmentItems = await this.fetchActiveEnrollments(tx);
+
     const allItems = [
       ...(items.length > 0 ? items : fallbackItems),
       ...orgContactItems,
+      ...enrollmentItems,
     ];
 
     const cap = options.tokenCap ?? DEFAULT_TOKEN_CAP;
@@ -310,6 +317,54 @@ export class RetrievalService {
         raw_event_ref: null,
         summary_version: null,
       }) satisfies EvidenceItem);
+  }
+
+  /**
+   * Sprint O — active enrollments in the workspace, surfaced so the
+   * chat agent can propose enrollment.control actions with concrete
+   * enrollment ids. Bounded to 50 most-recent rows because the
+   * prompt token budget is finite and operator queries rarely
+   * reach beyond the in-flight ones.
+   */
+  private async fetchActiveEnrollments(tx: Tx): Promise<EvidenceItem[]> {
+    const rows = await tx
+      .select({
+        id: campaignEnrollments.id,
+        campaignId: campaignEnrollments.campaignId,
+        contactId: campaignEnrollments.contactId,
+        currentStep: campaignEnrollments.currentStep,
+        state: campaignEnrollments.state,
+        lastEventAt: campaignEnrollments.lastEventAt,
+      })
+      .from(campaignEnrollments)
+      .where(inArray(campaignEnrollments.state, ["enrolled", "paused"]))
+      .orderBy(desc(campaignEnrollments.lastEventAt))
+      .limit(50);
+    if (rows.length === 0) return [];
+
+    return rows.map((r) => ({
+      chunk_id: `enrollment:${r.id}`,
+      object_type: "enrollment",
+      object_id: r.id,
+      chunk_text: [
+        `Enrollment ${r.id}`,
+        `  Campaign: ${r.campaignId}`,
+        `  Contact: ${r.contactId}`,
+        `  State: ${r.state}`,
+        `  Current step: ${r.currentStep}`,
+      ].join("\n"),
+      source_ref: `enrollment ${r.id}`,
+      source_type: "hydration",
+      occurred_at: r.lastEventAt,
+      freshness_hours: r.lastEventAt
+        ? Math.max(0, (Date.now() - r.lastEventAt.getTime()) / (1000 * 60 * 60))
+        : 0,
+      confidence_score: 0.8,
+      corroborated_by_count: 0,
+      permission_scope: "workspace",
+      raw_event_ref: null,
+      summary_version: null,
+    }) satisfies EvidenceItem);
   }
 
   /**

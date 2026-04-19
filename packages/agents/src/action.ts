@@ -179,6 +179,66 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     contactId: zUlid,
     reason: z.string().min(1).max(500),
   }),
+  // Sprint O — chat-initiated outbound voice call. Tier T3 because
+  // it dials a real phone line; the approval executor starts the
+  // same OutboundCallWorkflow that POST /calls triggers. Mirrors
+  // the existing proposed_payload shape so the workflow + approval
+  // gate code paths are identical.
+  z.object({
+    kind: z.literal("outbound_call"),
+    tier: z.literal(ApprovalTier.T3),
+    contactId: zUlid,
+    orgId: zUlid,
+    toNumber: z
+      .string()
+      .regex(/^\+[1-9]\d{7,14}$/, "toNumber must be E.164 (e.g. +18324927169)"),
+    rationale: z.string().min(1).max(1000),
+  }),
+  // Sprint O — steer an in-flight CampaignEnrollmentWorkflow without
+  // unsubscribing the contact entirely. The executor signals the
+  // workflow via its `enrollment.control` signal. Note: tier is T2
+  // because pause/resume are reversible; unsubscribe is irreversible
+  // within the workflow and should trigger the existing
+  // contact.opt_out flow instead for the cleanest audit trail.
+  z.object({
+    kind: z.literal("enrollment.control"),
+    tier: z.literal(ApprovalTier.T2),
+    enrollmentId: zUlid,
+    action: z.enum(["pause", "resume", "unsubscribe"]),
+    note: z.string().max(500).optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
+  // Sprint O — append a free-form tag to an organization. Tier T1
+  // because it's low risk + easily reversed. Multiple tags per row
+  // are stored as a JSONB string array; appendTag is idempotent.
+  z.object({
+    kind: z.literal("org.tag"),
+    tier: z.literal(ApprovalTier.T1),
+    orgId: zUlid,
+    tag: z.string().min(1).max(64),
+    rationale: z.string().max(500).optional(),
+  }),
+  z.object({
+    kind: z.literal("org.untag"),
+    tier: z.literal(ApprovalTier.T1),
+    orgId: zUlid,
+    tag: z.string().min(1).max(64),
+    rationale: z.string().max(500).optional(),
+  }),
+  z.object({
+    kind: z.literal("contact.tag"),
+    tier: z.literal(ApprovalTier.T1),
+    contactId: zUlid,
+    tag: z.string().min(1).max(64),
+    rationale: z.string().max(500).optional(),
+  }),
+  z.object({
+    kind: z.literal("contact.untag"),
+    tier: z.literal(ApprovalTier.T1),
+    contactId: zUlid,
+    tag: z.string().min(1).max(64),
+    rationale: z.string().max(500).optional(),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;

@@ -40,6 +40,8 @@ export const organizations = pgTable(
       .$type<FieldConfidenceMap>()
       .notNull()
       .default({}),
+    /** Sprint O — free-form tags appended by the chat agent. */
+    tags: jsonb("tags").$type<string[]>().notNull().default([]),
     status: recordStatusEnum("status").notNull().default("active"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
