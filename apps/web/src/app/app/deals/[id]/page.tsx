@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
+import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
 import { EditDealForm } from "@/components/crm/edit-deal-form";
 import { Tabs } from "@/components/ui/tabs";
@@ -150,6 +151,13 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
             id: "overview",
             label: "Overview",
             content: <OverviewTab deal={deal} />,
+          },
+          {
+            id: "documents",
+            label: "Documents",
+            content: (
+              <DocumentsPanel subjectType="fuel_deal" subjectId={deal.id} />
+            ),
           },
           {
             id: "activity",

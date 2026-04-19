@@ -30,6 +30,7 @@ export interface AppModuleConfig {
   calls?: DynamicModule;
   communications?: DynamicModule;
   followUps?: DynamicModule;
+  documents?: DynamicModule;
   contacts?: DynamicModule;
   deals?: DynamicModule;
   events?: DynamicModule;
@@ -79,6 +80,7 @@ export class AppModule {
     if (config.brief) imports.push(config.brief);
     if (config.communications) imports.push(config.communications);
     if (config.followUps) imports.push(config.followUps);
+    if (config.documents) imports.push(config.documents);
     if (config.contacts) imports.push(config.contacts);
     if (config.deals) imports.push(config.deals);
     if (config.events) imports.push(config.events);
