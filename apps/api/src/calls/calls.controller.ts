@@ -347,8 +347,13 @@ export class CallsController {
       typeof query["tenant"] === "string" ? (query["tenant"] as string) : "";
     const wf =
       typeof query["wf"] === "string" ? (query["wf"] as string) : "demo";
-    const streamUrl = `${this.voiceListener.streamUrl
-      .replace("/calls/twilio/stream", "/calls/twilio/ai-stream")}?wf=${encodeURIComponent(wf)}&tenant=${encodeURIComponent(tenant)}`;
+    // Twilio's `<Connect><Stream>` strips URL query strings before
+    // opening the WebSocket. Pass params as `<Parameter>` children so
+    // they arrive in the stream's "start" event as customParameters.
+    const streamUrl = this.voiceListener.streamUrl.replace(
+      "/calls/twilio/stream",
+      "/calls/twilio/ai-stream",
+    );
     return [
       '<?xml version="1.0" encoding="UTF-8"?>',
       "<Response>",
@@ -356,7 +361,10 @@ export class CallsController {
       // the AI starts speaking.
       '  <Pause length="1"/>',
       "  <Connect>",
-      `    <Stream url="${escapeXml(streamUrl)}" />`,
+      `    <Stream url="${escapeXml(streamUrl)}">`,
+      `      <Parameter name="wf" value="${escapeXml(wf)}" />`,
+      `      <Parameter name="tenant" value="${escapeXml(tenant)}" />`,
+      "    </Stream>",
       "  </Connect>",
       "</Response>",
     ].join("\n");

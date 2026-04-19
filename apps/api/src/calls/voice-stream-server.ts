@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server as HttpServer } from "node:http";
 import type { Socket } from "node:net";
 import { URL } from "node:url";
-import { WebSocket, WebSocketServer } from "ws";
+import { WebSocket, WebSocketServer, type RawData } from "ws";
 import {
   ESCALATION_LISTENER_INSTRUCTIONS,
   ESCALATION_TOOL,
@@ -102,19 +102,50 @@ export class VoiceStreamServer {
         return;
       }
 
-      const wf = url.searchParams.get("wf") ?? "demo";
-      const tenant = url.searchParams.get("tenant");
-      if (!tenant) {
-        socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
-        socket.destroy();
-        return;
-      }
-
+      // Twilio's `<Connect><Stream>` drops URL query strings, so
+      // tenant/wf arrive only in the "start" message's
+      // customParameters. Accept the upgrade and buffer frames until
+      // start lands, then kick off the bridge.
       this.wss.handleUpgrade(req, socket as Socket, head, (ws) => {
+        this.waitForStartThenBridge(ws, streamMode, req);
+      });
+    });
+  }
+
+  private waitForStartThenBridge(
+    ws: WebSocket,
+    mode: StreamMode,
+    req: IncomingMessage,
+  ): void {
+    const buffered: TwilioStreamMessage[] = [];
+    const onEarly = (data: RawData): void => {
+      try {
+        const parsed = JSON.parse(data.toString()) as TwilioStreamMessage;
+        buffered.push(parsed);
+        if (parsed.event !== "start") return;
+
+        const params = parsed.start.customParameters ?? {};
+        const tenant = params["tenant"];
+        if (!tenant) {
+          this.config.log("warn", "voice stream missing tenant param", {
+            callSid: parsed.start.callSid,
+          });
+          try {
+            ws.close(4400, "missing_tenant");
+          } catch {
+            /* already closed */
+          }
+          return;
+        }
+        const wf = params["wf"] ?? "demo";
+
+        ws.off("message", onEarly);
+
         void this.handleConnection(
           ws,
-          { workflowId: wf, tenantId: tenant, mode: streamMode },
+          { workflowId: wf, tenantId: tenant, mode },
           req,
+          buffered,
         ).catch((err) => {
           this.config.log(
             "error",
@@ -127,8 +158,11 @@ export class VoiceStreamServer {
             /* already closed */
           }
         });
-      });
-    });
+      } catch {
+        /* non-JSON frame — drop */
+      }
+    };
+    ws.on("message", onEarly);
   }
 
   /** Tear down all active bridges (called from the API shutdown hook). */
@@ -148,8 +182,9 @@ export class VoiceStreamServer {
     ws: WebSocket,
     args: { workflowId: string; tenantId: string; mode: StreamMode },
     _req: IncomingMessage,
+    replay: TwilioStreamMessage[] = [],
   ): Promise<void> {
-    const twilio = wrapTwilioWs(ws);
+    const twilio = wrapTwilioWs(ws, replay);
     const realtime = await (this.config.openaiFactory
       ? this.config.openaiFactory(this.config.openaiApiKey, this.config.model)
       : openRealtimeSession(this.config.openaiApiKey, this.config.model));
@@ -185,7 +220,10 @@ export class VoiceStreamServer {
 }
 
 /** Wrap a Node `ws` WebSocket into the transport interface the bridge expects. */
-function wrapTwilioWs(ws: WebSocket): TwilioStreamTransport {
+function wrapTwilioWs(
+  ws: WebSocket,
+  replay: TwilioStreamMessage[] = [],
+): TwilioStreamTransport {
   const messageHandlers: ((m: TwilioStreamMessage) => void)[] = [];
   const closeHandlers: ((r?: string) => void)[] = [];
   ws.on("message", (data: Buffer) => {
@@ -204,6 +242,9 @@ function wrapTwilioWs(ws: WebSocket): TwilioStreamTransport {
   });
   return {
     onMessage(h) {
+      // Replay any frames received before the bridge was started
+      // (notably the "start" event that holds streamSid).
+      for (const m of replay) h(m);
       messageHandlers.push(h);
     },
     onClose(h) {
