@@ -125,6 +125,60 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     contactIds: z.array(zUlid).min(1).max(500),
     rationale: z.string().min(1).max(1000),
   }),
+  // Sprint N — chat-initiated one-off messaging. The agent proposes a
+  // single SMS or WhatsApp message at a specific phone number. On
+  // approve, the executor fires through Twilio's Messages API and
+  // records the result as an `sms.sent`/`whatsapp.sent` touchpoint.
+  z.object({
+    kind: z.literal("sms.send"),
+    tier: z.literal(ApprovalTier.T2),
+    to: z
+      .string()
+      .regex(/^\+[1-9]\d{7,14}$/, "to must be E.164 (e.g. +18324927169)"),
+    body: z.string().min(1).max(1_500),
+    contactId: zUlid.optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
+  z.object({
+    kind: z.literal("whatsapp.send"),
+    tier: z.literal(ApprovalTier.T2),
+    to: z
+      .string()
+      .regex(/^\+[1-9]\d{7,14}$/, "to must be E.164 (e.g. +18324927169)"),
+    body: z.string().min(1).max(1_500),
+    contactId: zUlid.optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
+  // Sprint N — chat-initiated deal status transition. Matches the
+  // executor branch that's already wired (applyDealStatusChange).
+  // Tier T2 because it has meaningful downstream effects but is
+  // reversible at the DB level.
+  z.object({
+    kind: z.literal("deal.status_change"),
+    tier: z.literal(ApprovalTier.T2),
+    deal_id: zUlid,
+    to_status: z.enum([
+      "draft",
+      "qualified",
+      "proposed",
+      "negotiating",
+      "approved",
+      "cancelled",
+      "closed_won",
+      "closed_lost",
+    ]),
+    from_status: z.string().optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
+  // Sprint N — opt a contact out of all outbound outreach. Tier T2
+  // because it's reversible but changes the suppression default that
+  // the call/email workflows honour.
+  z.object({
+    kind: z.literal("contact.opt_out"),
+    tier: z.literal(ApprovalTier.T2),
+    contactId: zUlid,
+    reason: z.string().min(1).max(500),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;
