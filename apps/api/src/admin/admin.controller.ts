@@ -17,7 +17,12 @@ import {
 } from "@vex/db";
 import { JwtAuthGuard, RequireRole, RolesGuard, TenantContext } from "../auth/index.js";
 import { AdminService } from "./admin.service.js";
-import { ADMIN_DB_CLIENT, ADMIN_EVENTS_REPO } from "./tokens.js";
+import {
+  ADMIN_DB_CLIENT,
+  ADMIN_EVENTS_REPO,
+  ADMIN_INTEGRATIONS_STATUS,
+} from "./tokens.js";
+import type { IntegrationStatus } from "./admin.module.js";
 
 const SettingsPatchSchema = z
   .object({
@@ -44,6 +49,8 @@ export class AdminController {
     @Inject(AdminService) private readonly service: AdminService,
     @Inject(ADMIN_DB_CLIENT) private readonly db: Db,
     @Inject(ADMIN_EVENTS_REPO) private readonly events: EventRepository,
+    @Inject(ADMIN_INTEGRATIONS_STATUS)
+    private readonly integrations: IntegrationStatus[],
   ) {}
 
   @Get("settings")
@@ -92,6 +99,17 @@ export class AdminController {
       return { status: "no_results", message: "No eval run results available yet." };
     }
     return { status: "ok", results };
+  }
+
+  /**
+   * Snapshot of every external integration's configuration status.
+   * Computed at boot from the loaded env, returned verbatim. The UI
+   * shows green/red pills per row; red on a `required` integration
+   * is a hard operational issue.
+   */
+  @Get("integrations")
+  async getIntegrations(): Promise<{ integrations: IntegrationStatus[] }> {
+    return { integrations: this.integrations };
   }
 
   /**

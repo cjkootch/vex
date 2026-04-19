@@ -10,8 +10,16 @@ import {
   ADMIN_DB_CLIENT,
   ADMIN_EVAL_RESULTS_PATH,
   ADMIN_EVENTS_REPO,
+  ADMIN_INTEGRATIONS_STATUS,
   ADMIN_WORKSPACES_REPO,
 } from "./tokens.js";
+
+export interface IntegrationStatus {
+  name: string;
+  configured: boolean;
+  required: boolean;
+  notes?: string;
+}
 
 export interface AdminModuleConfig {
   db: Db;
@@ -19,6 +27,13 @@ export interface AdminModuleConfig {
   events: EventRepository;
   /** Absolute path to `evals/results/latest.json`. */
   evalResultsPath: string;
+  /**
+   * Snapshot of every external integration at boot — presence +
+   * required/optional flag + a short note for the admin UI. Computed
+   * in main.ts from the loaded env so we don't re-read process.env
+   * at request time.
+   */
+  integrations: IntegrationStatus[];
 }
 
 @Module({})
@@ -32,6 +47,10 @@ export class AdminModule {
         { provide: ADMIN_WORKSPACES_REPO, useFactory: () => config.workspaces },
         { provide: ADMIN_EVENTS_REPO, useFactory: () => config.events },
         { provide: ADMIN_EVAL_RESULTS_PATH, useFactory: () => config.evalResultsPath },
+        {
+          provide: ADMIN_INTEGRATIONS_STATUS,
+          useFactory: () => config.integrations,
+        },
         AdminService,
       ],
     };
