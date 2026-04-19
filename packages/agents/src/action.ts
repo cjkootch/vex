@@ -269,6 +269,55 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     assignedTo: z.string().max(200).optional(),
     rationale: z.string().max(500).optional(),
   }),
+  // Record a shipment / compliance / payment milestone against a
+  // fuel deal. Writes a structured event row so the deal timeline +
+  // summary views surface it. The specific milestone types reflect
+  // the VTC workflow — BL issued, cargo loaded, OFAC cleared, etc.
+  // T1 because milestones are factual records, not outbound action.
+  z.object({
+    kind: z.literal("deal.milestone"),
+    tier: z.literal(ApprovalTier.T1),
+    dealId: zUlid,
+    milestone: z.enum([
+      "bis_license_issued",
+      "ofac_cleared",
+      "contract_signed",
+      "prepayment_received",
+      "product_purchased",
+      "cargo_loaded",
+      "vessel_departed",
+      "bl_issued",
+      "vessel_arrived",
+      "cargo_discharged",
+      "final_payment_received",
+      "deal_closed",
+    ]),
+    /** Actual timestamp this happened (ISO-8601 UTC). Defaults to now. */
+    occurredAt: z
+      .string()
+      .regex(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z$/,
+        "occurredAt must be ISO-8601 UTC (e.g. 2026-04-25T15:00:00Z)",
+      )
+      .optional(),
+    note: z.string().max(2000).optional(),
+    rationale: z.string().max(500).optional(),
+  }),
+  // Catch-all for commands outside the current action catalog. The
+  // executor logs a structured event so operators can review what
+  // users are asking for but can't get done — this turns capability
+  // gaps into a product-feedback signal instead of the AI
+  // hallucinating or refusing opaquely. Always T1 (just a log).
+  z.object({
+    kind: z.literal("unsupported_request"),
+    tier: z.literal(ApprovalTier.T1),
+    /** The user's original chat message, as they wrote it. */
+    originalCommand: z.string().min(1).max(2000),
+    /** Why the AI couldn't fulfil it. */
+    reason: z.string().min(1).max(500),
+    /** Closest supported action, if any. Empty when there's no good fit. */
+    suggestion: z.string().max(500).optional(),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;

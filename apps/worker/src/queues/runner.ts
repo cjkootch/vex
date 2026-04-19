@@ -440,6 +440,14 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyFollowUpSchedule(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "deal.milestone") {
+          await applyDealMilestone(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "unsupported_request") {
+          await applyUnsupportedRequest(tx, deps, workspace_id, approval);
+          return;
+        }
       }
 
       await deps.events.insertIfNotExists(tx, workspace_id, {
@@ -987,6 +995,141 @@ async function applyFollowUpSchedule(
       action_type: "follow_up.schedule",
       follow_up_id: row.id,
       due_at: dueAt.toISOString(),
+    },
+  });
+}
+
+async function applyDealMilestone(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        dealId?: string;
+        milestone?: string;
+        occurredAt?: string;
+        note?: string;
+      }
+    | null;
+  const dealId = payload?.dealId;
+  const milestone = payload?.milestone;
+  if (!dealId || !milestone) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "deal.milestone",
+      "missing dealId / milestone",
+    );
+    return;
+  }
+  const occurredAt = payload?.occurredAt
+    ? new Date(payload.occurredAt)
+    : new Date();
+  if (Number.isNaN(occurredAt.getTime())) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "deal.milestone",
+      "occurredAt is not a valid date",
+    );
+    return;
+  }
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: `deal.milestone.${milestone}`,
+    subjectType: "fuel_deal",
+    subjectId: dealId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "fuel_deal",
+    objectId: dealId,
+    occurredAt,
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "deal.milestone",
+      deal_id: dealId,
+      milestone,
+      ...(payload?.note ? { note: payload.note } : {}),
+    },
+  });
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType: "fuel_deal",
+    subjectId: dealId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor.applied:${approval.id}`,
+    metadata: {
+      action_type: "deal.milestone",
+      deal_id: dealId,
+      milestone,
+    },
+  });
+}
+
+/**
+ * Sprint S — capability-gap handler. When the chat agent sees a
+ * command it can't fulfil with any existing action, it emits an
+ * unsupported_request descriptor instead of refusing opaquely or
+ * hallucinating. The executor just logs the attempt so operators
+ * can review "asks that need new actions" as a feature-request feed.
+ */
+async function applyUnsupportedRequest(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        originalCommand?: string;
+        reason?: string;
+        suggestion?: string;
+      }
+    | null;
+  const originalCommand = payload?.originalCommand ?? "";
+  const reason = payload?.reason ?? "";
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "chat.unsupported_request",
+    subjectType: "chat",
+    subjectId: approval.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "unsupported_request",
+      original_command: originalCommand,
+      reason,
+      ...(payload?.suggestion ? { suggestion: payload.suggestion } : {}),
+    },
+  });
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType: "chat",
+    subjectId: approval.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor.applied:${approval.id}`,
+    metadata: {
+      action_type: "unsupported_request",
     },
   });
 }
