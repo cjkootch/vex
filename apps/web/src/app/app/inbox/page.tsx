@@ -68,6 +68,8 @@ export default function InboxPage(): React.ReactElement {
   const [nextBefore, setNextBefore] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"timeline" | "threads">("timeline");
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
 
   const buildQuery = useCallback(
     (before: string | null): string => {
@@ -123,8 +125,41 @@ export default function InboxPage(): React.ReactElement {
             time-sorted.
           </p>
         </div>
-        <div className="text-xs text-white/40">
-          {loading ? "Loading…" : `${items.length} items`}
+        <div className="flex items-center gap-3">
+          <div
+            role="tablist"
+            className="flex gap-1 rounded-md border border-line bg-muted/20 p-0.5"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === "timeline"}
+              onClick={() => setViewMode("timeline")}
+              className={`rounded px-2 py-1 text-xs ${
+                viewMode === "timeline"
+                  ? "bg-accent text-canvas"
+                  : "text-white/60 hover:text-white"
+              }`}
+            >
+              Timeline
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === "threads"}
+              onClick={() => setViewMode("threads")}
+              className={`rounded px-2 py-1 text-xs ${
+                viewMode === "threads"
+                  ? "bg-accent text-canvas"
+                  : "text-white/60 hover:text-white"
+              }`}
+            >
+              Threads
+            </button>
+          </div>
+          <div className="text-xs text-white/40">
+            {loading ? "Loading…" : `${items.length} items`}
+          </div>
         </div>
       </header>
 
@@ -184,15 +219,38 @@ export default function InboxPage(): React.ReactElement {
         </div>
       )}
 
-      <ol className="flex flex-col gap-2">
-        {items.map((item) =>
-          item.kind === "call" ? (
-            <CallRow key={item.id} item={item} />
-          ) : (
-            <TouchpointRow key={item.id} item={item} />
-          ),
-        )}
-      </ol>
+      {viewMode === "timeline" ? (
+        <ol className="flex flex-col gap-2">
+          {items.map((item) =>
+            item.kind === "call" ? (
+              <CallRow key={item.id} item={item} />
+            ) : (
+              <TouchpointRow key={item.id} item={item} />
+            ),
+          )}
+        </ol>
+      ) : (
+        <ol className="flex flex-col gap-2">
+          {groupIntoThreads(items).map((thread) => {
+            const expanded = expandedThreads.has(thread.key);
+            return (
+              <ThreadRow
+                key={thread.key}
+                thread={thread}
+                expanded={expanded}
+                onToggle={() => {
+                  setExpandedThreads((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(thread.key)) next.delete(thread.key);
+                    else next.add(thread.key);
+                    return next;
+                  });
+                }}
+              />
+            );
+          })}
+        </ol>
+      )}
 
       {nextBefore && (
         <button
@@ -379,4 +437,129 @@ function relTime(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Thread grouping — collapse events by (contactId + channelGroup) so the
+// inbox reads like a conversation list instead of a flat event feed.
+// ---------------------------------------------------------------------------
+
+interface Thread {
+  key: string;
+  contactId: string | null;
+  channelGroup: string;
+  latest: CommunicationItem;
+  count: number;
+  items: CommunicationItem[];
+}
+
+function groupIntoThreads(items: CommunicationItem[]): Thread[] {
+  const buckets = new Map<string, Thread>();
+  for (const item of items) {
+    const group =
+      item.kind === "call" ? "call" : item.channelGroup;
+    const key = `${item.contactId ?? "unknown"}:${group}`;
+    const existing = buckets.get(key);
+    if (existing) {
+      existing.items.push(item);
+      existing.count += 1;
+      if (item.occurredAt > existing.latest.occurredAt) {
+        existing.latest = item;
+      }
+    } else {
+      buckets.set(key, {
+        key,
+        contactId: item.contactId,
+        channelGroup: group,
+        latest: item,
+        count: 1,
+        items: [item],
+      });
+    }
+  }
+  return [...buckets.values()].sort((a, b) =>
+    a.latest.occurredAt < b.latest.occurredAt ? 1 : -1,
+  );
+}
+
+function ThreadRow({
+  thread,
+  expanded,
+  onToggle,
+}: {
+  thread: Thread;
+  expanded: boolean;
+  onToggle: () => void;
+}): React.ReactElement {
+  const preview = (() => {
+    const latest = thread.latest;
+    if (latest.kind === "call") {
+      return `Phone call · ${latest.status ?? "unknown"}`;
+    }
+    return latest.preview ?? latest.channel;
+  })();
+  return (
+    <li
+      data-testid="thread-row"
+      className="rounded-lg border border-line bg-muted/20"
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-muted/30"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <ChannelIcon
+            group={
+              thread.channelGroup === "call"
+                ? "call"
+                : (thread.channelGroup as "email" | "sms" | "whatsapp" | "other")
+            }
+          />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm text-white">
+              <span className="capitalize">
+                {thread.channelGroup === "call" ? "Phone" : thread.channelGroup}
+              </span>
+              <span className="text-[10px] text-white/40">
+                · {thread.count} {thread.count === 1 ? "event" : "events"}
+              </span>
+            </div>
+            {preview && (
+              <div className="mt-0.5 truncate text-xs text-white/60">
+                {preview}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 text-xs text-white/40">
+          <span>{relTime(thread.latest.occurredAt)}</span>
+          <span
+            aria-hidden="true"
+            className={`transition-transform ${expanded ? "rotate-180" : ""}`}
+          >
+            ▾
+          </span>
+        </div>
+      </button>
+      {expanded && (
+        <ol className="divide-y divide-line/40 border-t border-line/40 bg-canvas/30">
+          {thread.items
+            .slice()
+            .sort((a, b) => (a.occurredAt < b.occurredAt ? 1 : -1))
+            .map((item) =>
+              item.kind === "call" ? (
+                <li key={item.id} className="px-3 py-2">
+                  <CallRow item={item} />
+                </li>
+              ) : (
+                <li key={item.id} className="px-3 py-2">
+                  <TouchpointRow item={item} />
+                </li>
+              ),
+            )}
+        </ol>
+      )}
+    </li>
+  );
 }

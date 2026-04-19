@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { EditContactForm } from "@/components/crm/edit-contact-form";
+import { QuickActions } from "@/components/crm/quick-actions";
 import { Tabs } from "@/components/ui/tabs";
 
 interface Membership {
@@ -200,6 +201,22 @@ export default function ContactDetailPage({
           </Link>
         </div>
       </header>
+
+      <QuickActions
+        items={[
+          { label: "Email", ask: `Draft an email to ${contact.fullName}` },
+          { label: "SMS", ask: `Text ${contact.fullName}: ` },
+          { label: "Call", ask: `Have Vex call ${contact.fullName}: ` },
+          {
+            label: "Schedule follow-up",
+            ask: `Remind me to follow up with ${contact.fullName}: `,
+          },
+          {
+            label: "Add note",
+            ask: `Add a note on ${contact.fullName}: `,
+          },
+        ]}
+      />
 
       <EditContactForm
         open={editOpen}

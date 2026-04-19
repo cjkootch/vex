@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
+import { QuickActions } from "@/components/crm/quick-actions";
 import { EditDealForm } from "@/components/crm/edit-deal-form";
 import { Tabs } from "@/components/ui/tabs";
 
@@ -135,6 +136,27 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
           </Link>
         </div>
       </header>
+
+      <QuickActions
+        items={[
+          {
+            label: "Email buyer",
+            ask: `Draft an email to the buyer on deal ${deal.dealRef}`,
+          },
+          {
+            label: "Schedule follow-up",
+            ask: `Remind me about deal ${deal.dealRef}`,
+          },
+          {
+            label: "Add note",
+            ask: `Add a note on deal ${deal.dealRef}: `,
+          },
+          {
+            label: "Record milestone",
+            ask: `Record a milestone on deal ${deal.dealRef}: `,
+          },
+        ]}
+      />
 
       <EditDealForm
         open={editOpen}

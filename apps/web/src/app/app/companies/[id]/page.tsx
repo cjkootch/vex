@@ -6,6 +6,7 @@ import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { OrgProductsPanel } from "@/components/crm/org-products-panel";
 import { OrgRelationshipsPanel } from "@/components/crm/org-relationships-panel";
+import { QuickActions } from "@/components/crm/quick-actions";
 import { EditCompanyForm } from "@/components/crm/edit-company-form";
 import { Tabs } from "@/components/ui/tabs";
 
@@ -128,6 +129,31 @@ export default function CompanyDetailPage({
           </Link>
         </div>
       </header>
+
+      <QuickActions
+        items={[
+          {
+            label: "Email",
+            ask: `Draft an email to ${org.legalName}`,
+          },
+          {
+            label: "Add contact",
+            ask: `Add a contact at ${org.legalName}: `,
+          },
+          {
+            label: "Create deal",
+            ask: `Create a new deal with ${org.legalName} as the buyer: `,
+          },
+          {
+            label: "Tag product",
+            ask: `Tag ${org.legalName} with a product: `,
+          },
+          {
+            label: "Add note",
+            ask: `Add a note on ${org.legalName}: `,
+          },
+        ]}
+      />
 
       <EditCompanyForm
         open={editOpen}
