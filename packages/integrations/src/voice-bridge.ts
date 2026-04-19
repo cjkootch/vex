@@ -196,6 +196,18 @@ export interface VoiceBridgeConfig {
   mode?: "listen" | "talkback";
   /** Voice preset used when mode = "talkback". Default `"shimmer"`. */
   voice?: RealtimeVoice;
+  /**
+   * Tuning for OpenAI Realtime's server-side VAD. Phone calls carry
+   * coughs, background chatter, line noise — the default 0.5/500ms
+   * settings are tuned for a quiet room and over-trigger on any
+   * transient sound. Bumping threshold and silence_duration_ms makes
+   * the AI wait longer before deciding the callee stopped speaking.
+   */
+  turnDetection?: {
+    threshold?: number;
+    prefixPaddingMs?: number;
+    silenceDurationMs?: number;
+  };
   /** Optional logger — defaults to no-op. */
   log?: (level: "info" | "warn" | "error", msg: string, meta?: object) => void;
 }
@@ -285,9 +297,11 @@ export function startVoiceBridge(
             ...(mode === "talkback" ? { voice } : {}),
             turn_detection: {
               type: "server_vad",
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 500,
+              threshold: config.turnDetection?.threshold ?? 0.7,
+              prefix_padding_ms:
+                config.turnDetection?.prefixPaddingMs ?? 300,
+              silence_duration_ms:
+                config.turnDetection?.silenceDurationMs ?? 900,
             },
             tools: config.tools,
             tool_choice: "auto",

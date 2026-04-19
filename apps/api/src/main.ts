@@ -343,6 +343,11 @@ async function bootstrap(): Promise<void> {
         openaiApiKey: env.OPENAI_API_KEY,
         model: env.OPENAI_REALTIME_CALL_MODEL,
         voice: env.OPENAI_REALTIME_CALL_VOICE,
+        turnDetection: {
+          threshold: env.OPENAI_REALTIME_CALL_VAD_THRESHOLD,
+          silenceDurationMs: env.OPENAI_REALTIME_CALL_VAD_SILENCE_MS,
+          prefixPaddingMs: env.OPENAI_REALTIME_CALL_VAD_PREFIX_MS,
+        },
         log: (level, msg, meta) => {
           const logger = app.getHttpAdapter().getInstance().log;
           const fn = level === "error" ? logger.error.bind(logger) : logger.info.bind(logger);
