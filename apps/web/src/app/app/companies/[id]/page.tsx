@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
+import { OrgProductsPanel } from "@/components/crm/org-products-panel";
+import { OrgRelationshipsPanel } from "@/components/crm/org-relationships-panel";
 import { EditCompanyForm } from "@/components/crm/edit-company-form";
 import { Tabs } from "@/components/ui/tabs";
 
@@ -154,6 +156,16 @@ export default function CompanyDetailPage({
             label: "Deals",
             count: org.deals.length,
             content: <DealsTab deals={org.deals} />,
+          },
+          {
+            id: "products",
+            label: "Products",
+            content: <OrgProductsPanel orgId={org.id} />,
+          },
+          {
+            id: "relationships",
+            label: "Relationships",
+            content: <OrgRelationshipsPanel orgId={org.id} />,
           },
           {
             id: "documents",

@@ -243,6 +243,7 @@ export class RetrievalService {
     const followUpItems = await this.fetchOpenFollowUps(tx);
     const documentItems = await this.fetchDocuments(tx);
     const dealDossierItems = await this.fetchDealDossier(tx);
+    const orgGraphItems = await this.fetchOrgProductsAndGraph(tx);
 
     const allItems = [
       ...(items.length > 0 ? items : fallbackItems),
@@ -251,6 +252,7 @@ export class RetrievalService {
       ...followUpItems,
       ...documentItems,
       ...dealDossierItems,
+      ...orgGraphItems,
     ];
 
     const aggregates = await this.fetchAggregates(tx);
@@ -618,6 +620,105 @@ export class RetrievalService {
    *   - top_counterparties: orgs ranked by deal count in the last
    *     90 days (the window most relevant to VTC's active book).
    */
+  /**
+   * Sprint W — hydrate the counterparty graph: for every org,
+   * which products they deal in + which broker/supplier/partner
+   * relationships they're on either side of. Yields one evidence
+   * item per org that has any product or relationship, with the
+   * org's kind pill + product list + inbound/outbound edges
+   * inlined. When the user asks "who supplies rice" / "who brokers
+   * pork" / "what does Acme deal in", the agent scans these items
+   * and lists the matching orgs.
+   */
+  private async fetchOrgProductsAndGraph(
+    tx: Tx,
+  ): Promise<EvidenceItem[]> {
+    const rows = (await tx.execute(sql`
+      SELECT
+        o.id AS org_id,
+        o.legal_name AS name,
+        o.kind AS kind,
+        o.updated_at AS updated_at,
+        COALESCE(
+          array_agg(DISTINCT op.product) FILTER (WHERE op.product IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS products,
+        COALESCE(
+          array_agg(DISTINCT
+            concat(
+              r_out.relationship_type, ':',
+              r_out.to_org_id,
+              CASE WHEN r_out.product IS NULL THEN '' ELSE concat('/', r_out.product) END
+            )
+          ) FILTER (WHERE r_out.id IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS outbound_edges,
+        COALESCE(
+          array_agg(DISTINCT
+            concat(
+              r_in.relationship_type, ':',
+              r_in.from_org_id,
+              CASE WHEN r_in.product IS NULL THEN '' ELSE concat('/', r_in.product) END
+            )
+          ) FILTER (WHERE r_in.id IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS inbound_edges
+      FROM organizations o
+      LEFT JOIN organization_products op ON op.org_id = o.id
+      LEFT JOIN organization_relationships r_out ON r_out.from_org_id = o.id
+      LEFT JOIN organization_relationships r_in ON r_in.to_org_id = o.id
+      WHERE op.id IS NOT NULL OR r_out.id IS NOT NULL OR r_in.id IS NOT NULL
+         OR o.kind IS NOT NULL
+      GROUP BY o.id, o.legal_name, o.kind, o.updated_at
+      ORDER BY o.updated_at DESC
+      LIMIT 60
+    `)) as unknown as Array<{
+      org_id: string;
+      name: string;
+      kind: string | null;
+      updated_at: Date;
+      products: string[];
+      outbound_edges: string[];
+      inbound_edges: string[];
+    }>;
+    if (rows.length === 0) return [];
+    return rows.map((r) => {
+      const lines = [
+        `Counterparty ${r.org_id}`,
+        `  Name: ${r.name}`,
+        r.kind ? `  Kind: ${r.kind}` : null,
+        r.products.length > 0
+          ? `  Products: ${r.products.join(", ")}`
+          : null,
+        r.outbound_edges.length > 0
+          ? `  Outbound: ${r.outbound_edges.join(", ")}`
+          : null,
+        r.inbound_edges.length > 0
+          ? `  Inbound:  ${r.inbound_edges.join(", ")}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const occurred =
+        r.updated_at instanceof Date ? r.updated_at : new Date();
+      return {
+        chunk_id: `organization_graph:${r.org_id}`,
+        object_type: "organization",
+        object_id: r.org_id,
+        chunk_text: lines,
+        source_ref: `organization_graph ${r.org_id}`,
+        source_type: "hydration",
+        occurred_at: occurred,
+        freshness_hours: 0,
+        confidence_score: 0.9,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      } satisfies EvidenceItem;
+    });
+  }
+
   private async fetchAggregates(tx: Tx): Promise<EvidenceAggregates> {
     const pipelineByStatus = (await tx.execute(sql`
       SELECT
