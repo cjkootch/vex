@@ -27,12 +27,49 @@ X-VTC-Signature: <hex hmac>
 
 - **Method**: `POST`, JSON body.
 - **Auth**: HMAC-SHA256 of `${timestamp}.${rawBody}` using the shared
-  secret (`WEBSITE_CHAT_WEBHOOK_SECRET` in both repos; any random 32+
-  byte string works).
+  secret `WEBSITE_CHAT_WEBHOOK_SECRET` (see next section).
 - **Response**: `204 No Content` on success, `400` on bad signature /
   malformed body.
 - **Idempotency**: the Vex server dedupes on
   `providerEventId = "${conversation_id}:${event}"`. Retry safely.
+
+### The shared secret (`WEBSITE_CHAT_WEBHOOK_SECRET`)
+
+`WEBSITE_CHAT_WEBHOOK_SECRET` is **one random string the operator
+generates once and pastes into both deployments**. It's not a token
+either side issues — it's a password the website uses to prove it's
+the legitimate sender, and Vex uses the identical string to verify.
+
+**One-time setup (operator does this, not the code):**
+
+1. Generate a 32-byte random string:
+
+   ```sh
+   openssl rand -hex 32
+   # e.g. 7a9d...c4f1b2 (64 hex chars)
+   ```
+
+   Node equivalent: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+
+2. Paste the **same value** into two places:
+   - **Vex (Fly)**: `fly secrets set WEBSITE_CHAT_WEBHOOK_SECRET=<value> -a vex-api`
+   - **Website (Vercel)**: Project settings → Environment Variables →
+     `WEBSITE_CHAT_WEBHOOK_SECRET = <same value>` (scope: Production +
+     Preview).
+
+3. Redeploy both services so the new env var is picked up.
+
+**Do not** commit the secret to either repo. **Do not** generate a
+separate value per environment — the two sides must match byte-for-
+byte or every request 400s with `invalid_signature`.
+
+If the secret is ever leaked, rotate it by generating a new one and
+repeating steps 2–3. Vex doesn't cache the secret; the next request
+after the redeploy uses the new value.
+
+For local dev, pick any string (`"dev-secret-do-not-use"`) and set it
+in `.env` on both repos. The verifier doesn't care what the string is
+— only that it's identical on both ends.
 
 ### Signing example (Node, Vercel)
 
@@ -231,8 +268,10 @@ detail page at `/app/contacts/:id`.
 
 ## 7. Rollout checklist
 
-- [ ] Generate `WEBSITE_CHAT_WEBHOOK_SECRET` (32+ random bytes).
-      Set it on both Vercel (website repo) and Fly (Vex API).
+- [ ] Generate `WEBSITE_CHAT_WEBHOOK_SECRET` once
+      (`openssl rand -hex 32`). Set the **same value** on both Vercel
+      (website env) and Fly (Vex API env). See "The shared secret"
+      section above.
 - [ ] Deploy Vex webhook endpoint (PR #feat/website-chat-webhook).
 - [ ] Wire `conversation.started` + `conversation.ended` calls in
       `/api/chat.js`.
