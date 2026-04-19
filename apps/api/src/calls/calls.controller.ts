@@ -438,16 +438,44 @@ export class CallsController {
   }
 
   /**
-   * Demo-call status callback. Unauthenticated + no-op — we don't
-   * drive a workflow for demo calls, so the lifecycle events are only
-   * useful if something goes wrong and we want to look at the logs.
-   * Accept + 204 so Twilio doesn't retry.
+   * Demo-call status callback. Unauthenticated (Twilio signs webhooks
+   * with AccountSid-level auth, not per-request; we skip verification
+   * here because the payload only updates a row keyed by CallSid).
+   * Twilio posts form-urlencoded CallSid + CallStatus + CallDuration
+   * + From/To; we mirror those into the matching voice_call activity.
    */
   @Post("twilio/demo-status")
   @SkipThrottle()
   @HttpCode(204)
-  async demoStatusCallback(): Promise<void> {
-    return;
+  async demoStatusCallback(
+    @Req() req: RawBodyRequest<FastifyRequest>,
+  ): Promise<void> {
+    const params = req.rawBody ? parseFormParams(req.rawBody) : {};
+    const query = (req.query ?? {}) as Record<string, unknown>;
+    const tenant =
+      typeof query["tenant"] === "string" ? (query["tenant"] as string) : "";
+    if (!tenant) return;
+    await this.service.handleDemoStatus(tenant, params);
+  }
+
+  /**
+   * Demo-call recording callback. Twilio fires this once the recording
+   * is ready with RecordingSid + RecordingUrl + RecordingDuration. We
+   * attach those to the matching voice_call activity so the drill-in
+   * can render a playable link.
+   */
+  @Post("twilio/demo-recording")
+  @SkipThrottle()
+  @HttpCode(204)
+  async demoRecordingCallback(
+    @Req() req: RawBodyRequest<FastifyRequest>,
+  ): Promise<void> {
+    const params = req.rawBody ? parseFormParams(req.rawBody) : {};
+    const query = (req.query ?? {}) as Record<string, unknown>;
+    const tenant =
+      typeof query["tenant"] === "string" ? (query["tenant"] as string) : "";
+    if (!tenant) return;
+    await this.service.handleDemoRecording(tenant, params);
   }
 
   @Post("twilio/recording")

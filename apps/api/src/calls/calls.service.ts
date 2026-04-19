@@ -380,14 +380,17 @@ export class CallsService {
       mode === "ai"
         ? `${baseUrl}/calls/twilio/ai-twiml?tenant=${encodeURIComponent(args.tenantId)}&wf=${encodeURIComponent(wf)}`
         : `${baseUrl}/calls/twilio/demo-twiml?text=${encodeURIComponent(script)}`;
-    const statusCallback = `${baseUrl}/calls/twilio/demo-status`;
+    const tenantQ = encodeURIComponent(args.tenantId);
+    const statusCallback = `${baseUrl}/calls/twilio/demo-status?tenant=${tenantQ}`;
+    const recordingStatusCallback = `${baseUrl}/calls/twilio/demo-recording?tenant=${tenantQ}`;
 
     const { callSid, status } = await this.twilio.createOutboundCall({
       to: args.toNumber,
       twimlUrl,
       statusCallback,
       statusCallbackEvent: ["initiated", "ringing", "answered", "completed"],
-      record: false,
+      record: true,
+      recordingStatusCallback,
       timeout: 30,
     });
 
@@ -413,6 +416,71 @@ export class CallsService {
       `demo call initiated: sid=${callSid} mode=${mode} to=${args.toNumber} activity=${activity.id}`,
     );
     return { callSid, status, activityId: activity.id };
+  }
+
+  /**
+   * Update a demo call's activity row from a Twilio statusCallback.
+   * Advances `result` through queued → ringing → in-progress →
+   * completed / failed / busy / no-answer and stamps CallDuration on
+   * the terminal transition. No-op if the call isn't a demo (no
+   * matching activity) — the production OutboundCallWorkflow owns
+   * its own status surface.
+   */
+  async handleDemoStatus(
+    tenantId: string,
+    params: Record<string, string>,
+  ): Promise<void> {
+    const callSid = params["CallSid"];
+    const status = params["CallStatus"];
+    if (!callSid || !status) return;
+    const duration = Number.parseInt(params["CallDuration"] ?? "", 10);
+    await withTenant(this.db, tenantId, async (tx) => {
+      const row = await this.activities.findByCallSid(tx, callSid);
+      if (!row) return;
+      const metaPatch: Record<string, unknown> = { status };
+      if (params["From"]) metaPatch["from_number"] = params["From"];
+      if (params["To"]) metaPatch["to_number"] = params["To"];
+      await this.activities.patchMetadata(tx, row.id, {
+        result: status,
+        ...(Number.isFinite(duration) && duration > 0
+          ? { durationSeconds: duration }
+          : {}),
+        metadata: metaPatch,
+      });
+    });
+  }
+
+  /**
+   * Attach Twilio's recording URL to a demo call's activity. Twilio
+   * fires this after the call ends; the URL is playable via the
+   * Twilio media endpoint (auth required by the caller when fetched).
+   */
+  async handleDemoRecording(
+    tenantId: string,
+    params: Record<string, string>,
+  ): Promise<void> {
+    const callSid = params["CallSid"];
+    const recordingSid = params["RecordingSid"];
+    const recordingUrl = params["RecordingUrl"];
+    if (!callSid) return;
+    await withTenant(this.db, tenantId, async (tx) => {
+      const row = await this.activities.findByCallSid(tx, callSid);
+      if (!row) return;
+      await this.activities.patchMetadata(tx, row.id, {
+        metadata: {
+          ...(recordingSid ? { recording_sid: recordingSid } : {}),
+          ...(recordingUrl ? { recording_url: recordingUrl } : {}),
+          ...(params["RecordingDuration"]
+            ? {
+                recording_duration_seconds: Number.parseInt(
+                  params["RecordingDuration"] ?? "",
+                  10,
+                ),
+              }
+            : {}),
+        },
+      });
+    });
   }
 
   /**
