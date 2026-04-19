@@ -114,6 +114,10 @@ export default function CampaignDetailPage({
       {/* KPI rail — rollup metrics. */}
       <KpiRail campaign={campaign} />
 
+      {/* Engagement card — detailed open/click/bounce/reply rates from
+          touchpoints aggregated by verb. Webhook-backed. */}
+      <EngagementCard campaignId={campaign.id} />
+
       <Tabs
         active={activeTab}
         onChange={setActiveTab}
@@ -831,4 +835,182 @@ function shortDateTime(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+interface CampaignMetrics {
+  campaignId: string;
+  totals: {
+    enrollments: number;
+    sent: number;
+    delivered: number;
+    opened: number;
+    clicked: number;
+    replied: number;
+    bounced: number;
+    failed: number;
+  };
+  rates: {
+    delivery_rate: number | null;
+    open_rate: number | null;
+    click_rate: number | null;
+    click_through_rate: number | null;
+    reply_rate: number | null;
+    bounce_rate: number | null;
+  };
+  by_channel: Array<{ channel: string; count: number }>;
+}
+
+function EngagementCard({ campaignId }: { campaignId: string }) {
+  const [metrics, setMetrics] = useState<CampaignMetrics | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setMetrics(null);
+    fetch(`/api/marketing/campaigns/${campaignId}/metrics`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status}`);
+        return res.json();
+      })
+      .then((body: CampaignMetrics) => {
+        if (!cancelled) {
+          setMetrics(body);
+          setError(null);
+        }
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId]);
+
+  if (error) {
+    return (
+      <div className="rounded-lg border border-line bg-muted/20 p-4 text-xs text-white/50">
+        Couldn&apos;t load engagement metrics: {error}
+      </div>
+    );
+  }
+  if (!metrics) {
+    return (
+      <div className="rounded-lg border border-line bg-muted/20 p-4 text-xs text-white/50">
+        Loading engagement metrics…
+      </div>
+    );
+  }
+
+  const hasAny =
+    metrics.totals.sent +
+      metrics.totals.opened +
+      metrics.totals.clicked +
+      metrics.totals.replied >
+    0;
+
+  return (
+    <div className="rounded-lg border border-line bg-muted/20 p-4">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-sm font-medium text-white">
+          Engagement (from webhooks)
+        </h2>
+        <span className="text-xs text-white/40">
+          {metrics.totals.enrollments} enrollment(s)
+        </span>
+      </div>
+      {!hasAny ? (
+        <div className="text-xs text-white/50">
+          No webhook events recorded yet. Once sends go out, open/click/bounce
+          events land here automatically.
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Metric
+            label="Delivery"
+            primary={metrics.rates.delivery_rate}
+            secondary={`${metrics.totals.delivered} / ${metrics.totals.sent}`}
+          />
+          <Metric
+            label="Open"
+            primary={metrics.rates.open_rate}
+            secondary={`${metrics.totals.opened} / ${metrics.totals.sent}`}
+          />
+          <Metric
+            label="Click"
+            primary={metrics.rates.click_rate}
+            secondary={`${metrics.totals.clicked} / ${metrics.totals.sent}`}
+          />
+          <Metric
+            label="CTR"
+            primary={metrics.rates.click_through_rate}
+            secondary={`${metrics.totals.clicked} / ${metrics.totals.opened}`}
+          />
+          <Metric
+            label="Reply"
+            primary={metrics.rates.reply_rate}
+            secondary={`${metrics.totals.replied} / ${metrics.totals.sent}`}
+          />
+          <Metric
+            label="Bounce"
+            primary={metrics.rates.bounce_rate}
+            secondary={`${metrics.totals.bounced} / ${metrics.totals.sent}`}
+            tone={metrics.totals.bounced > 0 ? "bad" : "neutral"}
+          />
+          <Metric
+            label="Failed"
+            primary={null}
+            secondary={String(metrics.totals.failed)}
+            tone={metrics.totals.failed > 0 ? "bad" : "neutral"}
+          />
+        </div>
+      )}
+      {metrics.by_channel.length > 0 && (
+        <div className="mt-4 border-t border-line pt-3">
+          <div className="mb-2 text-[10px] uppercase tracking-wide text-white/40">
+            By verb
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {metrics.by_channel.map((c) => (
+              <span
+                key={c.channel}
+                className="rounded bg-muted/60 px-2 py-0.5 font-mono text-[11px] text-white/70"
+              >
+                {c.channel} <span className="text-white/50">{c.count}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  primary,
+  secondary,
+  tone = "neutral",
+}: {
+  label: string;
+  primary: number | null;
+  secondary: string;
+  tone?: "neutral" | "bad";
+}) {
+  const value =
+    primary === null
+      ? "—"
+      : `${(primary * 100).toFixed(primary < 0.1 ? 1 : 0)}%`;
+  return (
+    <div className="rounded-md border border-line bg-canvas/50 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-white/40">
+        {label}
+      </div>
+      <div
+        className={`mt-1 font-mono text-lg ${tone === "bad" ? "text-bad" : "text-white"}`}
+      >
+        {value}
+      </div>
+      <div className="mt-0.5 text-[10px] text-white/40">{secondary}</div>
+    </div>
+  );
 }

@@ -194,4 +194,29 @@ export class TouchpointRepository {
       })
       .where(eq(touchpoints.id, id));
   }
+
+  /**
+   * Aggregate touchpoint counts for a single campaign grouped by
+   * channel verb (e.g. email.sent, email.opened, email.clicked,
+   * email.bounced, sms.delivered, whatsapp.replied). Powers the
+   * campaign detail page's metrics card — open rate = opened / sent,
+   * click rate = clicked / sent, bounce rate = bounced / sent.
+   */
+  async channelBreakdownByCampaign(
+    tx: Tx,
+    campaignId: string,
+  ): Promise<Array<{ channel: string; count: number }>> {
+    const rows = await tx
+      .select({
+        channel: touchpoints.channel,
+        count: sql<number>`COUNT(*)::int`,
+      })
+      .from(touchpoints)
+      .where(eq(touchpoints.campaignId, campaignId))
+      .groupBy(touchpoints.channel);
+    return rows.map((r) => ({
+      channel: r.channel,
+      count: Number(r.count),
+    }));
+  }
 }
