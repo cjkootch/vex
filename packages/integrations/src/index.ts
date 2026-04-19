@@ -42,6 +42,7 @@ export {
   type RealtimeServerEvent,
   type RealtimeToolDefinition,
   type RealtimeTransport,
+  type RealtimeVoice,
   type TwilioStreamMessage,
   type TwilioStreamTransport,
   type VoiceBridgeConfig,
