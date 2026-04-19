@@ -2,6 +2,7 @@ import { loadEnv } from "@vex/config";
 import {
   CampaignEnrollmentRepository,
   EventRepository,
+  FollowUpRepository,
   OrganizationRepository,
   TouchpointRepository,
   WorkspaceRepository,
@@ -10,12 +11,14 @@ import {
 import {
   AnthropicAdapter,
   S3Uploader,
+  createResendClient,
   createTemporalClient,
   createTwilioClient,
 } from "@vex/integrations";
 import { InMemoryCostLedger, initOtel, shutdownOtel } from "@vex/telemetry";
 import { AgentScanner } from "./scanner.js";
 import { runEnrollmentReconciliationTick } from "./jobs/enrollment-reconciliation-job.js";
+import { runFollowUpNotifierTick } from "./jobs/follow-up-notifier-job.js";
 import { runIntentClassifierTick } from "./jobs/intent-classifier-job.js";
 import { startBullWorker } from "./queues/runner.js";
 import { startTemporalWorker } from "./temporal/runner.js";
@@ -29,6 +32,10 @@ const INTENT_CLASSIFIER_INTERVAL_MS = 10 * 60 * 1000;
 /** Reconcile orphaned enrollments every 15 minutes — longer than the
  *  default staleness threshold so we don't race a just-enrolled row. */
 const ENROLLMENT_RECONCILIATION_INTERVAL_MS = 15 * 60 * 1000;
+/** Sprint Q — follow-up notifier tick. 5 minutes balances latency
+ *  (reminders fire within a few minutes of due_at) against email
+ *  provider rate-limiting and cost. */
+const FOLLOW_UP_NOTIFIER_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * The worker process hosts two runtimes:
@@ -234,10 +241,53 @@ async function main(): Promise<void> {
   );
   runReconcilerTick();
 
+  // Sprint Q — follow-up notifier. Scans open follow-ups whose
+  // due_at has passed and that haven't been notified yet; emails
+  // the assignee (when it's an email-shaped string) and marks the
+  // row so we don't spam.
+  let notifierTimer: NodeJS.Timeout | null = null;
+  const notifierFollowUps = new FollowUpRepository();
+  const notifierEvents = new EventRepository();
+  const notifierResend = env.RESEND_API_KEY
+    ? createResendClient({
+        apiKey: env.RESEND_API_KEY,
+        defaultFrom: env.RESEND_DEFAULT_FROM,
+      })
+    : null;
+  const runNotifierTick = (): void => {
+    void runFollowUpNotifierTick(
+      {
+        db,
+        followUps: notifierFollowUps,
+        events: notifierEvents,
+        resend: notifierResend,
+      },
+      { tenantId: DEFAULT_WORKSPACE_ID },
+    )
+      .then((result) => {
+        if (result.notified > 0 || result.failures > 0) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `notifier: scanned=${result.scanned} notified=${result.notified} skipped=${result.skipped} failures=${result.failures}`,
+          );
+        }
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error("notifier tick failed", err);
+      });
+  };
+  notifierTimer = setInterval(
+    runNotifierTick,
+    FOLLOW_UP_NOTIFIER_INTERVAL_MS,
+  );
+  runNotifierTick();
+
   const shutdown = async (): Promise<void> => {
     clearInterval(scannerTimer);
     if (intentTimer) clearInterval(intentTimer);
     if (reconcilerTimer) clearInterval(reconcilerTimer);
+    if (notifierTimer) clearInterval(notifierTimer);
     await bull.close();
     temporal.shutdown();
     if (temporalClient) await temporalClient.close();
