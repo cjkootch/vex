@@ -293,7 +293,11 @@ function buildInputs({
     product: deal.product,
     incoterm: deal.incoterm,
     volumeUsg,
-    densityKgL: deal.densityKgL,
+    // Sprint V — densityKgL is now nullable (food deals don't have
+    // a density). This path only runs for fuel deals; a null here
+    // would have been rejected pre-0011 NOT NULL constraint, so
+    // default to 0 defensively rather than throw.
+    densityKgL: deal.densityKgL ?? 0,
     volumeTolerancePct: deal.volumeTolerancePct,
     sellPricePerUsg: scenario.sellPricePerUsg,
     buyerCurrencyCode: deal.currency,

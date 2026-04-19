@@ -194,6 +194,10 @@ export interface DealListRow {
   laycanEnd: string | null;
   complianceHold: boolean;
   ofacStatus: string;
+  lineOfBusiness: string;
+  volumeUnit: string;
+  productionLeadTimeWeeks: number | null;
+  coldChainRequired: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -244,9 +248,12 @@ export class DealsController {
   @Get()
   async list(
     @Query("status") statusRaw?: string,
+    @Query("line_of_business") lobRaw?: string,
     @Query("limit") limitRaw?: string,
   ): Promise<{ deals: DealListRow[] }> {
     const status = statusRaw && STATUS_VALUES.has(statusRaw) ? statusRaw : null;
+    const lineOfBusiness =
+      lobRaw === "fuel" || lobRaw === "food" ? lobRaw : null;
     const limit = clampLimit(limitRaw, 100, 500);
 
     const deals = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
@@ -265,14 +272,27 @@ export class DealsController {
           laycanEnd: schema.fuelDeals.laycanEnd,
           complianceHold: schema.fuelDeals.complianceHold,
           ofacStatus: schema.fuelDeals.ofacScreeningStatus,
+          lineOfBusiness: schema.fuelDeals.lineOfBusiness,
+          volumeUnit: schema.fuelDeals.volumeUnit,
+          productionLeadTimeWeeks: schema.fuelDeals.productionLeadTimeWeeks,
+          coldChainRequired: schema.fuelDeals.coldChainRequired,
           createdAt: schema.fuelDeals.createdAt,
           updatedAt: schema.fuelDeals.updatedAt,
         })
         .from(schema.fuelDeals)
         .leftJoin(buyer, eq(schema.fuelDeals.buyerOrgId, buyer.id));
-      const filtered = status
-        ? base.where(eq(schema.fuelDeals.status, status as DealStatus))
-        : base;
+      const clauses = [
+        status ? eq(schema.fuelDeals.status, status as DealStatus) : null,
+        lineOfBusiness
+          ? eq(schema.fuelDeals.lineOfBusiness, lineOfBusiness)
+          : null,
+      ].filter((c): c is NonNullable<typeof c> => c !== null);
+      const filtered =
+        clauses.length === 0
+          ? base
+          : clauses.length === 1
+            ? base.where(clauses[0]!)
+            : base.where(and(...clauses));
       const rows = await filtered
         .orderBy(desc(schema.fuelDeals.createdAt))
         .limit(limit);
@@ -602,6 +622,10 @@ function toListRow(row: {
   laycanEnd: string | null;
   complianceHold: boolean;
   ofacStatus: string;
+  lineOfBusiness?: string | null;
+  volumeUnit?: string | null;
+  productionLeadTimeWeeks?: number | null;
+  coldChainRequired?: boolean | null;
   createdAt: Date;
   updatedAt: Date;
 }): DealListRow {
@@ -618,6 +642,10 @@ function toListRow(row: {
     laycanEnd: row.laycanEnd,
     complianceHold: row.complianceHold,
     ofacStatus: row.ofacStatus,
+    lineOfBusiness: row.lineOfBusiness ?? "fuel",
+    volumeUnit: row.volumeUnit ?? "usg",
+    productionLeadTimeWeeks: row.productionLeadTimeWeeks ?? null,
+    coldChainRequired: row.coldChainRequired ?? false,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };
@@ -639,6 +667,10 @@ async function loadDealDetail(tx: Tx, id: string): Promise<DealDetail | null> {
       laycanEnd: schema.fuelDeals.laycanEnd,
       complianceHold: schema.fuelDeals.complianceHold,
       ofacStatus: schema.fuelDeals.ofacScreeningStatus,
+      lineOfBusiness: schema.fuelDeals.lineOfBusiness,
+      volumeUnit: schema.fuelDeals.volumeUnit,
+      productionLeadTimeWeeks: schema.fuelDeals.productionLeadTimeWeeks,
+      coldChainRequired: schema.fuelDeals.coldChainRequired,
       createdAt: schema.fuelDeals.createdAt,
       updatedAt: schema.fuelDeals.updatedAt,
       sellerOrgId: schema.fuelDeals.sellerOrgId,
@@ -697,6 +729,10 @@ async function loadDealDetail(tx: Tx, id: string): Promise<DealDetail | null> {
     laycanEnd: row.laycanEnd,
     complianceHold: row.complianceHold,
     ofacStatus: row.ofacStatus,
+    lineOfBusiness: row.lineOfBusiness ?? "fuel",
+    volumeUnit: row.volumeUnit ?? "usg",
+    productionLeadTimeWeeks: row.productionLeadTimeWeeks ?? null,
+    coldChainRequired: row.coldChainRequired ?? false,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     sellerOrgId: row.sellerOrgId,

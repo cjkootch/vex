@@ -69,7 +69,15 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     kind: z.literal("crm.create_deal"),
     tier: z.literal(ApprovalTier.T2),
     dealRef: z.string().min(1).max(50),
+    /**
+     * Sprint V — which book this deal lives in. Controls which
+     * products are valid, whether density is required, and which
+     * downstream signal rules apply. Default 'fuel' keeps legacy
+     * agent proposals valid.
+     */
+    lineOfBusiness: z.enum(["fuel", "food"]).default("fuel"),
     product: z.enum([
+      // Fuel
       "ulsd",
       "gasoline_87",
       "gasoline_91",
@@ -81,6 +89,13 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
       "lng",
       "lpg",
       "biodiesel_b20",
+      // Food
+      "rice",
+      "beans",
+      "pork",
+      "chicken",
+      "cooking_oil",
+      "powdered_milk",
     ]),
     incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]),
     pricingBasis: z.enum([
@@ -106,7 +121,16 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
       "mixed",
     ]),
     volumeUsg: z.number().positive(),
-    densityKgL: z.number().positive().max(2),
+    /** Unit the `volumeUsg` field is denominated in. Food defaults to MT. */
+    volumeUnit: z
+      .enum(["usg", "mt", "kg", "lbs", "containers"])
+      .default("usg"),
+    /** Required for fuel; optional for food (no density concept). */
+    densityKgL: z.number().positive().max(2).optional(),
+    /** Food-only: weeks between PO and shipment-ready. */
+    productionLeadTimeWeeks: z.number().int().min(0).max(52).optional(),
+    /** Food-only: reefer / cold-chain flag (pork, chicken, dairy). */
+    coldChainRequired: z.boolean().optional(),
     buyerOrgId: zUlid,
     destinationPort: z.string().optional(),
     laycanStart: z.string().optional(),
@@ -292,6 +316,10 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
       "contract_signed",
       "prepayment_received",
       "product_purchased",
+      // Sprint V (food line of business)
+      "production_started",
+      "fumigation_complete",
+      "inspection_passed",
       "cargo_loaded",
       "vessel_departed",
       "bl_issued",
