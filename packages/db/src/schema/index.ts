@@ -7,6 +7,7 @@ export * from "./leads.js";
 export * from "./campaigns.js";
 export * from "./campaign-steps.js";
 export * from "./campaign-enrollments.js";
+export * from "./follow-ups.js";
 export * from "./touchpoints.js";
 export * from "./threads.js";
 export * from "./messages.js";

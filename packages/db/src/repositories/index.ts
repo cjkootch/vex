@@ -56,3 +56,7 @@ export {
   type FuelDealScenarioCreate,
   type FuelMarketRateInsert,
 } from "./deals.js";
+export {
+  FollowUpRepository,
+  type FollowUpCreate,
+} from "./follow-up-repository.js";

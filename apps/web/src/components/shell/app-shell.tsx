@@ -87,6 +87,13 @@ const NAV_ITEMS: NavItem[] = [
     iconPath: "M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
   },
   {
+    href: "/app/follow-ups",
+    label: "Follow-ups",
+    matchKey: "/app/follow-ups",
+    iconPath:
+      "M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+  },
+  {
     // Sprint-13 admin console. Non-owners get a 403-style denied page
     // rendered server-side, so exposing the link unconditionally is
     // safe and avoids coupling the shell to role state.

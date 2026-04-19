@@ -12,6 +12,7 @@ import { campaignEnrollments } from "../schema/campaign-enrollments.js";
 import { campaignSteps } from "../schema/campaign-steps.js";
 import { contacts } from "../schema/contacts.js";
 import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
+import { followUps } from "../schema/follow-ups.js";
 import { embeddingChunks } from "../schema/embedding-chunks.js";
 import { fuelDeals } from "../schema/fuel-deals.js";
 import { fuelDealScenarios } from "../schema/fuel-deal-scenarios.js";
@@ -234,10 +235,16 @@ export class RetrievalService {
     // with concrete enrollment ids.
     const enrollmentItems = await this.fetchActiveEnrollments(tx);
 
+    // Sprint P — hydrate open follow-ups so the agent can reference
+    // "you already have a reminder scheduled for Acme" instead of
+    // proposing a duplicate.
+    const followUpItems = await this.fetchOpenFollowUps(tx);
+
     const allItems = [
       ...(items.length > 0 ? items : fallbackItems),
       ...orgContactItems,
       ...enrollmentItems,
+      ...followUpItems,
     ];
 
     const cap = options.tokenCap ?? DEFAULT_TOKEN_CAP;
@@ -360,6 +367,53 @@ export class RetrievalService {
         ? Math.max(0, (Date.now() - r.lastEventAt.getTime()) / (1000 * 60 * 60))
         : 0,
       confidence_score: 0.8,
+      corroborated_by_count: 0,
+      permission_scope: "workspace",
+      raw_event_ref: null,
+      summary_version: null,
+    }) satisfies EvidenceItem);
+  }
+
+  /**
+   * Sprint P — open follow-ups (pending reminders + assigned tasks),
+   * surfaced so the agent doesn't propose duplicates and can
+   * reference existing ones by id.
+   */
+  private async fetchOpenFollowUps(tx: Tx): Promise<EvidenceItem[]> {
+    const rows = await tx
+      .select({
+        id: followUps.id,
+        title: followUps.title,
+        dueAt: followUps.dueAt,
+        subjectType: followUps.subjectType,
+        subjectId: followUps.subjectId,
+        assignedTo: followUps.assignedTo,
+      })
+      .from(followUps)
+      .where(eq(followUps.status, "open"))
+      .orderBy(followUps.dueAt)
+      .limit(30);
+    if (rows.length === 0) return [];
+    return rows.map((r) => ({
+      chunk_id: `follow_up:${r.id}`,
+      object_type: "follow_up",
+      object_id: r.id,
+      chunk_text: [
+        `Follow-up ${r.id}`,
+        `  Title: ${r.title}`,
+        `  Due: ${r.dueAt.toISOString()}`,
+        r.subjectType && r.subjectId
+          ? `  Subject: ${r.subjectType} ${r.subjectId}`
+          : null,
+        r.assignedTo ? `  Assigned: ${r.assignedTo}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+      source_ref: `follow_up ${r.id}`,
+      source_type: "hydration",
+      occurred_at: r.dueAt,
+      freshness_hours: 0,
+      confidence_score: 0.9,
       corroborated_by_count: 0,
       permission_scope: "workspace",
       raw_event_ref: null,

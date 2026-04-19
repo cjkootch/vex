@@ -239,6 +239,29 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     tag: z.string().min(1).max(64),
     rationale: z.string().max(500).optional(),
   }),
+  // Sprint P — schedule a deferred follow-up. Backs "remind me
+  // about Acme next Thursday" AND "assign this to Jane" (via
+  // assignedTo). Executor inserts a follow_ups row; the
+  // /app/follow-ups UI + optional cron surface them when due.
+  z.object({
+    kind: z.literal("follow_up.schedule"),
+    tier: z.literal(ApprovalTier.T1),
+    title: z.string().min(1).max(200),
+    note: z.string().max(2000).optional(),
+    /** ISO-8601 UTC timestamp when the follow-up is due. */
+    dueAt: z
+      .string()
+      .regex(
+        /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z$/,
+        "dueAt must be ISO-8601 UTC (e.g. 2026-04-25T15:00:00Z)",
+      ),
+    subjectType: z
+      .enum(["organization", "contact", "deal", "enrollment", "campaign"])
+      .optional(),
+    subjectId: zUlid.optional(),
+    assignedTo: z.string().max(200).optional(),
+    rationale: z.string().max(500).optional(),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;

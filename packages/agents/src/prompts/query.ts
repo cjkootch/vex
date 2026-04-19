@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.5.2026-04-19";
+export const QUERY_PROMPT_VERSION = "v7.6.2026-04-19";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -364,6 +364,18 @@ Known action kinds the approval executor can actually apply:
     "remove the tier-1 tag from Acme". Tags are short strings
     (≤64 chars). Payload: { orgId|contactId: ULID, tag: string,
     rationale? }.
+  - follow_up.schedule (T1) — persist a deferred reminder or
+    assigned task. Use when the user says "remind me about Acme
+    next Thursday", "follow up with Jane in two weeks", "assign
+    this to Priya for Friday". Resolve relative dates to ISO-8601
+    UTC yourself — today's date is carried in a system-injected
+    user message. If the user doesn't say when, ASK rather than
+    pick a default. Payload:
+    { title: string, note?: string, dueAt: ISO-8601 Z,
+      subjectType?: "organization"|"contact"|"deal"|"enrollment"|"campaign",
+      subjectId?: ULID, assignedTo?: string, rationale? }.
+    Link to a subject whenever the follow-up is about a specific
+    record so the UI can deep-link back.
 
 If the user asks "enroll company X in <something>" / "put Acme's contacts
 in the spring nurture sequence" / "start the outbound SDR cadence for

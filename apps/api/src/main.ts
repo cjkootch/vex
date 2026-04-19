@@ -21,6 +21,7 @@ import {
   RawEventRepository,
   RetrievalService,
   SummaryRepository,
+  FollowUpRepository,
   TouchpointRepository,
   WorkspaceRepository,
   createDb,
@@ -48,6 +49,7 @@ import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
 import { AdminModule } from "./admin/admin.module.js";
 import { BriefModule } from "./brief/brief.module.js";
 import { CommunicationsModule } from "./communications/communications.module.js";
+import { FollowUpsModule } from "./follow-ups/follow-ups.module.js";
 import { CallsModule } from "./calls/calls.module.js";
 import { CallsService } from "./calls/calls.service.js";
 import { VoiceStreamServer } from "./calls/voice-stream-server.js";
@@ -93,6 +95,7 @@ async function bootstrap(): Promise<void> {
   const contactRepository = new ContactRepository();
   const summaryRepository = new SummaryRepository();
   const touchpointRepository = new TouchpointRepository();
+  const followUpRepository = new FollowUpRepository();
   const workspaceRepository = new WorkspaceRepository();
   const fuelDealRepository = new FuelDealRepository();
   const campaignRepository = new CampaignRepository();
@@ -210,6 +213,10 @@ async function bootstrap(): Promise<void> {
         db,
         touchpoints: touchpointRepository,
         activities: activityRepository,
+      }),
+      followUps: FollowUpsModule.register({
+        db,
+        followUps: followUpRepository,
       }),
       contacts: ContactsModule.register({
         db,
