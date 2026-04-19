@@ -75,6 +75,7 @@ export function makeFakeDb(): Db {
 export interface BuildTestAppOptions {
   resendSecret: string;
   twilioAuthToken: string;
+  websiteChatSecret?: string;
   rawEventRepo?: FakeRawEventRepo;
   queue?: FakeQueue;
   db?: Db;
@@ -108,6 +109,8 @@ export async function buildTestApp(
         normalizationQueue: queue as unknown as Queue<NormalizationJobData>,
         resendSecret: options.resendSecret,
         twilioAuthToken: options.twilioAuthToken,
+        websiteChatSecret:
+          options.websiteChatSecret ?? TEST_WEBSITE_CHAT_SECRET,
         resolveTenant: options.resolveTenant ?? (() => "01HSEEDWRK0000000000000001"),
       }),
     }),
@@ -131,6 +134,8 @@ export const TEST_RESEND_SECRET =
   "whsec_" + Buffer.from("test-secret-bytes-1234567890abcdef").toString("base64");
 
 export const TEST_TWILIO_AUTH_TOKEN = "twilio-test-auth-token-do-not-use";
+
+export const TEST_WEBSITE_CHAT_SECRET = "website-chat-test-secret-do-not-use";
 
 export const TEST_NEXTAUTH_SECRET =
   "test-nextauth-secret-must-be-at-least-32-chars-long";

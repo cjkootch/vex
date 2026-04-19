@@ -170,6 +170,14 @@ export const EnvSchema = z.object({
    */
   RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
 
+  /**
+   * HMAC-SHA256 shared secret for the VTC marketing-site chat webhook.
+   * The website signs `${timestamp}.${rawBody}` with this secret and
+   * delivers the hex digest in `X-VTC-Signature` + unix seconds in
+   * `X-VTC-Timestamp`.
+   */
+  WEBSITE_CHAT_WEBHOOK_SECRET: z.string().min(1).optional(),
+
   // Temporal
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
   TEMPORAL_NAMESPACE: z.string().default("default"),
