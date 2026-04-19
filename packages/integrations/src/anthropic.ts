@@ -30,7 +30,33 @@ export interface QueryParams {
   userMessage: string;
   /** Default 2048. */
   maxTokens?: number;
+  /**
+   * Tools the model can invoke mid-turn (e.g. `research_contact`).
+   * When provided, the query runs a short tool-use loop: model may
+   * emit `tool_use` blocks; we execute them via `toolRunner`, feed
+   * the results back, and continue until the model returns a final
+   * text-only turn (or we hit `maxToolIterations`).
+   */
+  tools?: ToolDefinition[];
+  toolRunner?: ToolRunner;
+  /** Default 3. Safety cap against runaway tool loops. */
+  maxToolIterations?: number;
 }
+
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  input_schema: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+}
+
+export type ToolRunner = (
+  name: string,
+  input: Record<string, unknown>,
+) => Promise<unknown>;
 
 /** Proposed action surfaced by the model alongside the answer. */
 export interface ProposedAction {
@@ -88,20 +114,74 @@ export class AnthropicAdapter {
       { type: "text", text: params.userMessage },
     ] as unknown as Anthropic.Messages.TextBlockParam[];
 
-    const response = await this.client.messages.create({
-      model: this.model,
-      max_tokens: params.maxTokens ?? 2048,
-      system: systemBlocks,
-      messages: [{ role: "user", content: userContent }],
-    });
+    const messages: Anthropic.Messages.MessageParam[] = [
+      { role: "user", content: userContent },
+    ];
+    const maxIter = Math.max(1, params.maxToolIterations ?? 3);
+    let tokensIn = 0;
+    let tokensOut = 0;
+    let cacheReadTokens = 0;
+    let cacheCreateTokens = 0;
+    let finalContent: Anthropic.Messages.ContentBlock[] = [];
+    for (let iter = 0; iter < maxIter; iter += 1) {
+      const response = await this.client.messages.create({
+        model: this.model,
+        max_tokens: params.maxTokens ?? 2048,
+        system: systemBlocks,
+        messages,
+        ...(params.tools && params.tools.length > 0
+          ? { tools: params.tools as unknown as Anthropic.Messages.Tool[] }
+          : {}),
+      });
 
-    const usage = response.usage;
-    const tokensIn = usage.input_tokens;
-    const tokensOut = usage.output_tokens;
-    const cacheReadTokens =
-      (usage as { cache_read_input_tokens?: number }).cache_read_input_tokens ?? 0;
-    const cacheCreateTokens =
-      (usage as { cache_creation_input_tokens?: number }).cache_creation_input_tokens ?? 0;
+      const usage = response.usage;
+      tokensIn += usage.input_tokens;
+      tokensOut += usage.output_tokens;
+      cacheReadTokens +=
+        (usage as { cache_read_input_tokens?: number })
+          .cache_read_input_tokens ?? 0;
+      cacheCreateTokens +=
+        (usage as { cache_creation_input_tokens?: number })
+          .cache_creation_input_tokens ?? 0;
+
+      finalContent = response.content;
+      const toolUses = response.content.filter(
+        (b): b is Anthropic.Messages.ToolUseBlock => b.type === "tool_use",
+      );
+      if (
+        response.stop_reason !== "tool_use" ||
+        toolUses.length === 0 ||
+        !params.toolRunner
+      ) {
+        break;
+      }
+
+      // Append the model's tool-use turn + run each tool, then add
+      // all tool_result blocks as a single user message so the model
+      // can synthesise a final answer grounded in the outputs.
+      messages.push({ role: "assistant", content: response.content });
+      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
+      for (const use of toolUses) {
+        try {
+          const input = (use.input ?? {}) as Record<string, unknown>;
+          const out = await params.toolRunner(use.name, input);
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            content:
+              typeof out === "string" ? out : JSON.stringify(out, null, 2),
+          });
+        } catch (err) {
+          toolResults.push({
+            type: "tool_result",
+            tool_use_id: use.id,
+            is_error: true,
+            content: `tool ${use.name} failed: ${(err as Error).message}`,
+          });
+        }
+      }
+      messages.push({ role: "user", content: toolResults });
+    }
 
     const inputCostMicros = tokensToUsdMicros(
       tokensIn,
@@ -136,7 +216,7 @@ export class AnthropicAdapter {
       costUsdMicros: outputCostMicros,
     } satisfies CostEntry);
 
-    const fullText = response.content
+    const fullText = finalContent
       .map((block) => (block.type === "text" ? block.text : ""))
       .join("\n")
       .trim();

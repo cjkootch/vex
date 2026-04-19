@@ -2,3 +2,4 @@ export const DB_CLIENT = Symbol("QUERY_DB_CLIENT");
 export const RETRIEVAL_SERVICE = Symbol("QUERY_RETRIEVAL_SERVICE");
 export const ANTHROPIC_ADAPTER = Symbol("QUERY_ANTHROPIC_ADAPTER");
 export const OPENAI_ADAPTER = Symbol("QUERY_OPENAI_ADAPTER");
+export const TAVILY_CLIENT = Symbol("QUERY_TAVILY_CLIENT");

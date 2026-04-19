@@ -40,6 +40,7 @@ import {
   TEMPORAL_TASK_QUEUE,
   createTemporalClient,
   createResendClient,
+  createTavilyClient,
   createTwilioClient,
 } from "@vex/integrations";
 import { initOtel, InMemoryCostLedger, shutdownOtel } from "@vex/telemetry";
@@ -150,6 +151,14 @@ async function bootstrap(): Promise<void> {
       })
     : null;
 
+  // Tavily — web search for the chat agent's research_contact tool.
+  // Null when TAVILY_API_KEY isn't configured; QueryService skips
+  // registering the tool so the agent tells the user research is
+  // unavailable rather than fabricating details.
+  const tavily = env.TAVILY_API_KEY
+    ? createTavilyClient({ apiKey: env.TAVILY_API_KEY })
+    : null;
+
   const voiceSessionStore = new VoiceSessionStore(redis);
   const voiceContextBuilder = new VoiceContextBuilder({
     organizations: organizationRepository,
@@ -197,7 +206,7 @@ async function bootstrap(): Promise<void> {
         twilioAuthToken: env.TWILIO_AUTH_TOKEN,
         resolveTenant: () => "01HSEEDWRK0000000000000001",
       }),
-      query: QueryModule.register({ db, retrieval, openai, anthropic }),
+      query: QueryModule.register({ db, retrieval, openai, anthropic, tavily }),
       approvals: ApprovalsModule.register({
         db,
         approvals: approvalRepository,
