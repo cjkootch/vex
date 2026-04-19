@@ -37,6 +37,17 @@ export interface DataTableProps<T> {
   pageSize?: number;
   /** Called when a row is clicked (keyboard Enter also triggers). */
   onRowClick?: (row: T) => void;
+  /**
+   * Optional row-selection state, lifted to the parent so it can
+   * render bulk-action UI (export selected, bulk tag, etc.). When
+   * provided, the table renders a checkbox column as the first
+   * column with a header "select-all" that toggles every row that
+   * passes the current filter.
+   */
+  selectedIds?: Set<string>;
+  onSelectionChange?: (next: Set<string>) => void;
+  /** Extract the stable row id used as the selection key. Required when selection is enabled. */
+  getRowId?: (row: T) => string;
 }
 
 export function DataTable<T>({
@@ -47,11 +58,26 @@ export function DataTable<T>({
   emptyState,
   pageSize = 25,
   onRowClick,
+  selectedIds,
+  onSelectionChange,
+  getRowId,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState(initialFilter);
 
-  const memoColumns = useMemo(() => columns, [columns]);
+  const selectable = selectedIds !== undefined && onSelectionChange !== undefined && getRowId !== undefined;
+
+  const memoColumns = useMemo(() => {
+    if (!selectable) return columns;
+    const checkboxColumn: ColumnDef<T, unknown> = {
+      id: "__selection",
+      header: () => null, // rendered manually so it can reference visible rows
+      cell: () => null, // rendered manually per-row
+      enableSorting: false,
+      size: 36,
+    };
+    return [checkboxColumn, ...columns];
+  }, [columns, selectable]);
   const memoData = useMemo(() => data as T[], [data]);
 
   const table = useReactTable({
@@ -71,6 +97,40 @@ export function DataTable<T>({
   const page = table.getState().pagination.pageIndex + 1;
   const pageCount = table.getPageCount() || 1;
   const filteredCount = table.getFilteredRowModel().rows.length;
+
+  // Derive select-all state across every filtered row (not just the
+  // current page — users expect "select all" to honour the filter).
+  const filteredRows = table.getFilteredRowModel().rows;
+  const filteredIds = selectable
+    ? filteredRows.map((r) => getRowId!(r.original))
+    : [];
+  const selectedOnPage =
+    selectable && selectedIds
+      ? filteredIds.filter((id) => selectedIds.has(id)).length
+      : 0;
+  const allSelected =
+    selectable && filteredIds.length > 0 && selectedOnPage === filteredIds.length;
+  const someSelected =
+    selectable && selectedOnPage > 0 && !allSelected;
+
+  function toggleAll(next: boolean): void {
+    if (!selectable || !selectedIds || !onSelectionChange) return;
+    const copy = new Set(selectedIds);
+    if (next) {
+      for (const id of filteredIds) copy.add(id);
+    } else {
+      for (const id of filteredIds) copy.delete(id);
+    }
+    onSelectionChange(copy);
+  }
+
+  function toggleOne(id: string, next: boolean): void {
+    if (!selectable || !selectedIds || !onSelectionChange) return;
+    const copy = new Set(selectedIds);
+    if (next) copy.add(id);
+    else copy.delete(id);
+    onSelectionChange(copy);
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -93,6 +153,23 @@ export function DataTable<T>({
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
+                  if (header.column.id === "__selection") {
+                    return (
+                      <th key={header.id} className="px-3 py-2 w-9">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all filtered rows"
+                          checked={allSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someSelected;
+                          }}
+                          onChange={(e) => toggleAll(e.target.checked)}
+                          onClick={(e) => e.stopPropagation()}
+                          className="h-4 w-4 rounded border-line bg-canvas accent-accent"
+                        />
+                      </th>
+                    );
+                  }
                   const canSort = header.column.getCanSort();
                   const sort = header.column.getIsSorted();
                   return (
@@ -140,11 +217,29 @@ export function DataTable<T>({
                     onRowClick ? "cursor-pointer" : ""
                   }`}
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-3 py-2 align-middle text-white/90">
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
+                  {row.getVisibleCells().map((cell) => {
+                    if (cell.column.id === "__selection") {
+                      const id = getRowId!(row.original);
+                      const checked = selectedIds?.has(id) ?? false;
+                      return (
+                        <td key={cell.id} className="px-3 py-2 w-9 align-middle">
+                          <input
+                            type="checkbox"
+                            aria-label={`Select row ${id}`}
+                            checked={checked}
+                            onChange={(e) => toggleOne(id, e.target.checked)}
+                            onClick={(e) => e.stopPropagation()}
+                            className="h-4 w-4 rounded border-line bg-canvas accent-accent"
+                          />
+                        </td>
+                      );
+                    }
+                    return (
+                      <td key={cell.id} className="px-3 py-2 align-middle text-white/90">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))
             )}

@@ -52,6 +52,7 @@ export default function DealsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [creating, setCreating] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +209,10 @@ export default function DealsPage() {
             disabled={!deals || deals.length === 0}
             onClick={() => {
               if (!deals) return;
+              const target =
+                selectedIds.size > 0
+                  ? deals.filter((d) => selectedIds.has(d.id))
+                  : deals;
               const csv = toCsv(
                 [
                   "deal_ref",
@@ -223,7 +228,7 @@ export default function DealsPage() {
                   "created_at",
                   "updated_at",
                 ],
-                deals.map((d) => [
+                target.map((d) => [
                   d.dealRef,
                   d.status,
                   d.product,
@@ -245,7 +250,7 @@ export default function DealsPage() {
             }}
             className="inline-flex h-9 items-center rounded-md border border-line bg-muted/40 px-3 text-sm text-white/80 hover:bg-muted/60 disabled:opacity-40"
           >
-            CSV
+            {selectedIds.size > 0 ? `CSV (${selectedIds.size})` : "CSV"}
           </button>
           <Link
             href="/app/chat?ask=Show%20me%20all%20deals%20with%20compliance%20holds"
@@ -302,6 +307,10 @@ export default function DealsPage() {
           ))}
         </div>
       </div>
+      <SavedViews
+        currentStatus={statusFilter}
+        onApply={(v) => setStatusFilter(v)}
+      />
 
       {error && (
         <div className="rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
@@ -338,11 +347,29 @@ export default function DealsPage() {
           </div>
           {/* Desktop: full table with sortable columns + inline actions. */}
           <div className="hidden md:block">
+            {selectedIds.size > 0 && (
+              <div className="mb-2 flex items-center justify-between rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
+                <span className="text-white">
+                  <span className="font-mono">{selectedIds.size}</span> deal
+                  {selectedIds.size === 1 ? "" : "s"} selected
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-xs text-white/60 hover:text-white"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
             <DataTable
               data={deals}
               columns={columns}
               filterPlaceholder="Filter by ref, buyer, product…"
               emptyState="No deals match the current filter. Try clearing status or adjusting search."
+              selectedIds={selectedIds}
+              onSelectionChange={setSelectedIds}
+              getRowId={(d) => d.id}
             />
           </div>
         </>
@@ -462,4 +489,111 @@ function short(iso: string): string {
   const idx = Number.parseInt(mm ?? "1", 10) - 1;
   const day = Number.parseInt(dd ?? "1", 10);
   return `${months[idx] ?? mm} ${day}`;
+}
+
+interface SavedView {
+  name: string;
+  statusFilter: string;
+}
+
+const VIEWS_KEY = "vex.deals.views";
+
+function SavedViews({
+  currentStatus,
+  onApply,
+}: {
+  currentStatus: string;
+  onApply: (status: string) => void;
+}) {
+  const [views, setViews] = useState<SavedView[]>([]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(VIEWS_KEY);
+      if (raw) setViews(JSON.parse(raw) as SavedView[]);
+    } catch {
+      /* ignore parse errors — stale state stays empty */
+    }
+  }, []);
+
+  function persist(next: SavedView[]): void {
+    setViews(next);
+    try {
+      window.localStorage.setItem(VIEWS_KEY, JSON.stringify(next));
+    } catch {
+      /* quota exceeded or disabled — view is still in memory for the session */
+    }
+  }
+
+  function saveCurrent(): void {
+    const name = window.prompt(
+      "Name this view (e.g. \"open jet fuel\", \"my Trinidad deals\")",
+    );
+    if (!name || !name.trim()) return;
+    const next = [
+      ...views.filter((v) => v.name !== name),
+      { name: name.trim(), statusFilter: currentStatus },
+    ];
+    persist(next);
+  }
+
+  function removeView(name: string): void {
+    persist(views.filter((v) => v.name !== name));
+  }
+
+  if (views.length === 0) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-white/40">
+        <span>No saved views yet.</span>
+        <button
+          type="button"
+          onClick={saveCurrent}
+          className="rounded-md border border-line bg-muted/40 px-2 py-1 text-white/70 hover:text-white"
+        >
+          Save current filter
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[11px] uppercase tracking-wide text-white/40">
+        Views
+      </span>
+      {views.map((v) => (
+        <div
+          key={v.name}
+          className="group inline-flex items-center overflow-hidden rounded-md border border-line bg-muted/40 text-xs"
+        >
+          <button
+            type="button"
+            onClick={() => onApply(v.statusFilter)}
+            className={`px-2 py-1 hover:bg-muted/60 ${
+              currentStatus === v.statusFilter
+                ? "text-accent"
+                : "text-white/80"
+            }`}
+          >
+            {v.name}
+          </button>
+          <button
+            type="button"
+            onClick={() => removeView(v.name)}
+            aria-label={`Delete view ${v.name}`}
+            className="border-l border-line/60 px-1.5 py-1 text-white/40 hover:text-bad"
+          >
+            ×
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={saveCurrent}
+        className="rounded-md border border-line/60 bg-muted/20 px-2 py-1 text-xs text-white/60 hover:bg-muted/40"
+      >
+        + Save current
+      </button>
+    </div>
+  );
 }
