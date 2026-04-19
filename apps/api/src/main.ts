@@ -16,6 +16,7 @@ import {
   ContactOrgMembershipRepository,
   ContactRepository,
   DocumentRepository,
+  SignalRepository,
   EventRepository,
   FuelDealRepository,
   OrganizationRepository,
@@ -52,6 +53,7 @@ import { BriefModule } from "./brief/brief.module.js";
 import { CommunicationsModule } from "./communications/communications.module.js";
 import { FollowUpsModule } from "./follow-ups/follow-ups.module.js";
 import { DocumentsModule } from "./documents/documents.module.js";
+import { SignalsModule } from "./signals/signals.module.js";
 import { CallsModule } from "./calls/calls.module.js";
 import { CallsService } from "./calls/calls.service.js";
 import { VoiceStreamServer } from "./calls/voice-stream-server.js";
@@ -99,6 +101,7 @@ async function bootstrap(): Promise<void> {
   const touchpointRepository = new TouchpointRepository();
   const followUpRepository = new FollowUpRepository();
   const documentRepository = new DocumentRepository();
+  const signalRepository = new SignalRepository();
   const workspaceRepository = new WorkspaceRepository();
   const fuelDealRepository = new FuelDealRepository();
   const campaignRepository = new CampaignRepository();
@@ -225,6 +228,10 @@ async function bootstrap(): Promise<void> {
         db,
         documents: documentRepository,
         s3,
+      }),
+      signals: SignalsModule.register({
+        db,
+        signals: signalRepository,
       }),
       contacts: ContactsModule.register({
         db,
