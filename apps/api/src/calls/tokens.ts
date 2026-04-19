@@ -35,3 +35,9 @@ export const CALLS_VOICE_LISTENER_CONFIG = Symbol("CALLS_VOICE_LISTENER_CONFIG")
  * the demo endpoint 503s in that case.
  */
 export const CALLS_APP_BASE_URL = Symbol("CALLS_APP_BASE_URL");
+
+/**
+ * Resend client for demo email sends. Null when RESEND_API_KEY isn't
+ * set — the demo-email endpoint returns 503 in that case.
+ */
+export const CALLS_RESEND_CLIENT = Symbol("CALLS_RESEND_CLIENT");

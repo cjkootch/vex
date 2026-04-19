@@ -36,6 +36,7 @@ import {
   S3Uploader,
   TEMPORAL_TASK_QUEUE,
   createTemporalClient,
+  createResendClient,
   createTwilioClient,
 } from "@vex/integrations";
 import { initOtel, InMemoryCostLedger, shutdownOtel } from "@vex/telemetry";
@@ -130,6 +131,15 @@ async function bootstrap(): Promise<void> {
     secretAccessKey: env.S3_SECRET_ACCESS_KEY,
     ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
   });
+
+  // Resend — demo email sends. Null when the API key isn't set so the
+  // /calls/demo-email endpoint 503s cleanly.
+  const resend = env.RESEND_API_KEY
+    ? createResendClient({
+        apiKey: env.RESEND_API_KEY,
+        defaultFrom: env.RESEND_DEFAULT_FROM,
+      })
+    : null;
 
   const voiceSessionStore = new VoiceSessionStore(redis);
   const voiceContextBuilder = new VoiceContextBuilder({
@@ -271,6 +281,7 @@ async function bootstrap(): Promise<void> {
                   : "",
               },
               appBaseUrl: env.APP_BASE_URL ?? "",
+              resend,
               taskQueue: TEMPORAL_TASK_QUEUE,
             }),
           }

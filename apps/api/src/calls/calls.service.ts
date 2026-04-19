@@ -26,7 +26,7 @@ import {
   type S3Uploader,
   type TwilioClient,
 } from "@vex/integrations";
-import type { VoiceSdkConfig } from "./calls.module.js";
+import type { ResendClient, VoiceSdkConfig } from "./calls.module.js";
 import {
   CALLS_ACTIVITIES_REPO,
   CALLS_AGENT_RUNS_REPO,
@@ -35,6 +35,7 @@ import {
   CALLS_CONTACTS_REPO,
   CALLS_DB_CLIENT,
   CALLS_EVENTS_REPO,
+  CALLS_RESEND_CLIENT,
   CALLS_S3_UPLOADER,
   CALLS_SUMMARIES_REPO,
   CALLS_TASK_QUEUE,
@@ -128,6 +129,8 @@ export class CallsService {
     @Inject(CALLS_APP_BASE_URL) private readonly appBaseUrl: string,
     @Inject(CALLS_TOUCHPOINTS_REPO)
     private readonly touchpoints: TouchpointRepository,
+    @Inject(CALLS_RESEND_CLIENT)
+    private readonly resend: ResendClient | null,
   ) {}
 
   /**
@@ -415,6 +418,61 @@ export class CallsService {
       status: msg.status ?? "queued",
       touchpointId: touchpoint.id,
     };
+  }
+
+  /**
+   * Admin-only test path for email sends via Resend. Same shape as
+   * sendDemoMessage — lands as an `email.sent` touchpoint so the
+   * inbox surfaces it.
+   */
+  async sendDemoEmail(args: {
+    tenantId: string;
+    userId: string;
+    toAddress: string;
+    subject: string;
+    body: string;
+  }): Promise<{ messageId: string; touchpointId: string }> {
+    if (!this.resend) {
+      throw new ServiceUnavailableException(
+        "demo_email_unconfigured: RESEND_API_KEY must be set",
+      );
+    }
+    const sendResult = await this.resend.send({
+      to: args.toAddress,
+      subject: args.subject,
+      text: args.body,
+    });
+    const messageId =
+      (sendResult.data && typeof sendResult.data.id === "string"
+        ? sendResult.data.id
+        : null) ?? "unknown";
+    if (sendResult.error) {
+      throw new BadRequestException(
+        `resend_error: ${sendResult.error.name}: ${sendResult.error.message}`,
+      );
+    }
+
+    const touchpoint = await withTenant(this.db, args.tenantId, async (tx) => {
+      return this.touchpoints.insert(tx, args.tenantId, {
+        channel: "email.sent",
+        actor: `demo.${args.userId}`,
+        occurredAt: new Date(),
+        metadata: {
+          demo_message: true,
+          direction: "outbound",
+          provider_message_id: messageId,
+          to: args.toAddress,
+          subject: args.subject,
+          preview: args.subject,
+          text: args.body,
+        },
+      });
+    });
+
+    this.log.log(
+      `demo email sent: id=${messageId} to=${args.toAddress} touchpoint=${touchpoint.id}`,
+    );
+    return { messageId, touchpointId: touchpoint.id };
   }
 
   async requestHumanBackup(args: {
