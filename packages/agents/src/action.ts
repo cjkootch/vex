@@ -192,6 +192,13 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     toNumber: z
       .string()
       .regex(/^\+[1-9]\d{7,14}$/, "toNumber must be E.164 (e.g. +18324927169)"),
+    /**
+     * When true, the workflow opens the AI talkback Media Stream
+     * instead of a conference bridge — Vex holds the conversation
+     * directly via OpenAI Realtime. Default false keeps the
+     * operator-join conference path for backwards-compatibility.
+     */
+    aiMode: z.boolean().optional(),
     rationale: z.string().min(1).max(1000),
   }),
   // Sprint O — steer an in-flight CampaignEnrollmentWorkflow without

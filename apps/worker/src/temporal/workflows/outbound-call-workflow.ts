@@ -70,6 +70,13 @@ export interface OutboundCallWorkflowInput {
   toNumber: string;
   agentRunId: string;
   initiatedByUserId: string;
+  /**
+   * Sprint L2 — when true, Twilio fetches the AI-talkback TwiML variant
+   * (Pause + Connect + Stream) instead of the conference bridge, and
+   * Vex holds the conversation directly. Default false preserves the
+   * existing operator-join conference flow.
+   */
+  aiMode?: boolean;
 }
 
 export type OutboundCallOutcome =
@@ -250,6 +257,7 @@ export async function outboundCallWorkflow(
     agentRunId: input.agentRunId,
     toNumber: input.toNumber,
     approvalId,
+    ...(input.aiMode ? { aiMode: true } : {}),
   });
 
   // --- Wait for a terminal call status ------------------------------------
