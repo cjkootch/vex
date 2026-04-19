@@ -37,6 +37,7 @@ import {
   OrganizationRepository,
   PostgresCostLedgerRepository,
   RawEventRepository,
+  FollowUpRepository,
   RetrievalService,
   SummaryRepository,
   ThreadRepository,
@@ -219,6 +220,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       campaignSteps: repos.campaignSteps,
       campaignEnrollments: repos.campaignEnrollments,
       touchpoints: repos.touchpoints,
+      followUps: repos.followUps,
       events: repos.events,
       temporal: options.temporal ?? null,
       twilio: twilioForExecutor,
@@ -337,6 +339,7 @@ export interface ApprovalExecutorDeps {
   campaignSteps: CampaignStepRepository;
   campaignEnrollments: CampaignEnrollmentRepository;
   touchpoints: TouchpointRepository;
+  followUps: FollowUpRepository;
   events: EventRepository;
   /**
    * Best-effort Temporal client for the `campaign.enroll_batch`
@@ -431,6 +434,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           approval.actionType === "contact.untag"
         ) {
           await applyTagChange(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "follow_up.schedule") {
+          await applyFollowUpSchedule(tx, deps, workspace_id, approval);
           return;
         }
       }
@@ -902,6 +909,82 @@ async function applyTagChange(
     occurredAt: new Date(),
     idempotencyKey: `approval.executor:${approval.id}`,
     metadata: { action_type: approval.actionType, tag },
+  });
+}
+
+/**
+ * Sprint P — insert a follow_ups row from an approved
+ * `follow_up.schedule` approval. The /app/follow-ups UI surfaces
+ * pending rows sorted by due_at; a future cron will fire
+ * notifications as things come due.
+ */
+async function applyFollowUpSchedule(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        title?: string;
+        note?: string;
+        dueAt?: string;
+        subjectType?: string;
+        subjectId?: string;
+        assignedTo?: string;
+      }
+    | null;
+  const title = payload?.title;
+  const dueAtRaw = payload?.dueAt;
+  if (!title || !dueAtRaw) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "follow_up.schedule",
+      "missing title / dueAt",
+    );
+    return;
+  }
+  const dueAt = new Date(dueAtRaw);
+  if (Number.isNaN(dueAt.getTime())) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "follow_up.schedule",
+      "dueAt is not a valid date",
+    );
+    return;
+  }
+
+  const row = await deps.followUps.insert(tx, tenantId, {
+    title,
+    note: payload?.note ?? null,
+    dueAt,
+    subjectType: payload?.subjectType ?? null,
+    subjectId: payload?.subjectId ?? null,
+    assignedTo: payload?.assignedTo ?? null,
+    createdBy: approval.reviewerId ?? "chat_agent",
+  });
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType: "follow_up",
+    subjectId: row.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "follow_up.schedule",
+      follow_up_id: row.id,
+      due_at: dueAt.toISOString(),
+    },
   });
 }
 
@@ -1507,6 +1590,7 @@ function buildRepos() {
     rawEvents: new RawEventRepository(),
     contacts: new ContactRepository(),
     touchpoints: new TouchpointRepository(),
+    followUps: new FollowUpRepository(),
     activities: new ActivityRepository(),
     events: new EventRepository(),
     workspaces: new WorkspaceRepository(),
