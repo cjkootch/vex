@@ -386,6 +386,13 @@ export function renderEvidencePack(pack: EvidencePack): string {
         `- Product ${row.product}: ${row.deal_count} deal(s), ${Math.round(row.total_volume_usg).toLocaleString()} USG, avg margin ${margin}`,
       );
     }
+    if (agg.pipeline.by_line_of_business.length > 0) {
+      for (const row of agg.pipeline.by_line_of_business) {
+        lines.push(
+          `- Line ${row.line_of_business}: ${row.deal_count} deal(s), ${Math.round(row.total_volume_usg).toLocaleString()} quantity`,
+        );
+      }
+    }
     if (agg.signals.open_total > 0) {
       lines.push(
         `- Open signals: ${agg.signals.open_total} (${agg.signals.by_severity.map((s) => `${s.severity}=${s.count}`).join(", ")})`,

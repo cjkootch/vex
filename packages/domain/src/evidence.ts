@@ -71,6 +71,16 @@ export interface EvidenceAggregates {
       total_volume_usg: number;
       avg_margin_pct: number | null;
     }>;
+    /**
+     * Sprint V — split pipeline totals by line of business so the
+     * chat agent can answer "how many fuel deals vs food deals",
+     * "what's my food pipeline value", etc. without re-summing.
+     */
+    by_line_of_business: Array<{
+      line_of_business: string;
+      deal_count: number;
+      total_volume_usg: number;
+    }>;
     totals: {
       open_deal_count: number;
       closed_won_deal_count: number;

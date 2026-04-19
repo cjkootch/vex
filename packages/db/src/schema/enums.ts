@@ -126,6 +126,13 @@ export const productTypeEnum = pgEnum("product_type", [
   ProductType.Lng,
   ProductType.Lpg,
   ProductType.BiodieselB20,
+  // Sprint V — food line of business
+  ProductType.Rice,
+  ProductType.Beans,
+  ProductType.Pork,
+  ProductType.Chicken,
+  ProductType.CookingOil,
+  ProductType.PowderedMilk,
 ]);
 
 export const incotermEnum = pgEnum("incoterm", [

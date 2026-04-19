@@ -652,6 +652,7 @@ export class RetrievalService {
         product: fuelDeals.product,
         volumeUsg: fuelDeals.volumeUsg,
         complianceHold: fuelDeals.complianceHold,
+        lineOfBusiness: fuelDeals.lineOfBusiness,
       })
       .from(fuelDeals);
 
@@ -706,6 +707,15 @@ export class RetrievalService {
       if (d.complianceHold) complianceHoldCount += 1;
     }
 
+    const lobBuckets = new Map<string, { count: number; volume: number }>();
+    for (const d of dealsForRevenue) {
+      const key = d.lineOfBusiness ?? "fuel";
+      const bucket = lobBuckets.get(key) ?? { count: 0, volume: 0 };
+      bucket.count += 1;
+      bucket.volume += d.volumeUsg;
+      lobBuckets.set(key, bucket);
+    }
+
     const pipeline: EvidenceAggregates["pipeline"] = {
       by_status: pipelineByStatus.map((r) => ({
         status: r.status,
@@ -721,6 +731,11 @@ export class RetrievalService {
           bucket.margins.length === 0
             ? null
             : bucket.margins.reduce((a, b) => a + b, 0) / bucket.margins.length,
+      })),
+      by_line_of_business: [...lobBuckets.entries()].map(([lob, bucket]) => ({
+        line_of_business: lob,
+        deal_count: bucket.count,
+        total_volume_usg: bucket.volume,
       })),
       totals: {
         open_deal_count: openDealCount,
