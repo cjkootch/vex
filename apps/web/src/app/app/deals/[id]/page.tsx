@@ -24,6 +24,10 @@ interface DealDetail {
   laycanEnd: string | null;
   complianceHold: boolean;
   ofacStatus: string;
+  lineOfBusiness?: string;
+  volumeUnit?: string;
+  productionLeadTimeWeeks?: number | null;
+  coldChainRequired?: boolean;
   paymentTerms: string;
   currency: string;
   originPort: string | null;
@@ -197,6 +201,8 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
 function OverviewTab({ deal }: { deal: DealDetail }) {
   return (
     <div className="flex flex-col gap-4">
+      <PulseCard deal={deal} />
+      <RelatedRecordsCard deal={deal} />
       <Card title="Terms">
         <Field label="Incoterm" value={deal.incoterm.toUpperCase()} />
         <Field label="Payment" value={humanize(deal.paymentTerms)} />
@@ -400,4 +406,259 @@ function scoreTone(
   if (rec === "marginal") return "warn";
   if (rec === "do_not_proceed") return "bad";
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// Pulse — compact at-a-glance strip above the Overview card stack. Four
+// metrics pulled from the already-loaded deal object (no extra API
+// calls): days to laycan, gross margin (when a scenario has landed),
+// compliance status, cold-chain flag or BIS flag depending on the LoB.
+// ---------------------------------------------------------------------------
+
+function PulseCard({ deal }: { deal: DealDetail }) {
+  const daysToLaycan = (() => {
+    if (!deal.laycanEnd) return null;
+    const end = new Date(deal.laycanEnd);
+    if (Number.isNaN(end.getTime())) return null;
+    const now = new Date();
+    const ms = end.getTime() - now.getTime();
+    return Math.round(ms / (24 * 60 * 60 * 1000));
+  })();
+
+  const margin = (() => {
+    const r = deal.latestScenario?.resultsJson as
+      | { totals?: { grossMarginPct?: number } }
+      | null
+      | undefined;
+    const pct = r?.totals?.grossMarginPct;
+    if (typeof pct !== "number") return null;
+    return pct;
+  })();
+
+  const complianceTone =
+    deal.complianceHold || deal.ofacStatus !== "cleared" ? "bad" : "good";
+  const complianceLabel = deal.complianceHold
+    ? "Hold"
+    : deal.ofacStatus === "cleared"
+      ? "Clear"
+      : deal.ofacStatus.replace(/_/g, " ");
+
+  const food = deal.lineOfBusiness === "food";
+  const tiles: Array<{
+    label: string;
+    value: string;
+    tone: "neutral" | "good" | "warn" | "bad";
+    hint?: string;
+  }> = [
+    {
+      label: "Days to laycan",
+      value: daysToLaycan === null ? "—" : String(daysToLaycan),
+      tone:
+        daysToLaycan === null
+          ? "neutral"
+          : daysToLaycan < 0
+            ? "bad"
+            : daysToLaycan < 5
+              ? "warn"
+              : "good",
+      hint: deal.laycanEnd
+        ? new Date(deal.laycanEnd).toISOString().slice(0, 10)
+        : "unset",
+    },
+    {
+      label: food ? "Production lead" : "Gross margin",
+      value: food
+        ? deal.productionLeadTimeWeeks !== null &&
+          deal.productionLeadTimeWeeks !== undefined
+          ? `${deal.productionLeadTimeWeeks}w`
+          : "—"
+        : margin === null
+          ? "—"
+          : `${(margin * 100).toFixed(1)}%`,
+      tone:
+        food
+          ? "neutral"
+          : margin === null
+            ? "neutral"
+            : margin < 0.02
+              ? "bad"
+              : margin < 0.05
+                ? "warn"
+                : "good",
+    },
+    {
+      label: "Compliance",
+      value: complianceLabel,
+      tone: complianceTone,
+    },
+    {
+      label: food ? "Cold chain" : "BIS",
+      value: food
+        ? deal.coldChainRequired
+          ? "Required"
+          : "No"
+        : deal.complianceHold
+          ? "Check"
+          : "Clear",
+      tone:
+        food && deal.coldChainRequired
+          ? "warn"
+          : food
+            ? "good"
+            : deal.complianceHold
+              ? "warn"
+              : "good",
+    },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+      {tiles.map((t) => (
+        <div
+          key={t.label}
+          className={`rounded-lg border p-3 ${
+            t.tone === "bad"
+              ? "border-bad/40 bg-bad/5"
+              : t.tone === "warn"
+                ? "border-warn/40 bg-warn/5"
+                : t.tone === "good"
+                  ? "border-good/30 bg-good/5"
+                  : "border-line bg-muted/20"
+          }`}
+        >
+          <div className="text-[10px] uppercase tracking-wide text-white/40">
+            {t.label}
+          </div>
+          <div
+            className={`mt-1 font-mono text-xl ${
+              t.tone === "bad"
+                ? "text-bad"
+                : t.tone === "warn"
+                  ? "text-warn"
+                  : t.tone === "good"
+                    ? "text-good"
+                    : "text-white"
+            }`}
+          >
+            {t.value}
+          </div>
+          {t.hint && (
+            <div className="mt-0.5 text-[10px] text-white/40">{t.hint}</div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Related records — contacts at the buyer + other deals with the same buyer.
+// Fetches /api/organizations/:buyerOrgId which already returns contacts + deals.
+// ---------------------------------------------------------------------------
+
+interface RelatedOrg {
+  id: string;
+  legalName: string;
+  kind: string | null;
+  contacts: Array<{ id: string; fullName: string; title: string | null }>;
+  deals: Array<{
+    id: string;
+    dealRef: string;
+    status: string;
+    product: string;
+  }>;
+}
+
+function RelatedRecordsCard({ deal }: { deal: DealDetail }) {
+  const [org, setOrg] = useState<RelatedOrg | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/organizations/${deal.buyerOrgId}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status}`);
+        return res.json();
+      })
+      .then((body: { organization: RelatedOrg }) => {
+        if (!cancelled) setOrg(body.organization);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deal.buyerOrgId]);
+
+  if (error) return null;
+  if (!org) return null;
+
+  const otherDeals = org.deals.filter((d) => d.id !== deal.id).slice(0, 4);
+
+  return (
+    <div className="grid gap-3 md:grid-cols-2">
+      <Card title={`Contacts at ${org.legalName}`}>
+        {org.contacts.length === 0 ? (
+          <p className="text-xs text-white/50">
+            No contacts on file.{" "}
+            <Link
+              href={`/app/chat?ask=${encodeURIComponent(`Add a contact at ${org.legalName}: `)}`}
+              className="text-accent hover:underline"
+            >
+              Add one →
+            </Link>
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {org.contacts.slice(0, 5).map((c) => (
+              <li key={c.id} className="flex items-center justify-between text-sm">
+                <Link
+                  href={`/app/contacts/${c.id}`}
+                  className="text-white/90 hover:text-accent hover:underline"
+                >
+                  {c.fullName}
+                </Link>
+                {c.title && (
+                  <span className="text-xs text-white/40">{c.title}</span>
+                )}
+              </li>
+            ))}
+            {org.contacts.length > 5 && (
+              <li className="text-[11px] text-white/40">
+                +{org.contacts.length - 5} more →{" "}
+                <Link
+                  href={`/app/companies/${org.id}`}
+                  className="text-accent hover:underline"
+                >
+                  view all
+                </Link>
+              </li>
+            )}
+          </ul>
+        )}
+      </Card>
+      <Card title={`Other deals with ${org.legalName}`}>
+        {otherDeals.length === 0 ? (
+          <p className="text-xs text-white/50">No other deals with this buyer.</p>
+        ) : (
+          <ul className="flex flex-col gap-1">
+            {otherDeals.map((d) => (
+              <li key={d.id} className="flex items-center justify-between text-sm">
+                <Link
+                  href={`/app/deals/${d.id}`}
+                  className="font-mono text-accent hover:underline"
+                >
+                  {d.dealRef}
+                </Link>
+                <span className="text-xs text-white/50">
+                  {PRODUCT_LABELS[d.product] ?? d.product} · {d.status}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    </div>
+  );
 }
