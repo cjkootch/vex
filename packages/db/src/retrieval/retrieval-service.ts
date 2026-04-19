@@ -12,6 +12,7 @@ import { campaignEnrollments } from "../schema/campaign-enrollments.js";
 import { campaignSteps } from "../schema/campaign-steps.js";
 import { contacts } from "../schema/contacts.js";
 import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
+import { documents } from "../schema/documents.js";
 import { followUps } from "../schema/follow-ups.js";
 import { embeddingChunks } from "../schema/embedding-chunks.js";
 import { fuelDeals } from "../schema/fuel-deals.js";
@@ -239,12 +240,14 @@ export class RetrievalService {
     // "you already have a reminder scheduled for Acme" instead of
     // proposing a duplicate.
     const followUpItems = await this.fetchOpenFollowUps(tx);
+    const documentItems = await this.fetchDocuments(tx);
 
     const allItems = [
       ...(items.length > 0 ? items : fallbackItems),
       ...orgContactItems,
       ...enrollmentItems,
       ...followUpItems,
+      ...documentItems,
     ];
 
     const cap = options.tokenCap ?? DEFAULT_TOKEN_CAP;
@@ -419,6 +422,63 @@ export class RetrievalService {
       raw_event_ref: null,
       summary_version: null,
     }) satisfies EvidenceItem);
+  }
+
+  /**
+   * Hydrate recent documents attached to any org / contact / deal so
+   * the chat agent can cite them by id + content excerpt. Limited to
+   * the 30 most-recent rows across the tenant; excerpts capped so a
+   * large-pdf-heavy workspace can't blow the evidence-pack token
+   * budget. When a user asks "what's in the BL for deal 003" the
+   * agent matches subject_type=fuel_deal + subjectId and finds the
+   * corresponding document items here.
+   */
+  private async fetchDocuments(tx: Tx): Promise<EvidenceItem[]> {
+    const rows = await tx
+      .select({
+        id: documents.id,
+        title: documents.title,
+        filename: documents.filename,
+        documentType: documents.documentType,
+        subjectType: documents.subjectType,
+        subjectId: documents.subjectId,
+        extractedText: documents.extractedText,
+        createdAt: documents.createdAt,
+      })
+      .from(documents)
+      .orderBy(desc(documents.createdAt))
+      .limit(30);
+    if (rows.length === 0) return [];
+    return rows.map((r) => {
+      const preview = r.extractedText ? r.extractedText.slice(0, 1200) : null;
+      const lines = [
+        `Document ${r.id}`,
+        `  Title: ${r.title}`,
+        `  Type: ${r.documentType}`,
+        r.subjectType && r.subjectId
+          ? `  Attached to: ${r.subjectType} ${r.subjectId}`
+          : null,
+        r.filename ? `  Filename: ${r.filename}` : null,
+        preview ? `  Excerpt: ${preview.replace(/\s+/g, " ").trim()}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      return {
+        chunk_id: `document:${r.id}`,
+        object_type: "document",
+        object_id: r.id,
+        chunk_text: lines,
+        source_ref: `document ${r.id}`,
+        source_type: "hydration",
+        occurred_at: r.createdAt,
+        freshness_hours: 0,
+        confidence_score: 0.9,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      } satisfies EvidenceItem;
+    });
   }
 
   /**

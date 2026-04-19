@@ -15,6 +15,7 @@ import {
   CampaignStepRepository,
   ContactOrgMembershipRepository,
   ContactRepository,
+  DocumentRepository,
   EventRepository,
   FuelDealRepository,
   OrganizationRepository,
@@ -50,6 +51,7 @@ import { AdminModule } from "./admin/admin.module.js";
 import { BriefModule } from "./brief/brief.module.js";
 import { CommunicationsModule } from "./communications/communications.module.js";
 import { FollowUpsModule } from "./follow-ups/follow-ups.module.js";
+import { DocumentsModule } from "./documents/documents.module.js";
 import { CallsModule } from "./calls/calls.module.js";
 import { CallsService } from "./calls/calls.service.js";
 import { VoiceStreamServer } from "./calls/voice-stream-server.js";
@@ -96,6 +98,7 @@ async function bootstrap(): Promise<void> {
   const summaryRepository = new SummaryRepository();
   const touchpointRepository = new TouchpointRepository();
   const followUpRepository = new FollowUpRepository();
+  const documentRepository = new DocumentRepository();
   const workspaceRepository = new WorkspaceRepository();
   const fuelDealRepository = new FuelDealRepository();
   const campaignRepository = new CampaignRepository();
@@ -218,6 +221,11 @@ async function bootstrap(): Promise<void> {
         db,
         followUps: followUpRepository,
       }),
+      documents: DocumentsModule.register({
+        db,
+        documents: documentRepository,
+        s3,
+      }),
       contacts: ContactsModule.register({
         db,
         contacts: contactRepository,
@@ -311,6 +319,20 @@ async function bootstrap(): Promise<void> {
     new FastifyAdapter({ logger: { level: env.LOG_LEVEL } }),
     { rawBody: true },
   );
+
+  // Register multipart so POST /documents can accept file uploads.
+  // 50MB aligns with the service-layer cap. Cast through unknown —
+  // @fastify/multipart ships types for Fastify v5 but
+  // @nestjs/platform-fastify currently pins v4.
+  {
+    const multipart = (await import("@fastify/multipart")).default;
+    const instance = app.getHttpAdapter().getInstance() as unknown as {
+      register: (plugin: unknown, opts: unknown) => Promise<void>;
+    };
+    await instance.register(multipart, {
+      limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+    });
+  }
 
   // Sprint K — voice-bridge WS server. Only instantiated when the
   // feature flag is on AND CallsModule is registered (which requires

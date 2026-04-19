@@ -60,3 +60,7 @@ export {
   FollowUpRepository,
   type FollowUpCreate,
 } from "./follow-up-repository.js";
+export {
+  DocumentRepository,
+  type DocumentInsert,
+} from "./document-repository.js";

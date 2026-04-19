@@ -79,6 +79,20 @@ export class S3Uploader {
     return out.Body.transformToString();
   }
 
+  async getBuffer(
+    key: string,
+  ): Promise<{ body: Buffer; contentType: string | null }> {
+    const out = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+    if (!out.Body) throw new Error(`s3 object ${key} has no body`);
+    const bytes = await out.Body.transformToByteArray();
+    return {
+      body: Buffer.from(bytes),
+      contentType: out.ContentType ?? null,
+    };
+  }
+
   get bucketName(): string {
     return this.bucket;
   }

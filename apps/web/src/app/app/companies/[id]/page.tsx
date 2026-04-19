@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
+import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { EditCompanyForm } from "@/components/crm/edit-company-form";
 import { Tabs } from "@/components/ui/tabs";
 
@@ -153,6 +154,13 @@ export default function CompanyDetailPage({
             label: "Deals",
             count: org.deals.length,
             content: <DealsTab deals={org.deals} />,
+          },
+          {
+            id: "documents",
+            label: "Documents",
+            content: (
+              <DocumentsPanel subjectType="organization" subjectId={org.id} />
+            ),
           },
           {
             id: "activity",

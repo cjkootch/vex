@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
+import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { EditContactForm } from "@/components/crm/edit-contact-form";
 import { Tabs } from "@/components/ui/tabs";
 
@@ -234,6 +235,13 @@ export default function ContactDetailPage({
             label: "Deals",
             count: deals.length,
             content: <DealsTab deals={deals} orgNames={orgNames} />,
+          },
+          {
+            id: "documents",
+            label: "Documents",
+            content: (
+              <DocumentsPanel subjectType="contact" subjectId={contact.id} />
+            ),
           },
           {
             id: "activity",
