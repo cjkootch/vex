@@ -268,6 +268,18 @@ export function renderEvidencePack(pack: EvidencePack): string {
       lines.push(item.chunk_text);
     }
   }
+  if (pack.campaigns && pack.campaigns.length > 0) {
+    lines.push("\n## Campaigns catalog");
+    lines.push(
+      "Existing campaign plans the agent can enroll contacts into via " +
+        "`campaign.enroll_batch`. Pick by name/channel fit — NEVER invent ids.",
+    );
+    for (const c of pack.campaigns) {
+      lines.push(
+        `- id=${c.id} name=${JSON.stringify(c.name)} channels=[${c.channels.join(", ")}] steps=${c.step_count}${c.tier ? ` tier=${c.tier}` : ""}`,
+      );
+    }
+  }
   return lines.join("\n");
 }
 

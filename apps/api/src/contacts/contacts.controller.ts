@@ -85,11 +85,14 @@ export class ContactsController {
   async list(
     @Query("limit") limitRaw?: string,
     @Query("status") statusRaw?: string,
+    @Query("org_id") orgIdRaw?: string,
   ) {
     const limit = clampLimit(limitRaw);
     const status = statusRaw === "suppressed" ? "suppressed" : "active";
-    const contacts =
-      status === "suppressed"
+    const orgId = orgIdRaw && orgIdRaw.length > 0 ? orgIdRaw : null;
+    const contacts = orgId
+      ? await this.service.listByOrgId(this.tenant.tenantId, orgId)
+      : status === "suppressed"
         ? await this.service.listSuppressed(this.tenant.tenantId, limit)
         : await this.service.listActive(this.tenant.tenantId, limit);
     // Hydrate memberships so the list view can show every org a

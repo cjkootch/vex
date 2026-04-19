@@ -2,11 +2,13 @@ import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import {
   approxTokens,
   packTokens,
+  type EvidenceCampaign,
   type EvidenceItem,
   type EvidencePack,
 } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { campaigns } from "../schema/campaigns.js";
+import { campaignSteps } from "../schema/campaign-steps.js";
 import { contacts } from "../schema/contacts.js";
 import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
 import { embeddingChunks } from "../schema/embedding-chunks.js";
@@ -215,13 +217,30 @@ export class RetrievalService {
       fallbackItems = await this.nameMatchFallback(tx, queryText);
     }
 
+    // Sprint M — hydrate contacts for every resolved org so the chat
+    // agent has concrete contact ids to propose enrollment batches
+    // against. These land alongside other chunk-level items.
+    const orgContactItems = await this.fetchContactsForOrgs(tx, scope.org_ids ?? []);
+
+    // Sprint M — list every campaign in the workspace so the agent
+    // can pick an existing plan by name instead of inventing ids.
+    // Campaigns go into a dedicated top-level field (rendered as its
+    // own section in the prompt) rather than the chunk list.
+    const campaignsCatalog = await this.fetchCampaignsCatalog(tx);
+
+    const allItems = [
+      ...(items.length > 0 ? items : fallbackItems),
+      ...orgContactItems,
+    ];
+
     const cap = options.tokenCap ?? DEFAULT_TOKEN_CAP;
     let pack: EvidencePack = {
       summaries: summariesItems,
-      items: items.length > 0 ? items : fallbackItems,
+      items: allItems,
+      campaigns: campaignsCatalog,
       estimated_tokens: packTokens({
         summaries: summariesItems,
-        items: items.length > 0 ? items : fallbackItems,
+        items: allItems,
       }),
     };
 
@@ -229,6 +248,135 @@ export class RetrievalService {
       pack = truncateToCap(pack, cap);
     }
     return pack;
+  }
+
+  /**
+   * Sprint M — hydrate active contacts for each resolved organization
+   * so the chat agent has concrete contact ids when proposing
+   * `campaign.enroll_batch` actions. Returned as chunk-level items so
+   * they flow through the normal token-cap truncation.
+   */
+  private async fetchContactsForOrgs(
+    tx: Tx,
+    orgIds: readonly string[],
+  ): Promise<EvidenceItem[]> {
+    if (orgIds.length === 0) return [];
+    const rows = await tx
+      .select({
+        id: contacts.id,
+        orgId: contacts.orgId,
+        fullName: contacts.fullName,
+        title: contacts.title,
+        emails: contacts.emails,
+        phones: contacts.phones,
+        optOutAt: contacts.optOutAt,
+      })
+      .from(contacts)
+      .where(
+        and(
+          inArray(contacts.orgId, [...orgIds]),
+          eq(contacts.status, "active"),
+        ),
+      )
+      .limit(200);
+
+    return rows
+      .filter((r) => !r.optOutAt)
+      .map((r) => ({
+        chunk_id: `contact:${r.id}`,
+        object_type: "contact",
+        object_id: r.id,
+        chunk_text: [
+          `Contact ${r.id}`,
+          `  Name: ${r.fullName}`,
+          r.title ? `  Title: ${r.title}` : null,
+          `  Org id: ${r.orgId ?? "none"}`,
+          r.emails && r.emails.length > 0
+            ? `  Emails: ${r.emails.join(", ")}`
+            : null,
+          r.phones && r.phones.length > 0
+            ? `  Phones: ${r.phones.join(", ")}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        source_ref: `contact ${r.id}`,
+        source_type: "hydration",
+        occurred_at: null,
+        freshness_hours: 0,
+        confidence_score: 0.75,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      }) satisfies EvidenceItem);
+  }
+
+  /**
+   * Sprint M — list every campaign in the tenant with its step count
+   * and channel mix. Fed to the chat agent via the EvidencePack's
+   * `campaigns` field so it can match user descriptions ("nurture
+   * sequence", "outbound SDR cadence") to real campaign ids.
+   */
+  private async fetchCampaignsCatalog(tx: Tx): Promise<EvidenceCampaign[]> {
+    const rows = await tx
+      .select({
+        id: campaigns.id,
+        channel: campaigns.channel,
+        source: campaigns.source,
+        medium: campaigns.medium,
+        objective: campaigns.objective,
+      })
+      .from(campaigns)
+      .limit(100);
+    if (rows.length === 0) return [];
+
+    const stepRows = await tx
+      .select({
+        campaignId: campaignSteps.campaignId,
+        channel: campaignSteps.channel,
+        tier: campaignSteps.tier,
+      })
+      .from(campaignSteps)
+      .where(inArray(campaignSteps.campaignId, rows.map((r) => r.id)));
+
+    const byCampaign = new Map<
+      string,
+      { channels: Set<string>; tiers: string[] }
+    >();
+    for (const s of stepRows) {
+      const existing = byCampaign.get(s.campaignId) ?? {
+        channels: new Set<string>(),
+        tiers: [],
+      };
+      existing.channels.add(s.channel);
+      existing.tiers.push(s.tier);
+      byCampaign.set(s.campaignId, existing);
+    }
+
+    return rows.map((r) => {
+      const meta = byCampaign.get(r.id);
+      const channels =
+        meta && meta.channels.size > 0
+          ? [...meta.channels].sort()
+          : [r.channel];
+      const modeTier = meta ? mostCommon(meta.tiers) : undefined;
+      const stepCount = stepRows.filter((s) => s.campaignId === r.id).length;
+      // Campaigns have no `name` column — synthesize a display label
+      // from objective / source / medium. The chat agent sees this
+      // label when deciding which campaign matches a user's request.
+      const name =
+        r.objective ??
+        [r.source, r.medium].filter(Boolean).join(" / ") ??
+        r.id;
+      return {
+        id: r.id,
+        name,
+        channels,
+        step_count: stepCount,
+        ...(modeTier ? { tier: modeTier } : {}),
+      } satisfies EvidenceCampaign;
+    });
   }
 
   /**
@@ -792,6 +940,18 @@ function formatUsd(n: number): string {
 // Ensure the unused-imports linter doesn't cull contactOrgMemberships —
 // we'll wire it into a contact-deal-count enrichment in a follow-up.
 void contactOrgMemberships;
+
+/** Return the most common string in an array, or undefined when empty. */
+function mostCommon(values: string[]): string | undefined {
+  if (values.length === 0) return undefined;
+  const counts = new Map<string, number>();
+  for (const v of values) counts.set(v, (counts.get(v) ?? 0) + 1);
+  let top: { value: string; count: number } | null = null;
+  for (const [value, count] of counts) {
+    if (!top || count > top.count) top = { value, count };
+  }
+  return top?.value;
+}
 
 // kept for test reuse
 export const __test = { rerankScore, truncateToCap, normalizedRrf };

@@ -114,6 +114,17 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     notes: z.string().optional(),
     rationale: z.string().min(1).max(1000),
   }),
+  // Sprint M — chat-initiated marketing enrollment. The agent proposes
+  // a batch of contacts to enroll in an existing campaign plan; the
+  // approval executor (Sprint F) starts one CampaignEnrollmentWorkflow
+  // per contact once approved.
+  z.object({
+    kind: z.literal("campaign.enroll_batch"),
+    tier: z.literal(ApprovalTier.T2),
+    campaignId: zUlid,
+    contactIds: z.array(zUlid).min(1).max(500),
+    rationale: z.string().min(1).max(1000),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;
