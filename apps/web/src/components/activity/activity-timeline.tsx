@@ -154,6 +154,18 @@ const VERB_LABELS: Record<string, string> = {
   "organization.created": "Company created",
   "approval.executor.received": "Approval routed to executor",
   "approval.executor.failed": "Approval executor failed",
+  "deal.milestone.bis_license_issued": "BIS licence issued",
+  "deal.milestone.ofac_cleared": "OFAC cleared",
+  "deal.milestone.contract_signed": "Contract signed",
+  "deal.milestone.prepayment_received": "Prepayment received",
+  "deal.milestone.product_purchased": "Product purchased",
+  "deal.milestone.cargo_loaded": "Cargo loaded",
+  "deal.milestone.vessel_departed": "Vessel departed",
+  "deal.milestone.bl_issued": "BL issued",
+  "deal.milestone.vessel_arrived": "Vessel arrived",
+  "deal.milestone.cargo_discharged": "Cargo discharged",
+  "deal.milestone.final_payment_received": "Final payment received",
+  "deal.milestone.deal_closed": "Deal closed",
 };
 
 function verbLabel(verb: string): string {
@@ -199,6 +211,10 @@ function renderMetadata(event: ActivityEvent) {
   const reason = md["reason"];
   if (typeof reason === "string" && reason.trim().length > 0) {
     bits.push(`reason: ${reason}`);
+  }
+  const note = md["note"];
+  if (typeof note === "string" && note.trim().length > 0) {
+    bits.push(note);
   }
   const score = md["score"];
   if (typeof score === "number") bits.push(`score ${score}`);

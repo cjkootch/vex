@@ -580,6 +580,7 @@ export class DealsController {
     if (!deal) throw new NotFoundException(`deal ${id} not found`);
     return { deal };
   }
+
 }
 
 function clampLimit(raw: string | undefined, fallback: number, max: number): number {

@@ -199,6 +199,14 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
      * operator-join conference path for backwards-compatibility.
      */
     aiMode: z.boolean().optional(),
+    /**
+     * Custom system prompt for the AI conversation (requires aiMode).
+     * Overrides the built-in fuel-qualifier prompt. Useful when the
+     * user types "have Vex call John and ask about their BL timing
+     * on deal 003" — the agent crafts a focused scenario rather
+     * than running the generic qualifier script.
+     */
+    aiInstructions: z.string().min(1).max(5000).optional(),
     rationale: z.string().min(1).max(1000),
   }),
   // Sprint O — steer an in-flight CampaignEnrollmentWorkflow without

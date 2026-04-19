@@ -35,6 +35,7 @@ import {
   CALLS_CONTACTS_REPO,
   CALLS_DB_CLIENT,
   CALLS_EVENTS_REPO,
+  CALLS_REDIS_CLIENT,
   CALLS_RESEND_CLIENT,
   CALLS_S3_UPLOADER,
   CALLS_SUMMARIES_REPO,
@@ -125,12 +126,47 @@ export class CallsService {
   >();
   private static readonly SCENARIO_TTL_MS = 5 * 60 * 1000;
 
+  /**
+   * Register a scenario both in-memory (for the demo-call hot path
+   * inside this process) and in Redis (so cross-process writers
+   * like the worker's approval executor can surface scenarios to
+   * chat-triggered AI calls). Redis write is fire-and-forget.
+   */
   registerScenario(wf: string, instructions: string): void {
     this.scenarios.set(wf, { instructions, createdAt: Date.now() });
     this.pruneScenarios();
+    if (this.redis) {
+      const ttlSeconds = Math.floor(CallsService.SCENARIO_TTL_MS / 1000);
+      void this.redis
+        .setex(`vex:call-scenario:${wf}`, ttlSeconds, instructions)
+        .catch(() => {
+          /* best-effort — in-memory fallback still serves demos */
+        });
+    }
   }
 
-  takeScenario(wf: string): string | null {
+  /**
+   * Read + delete a scenario for the given workflow id. Checks
+   * Redis first (chat-triggered calls, worker-written) then the
+   * in-memory map (demo calls inside this process). Idempotent: a
+   * Twilio TwiML retry reads nothing because the first read drained
+   * both stores — the bridge falls back to the default prompt.
+   */
+  async takeScenario(wf: string): Promise<string | null> {
+    if (this.redis) {
+      try {
+        const key = `vex:call-scenario:${wf}`;
+        const value = await this.redis.get(key);
+        if (value) {
+          void this.redis.del(key).catch(() => {
+            /* ignore */
+          });
+          return value;
+        }
+      } catch {
+        /* fall through to in-memory */
+      }
+    }
     const entry = this.scenarios.get(wf);
     this.scenarios.delete(wf);
     if (!entry) return null;
@@ -165,6 +201,8 @@ export class CallsService {
     private readonly touchpoints: TouchpointRepository,
     @Inject(CALLS_RESEND_CLIENT)
     private readonly resend: ResendClient | null,
+    @Inject(CALLS_REDIS_CLIENT)
+    private readonly redis: import("ioredis").Redis | null,
   ) {}
 
   /**
