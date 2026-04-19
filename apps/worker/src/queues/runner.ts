@@ -54,7 +54,12 @@ import {
   S3Uploader,
   TEMPORAL_TASK_QUEUE,
   WorkflowId,
+  createResendClient,
+  createTwilioClient,
+  type TwilioClient,
 } from "@vex/integrations";
+
+type ResendClient = ReturnType<typeof createResendClient>;
 import {
   InMemoryCostLedger,
   recordQueueBackpressure,
@@ -84,6 +89,22 @@ export interface QueueRunnerOptions {
    * Sprint F reconciliation cron to start the workflows later.
    */
   temporal?: TemporalClient | null;
+  /**
+   * Sprint N — Twilio + Resend creds passed through to the approval
+   * executor's messaging branches (email.send / sms.send / whatsapp.send).
+   * Optional — when null those branches log `approval.executor.failed`
+   * but the rest of the executor keeps working.
+   */
+  twilio?: {
+    accountSid: string;
+    authToken: string;
+    fromNumber: string;
+    whatsappFrom?: string;
+  } | null;
+  resend?: {
+    apiKey: string;
+    defaultFrom: string;
+  } | null;
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
   defaultWorkspaceId?: string;
@@ -167,6 +188,24 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   const agentWorker = createAgentWorker(buildAgentProcessor(runner), connection);
   await agentWorker.waitUntilReady();
 
+  const twilioForExecutor =
+    options.twilio?.accountSid && options.twilio?.authToken && options.twilio?.fromNumber
+      ? createTwilioClient({
+          accountSid: options.twilio.accountSid,
+          authToken: options.twilio.authToken,
+          fromNumber: options.twilio.fromNumber,
+          ...(options.twilio.whatsappFrom
+            ? { whatsappFrom: options.twilio.whatsappFrom }
+            : {}),
+        })
+      : null;
+  const resendForExecutor = options.resend?.apiKey
+    ? createResendClient({
+        apiKey: options.resend.apiKey,
+        defaultFrom: options.resend.defaultFrom,
+      })
+    : null;
+
   const approvalExecutorWorker = createApprovalExecutorWorker(
     buildApprovalExecutor({
       db,
@@ -178,8 +217,11 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       campaigns: repos.campaigns,
       campaignSteps: repos.campaignSteps,
       campaignEnrollments: repos.campaignEnrollments,
+      touchpoints: repos.touchpoints,
       events: repos.events,
       temporal: options.temporal ?? null,
+      twilio: twilioForExecutor,
+      resend: resendForExecutor,
     }),
     connection,
   );
@@ -292,6 +334,7 @@ export interface ApprovalExecutorDeps {
   campaigns: CampaignRepository;
   campaignSteps: CampaignStepRepository;
   campaignEnrollments: CampaignEnrollmentRepository;
+  touchpoints: TouchpointRepository;
   events: EventRepository;
   /**
    * Best-effort Temporal client for the `campaign.enroll_batch`
@@ -300,6 +343,17 @@ export interface ApprovalExecutorDeps {
    * them the next tick.
    */
   temporal: TemporalClient | null;
+  /**
+   * Twilio client for sms.send + whatsapp.send branches. Null when
+   * the Twilio env vars aren't set; the executor logs
+   * `approval.executor.failed` in that case.
+   */
+  twilio: TwilioClient | null;
+  /**
+   * Resend client for the email.send branch. Null when
+   * RESEND_API_KEY isn't set.
+   */
+  resend: ResendClient | null;
 }
 
 /**
@@ -344,6 +398,22 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyEnrollBatch(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "email.send") {
+          await applyEmailSend(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "sms.send") {
+          await applyMessageSend(tx, deps, workspace_id, approval, "sms");
+          return;
+        }
+        if (approval.actionType === "whatsapp.send") {
+          await applyMessageSend(tx, deps, workspace_id, approval, "whatsapp");
+          return;
+        }
+        if (approval.actionType === "contact.opt_out") {
+          await applyContactOptOut(tx, deps, workspace_id, approval);
+          return;
+        }
       }
 
       await deps.events.insertIfNotExists(tx, workspace_id, {
@@ -364,6 +434,205 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
       });
     });
   };
+}
+
+/**
+ * Sprint N — send an email via Resend for an approved `email.send`
+ * approval. Writes an `email.sent` touchpoint so the inbox surfaces
+ * it. Emits `approval.executor.failed` with the resend error on
+ * failure so operators can see why.
+ */
+async function applyEmailSend(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { to?: string[] | string; subject?: string; body?: string }
+    | null;
+  const to = Array.isArray(payload?.to) ? payload?.to : payload?.to ? [payload.to] : [];
+  const subject = payload?.subject;
+  const body = payload?.body;
+  if (to.length === 0 || !subject || !body) {
+    await emitExecutorFailed(tx, deps, tenantId, approval.id, "email.send", "missing to / subject / body");
+    return;
+  }
+  if (!deps.resend) {
+    await emitExecutorFailed(tx, deps, tenantId, approval.id, "email.send", "resend_unconfigured");
+    return;
+  }
+  const result = await deps.resend.send({ to, subject, text: body });
+  if (result.error) {
+    await emitExecutorFailed(tx, deps, tenantId, approval.id, "email.send", `${result.error.name}: ${result.error.message}`);
+    return;
+  }
+  const messageId = result.data?.id ?? "unknown";
+  await deps.touchpoints.insert(tx, tenantId, {
+    channel: "email.sent",
+    actor: `approval:${approval.id}`,
+    occurredAt: new Date(),
+    metadata: {
+      direction: "outbound",
+      provider_message_id: messageId,
+      to: to.join(", "),
+      subject,
+      preview: subject,
+      text: body,
+    },
+  });
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType: "approval",
+    subjectId: approval.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: { action_type: "email.send", provider_message_id: messageId },
+  });
+}
+
+/**
+ * Sprint N — shared handler for sms.send + whatsapp.send. Fires the
+ * message via Twilio's Messages API. `kind` picks the Twilio method
+ * (sendSms vs sendWhatsApp) and the touchpoint channel suffix.
+ */
+async function applyMessageSend(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+  kind: "sms" | "whatsapp",
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { to?: string; body?: string; contactId?: string }
+    | null;
+  const to = payload?.to;
+  const body = payload?.body;
+  if (!to || !body) {
+    await emitExecutorFailed(tx, deps, tenantId, approval.id, `${kind}.send`, "missing to / body");
+    return;
+  }
+  if (!deps.twilio) {
+    await emitExecutorFailed(tx, deps, tenantId, approval.id, `${kind}.send`, "twilio_unconfigured");
+    return;
+  }
+  try {
+    const msg =
+      kind === "whatsapp"
+        ? await deps.twilio.sendWhatsApp(to, body)
+        : await deps.twilio.sendSms(to, body);
+    await deps.touchpoints.insert(tx, tenantId, {
+      channel: `${kind}.sent`,
+      actor: `approval:${approval.id}`,
+      occurredAt: new Date(),
+      ...(payload?.contactId ? { contactId: payload.contactId } : {}),
+      metadata: {
+        direction: "outbound",
+        provider_message_id: msg.sid,
+        to,
+        text: body,
+        preview: body,
+      },
+    });
+    await deps.events.insertIfNotExists(tx, tenantId, {
+      verb: "approval.executor.applied",
+      subjectType: "approval",
+      subjectId: approval.id,
+      actorType: "system",
+      actorId: "approval_executor",
+      objectType: "approval",
+      objectId: approval.id,
+      occurredAt: new Date(),
+      idempotencyKey: `approval.executor:${approval.id}`,
+      metadata: {
+        action_type: `${kind}.send`,
+        provider_message_id: msg.sid,
+      },
+    });
+  } catch (err) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      `${kind}.send`,
+      (err as Error).message,
+    );
+  }
+}
+
+/**
+ * Sprint N — opt a contact out of all outbound outreach. Matches
+ * what POST /contacts/:id/optout does; the approval-initiated variant
+ * records the approval id + reason so audit readers can trace who
+ * decided it.
+ */
+async function applyContactOptOut(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { contactId?: string; reason?: string }
+    | null;
+  const contactId = payload?.contactId;
+  const reason = payload?.reason ?? "opted out via approval";
+  if (!contactId) {
+    await emitExecutorFailed(tx, deps, tenantId, approval.id, "contact.opt_out", "missing contactId");
+    return;
+  }
+  try {
+    await deps.contacts.setOptOut(tx, contactId, reason);
+  } catch (err) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.opt_out",
+      (err as Error).message,
+    );
+    return;
+  }
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType: "contact",
+    subjectId: contactId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: { action_type: "contact.opt_out", reason },
+  });
+}
+
+async function emitExecutorFailed(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approvalId: string,
+  actionType: string,
+  reason: string,
+): Promise<void> {
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.failed",
+    subjectType: "approval",
+    subjectId: approvalId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approvalId,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approvalId}`,
+    metadata: { action_type: actionType, reason },
+  });
 }
 
 async function applyDealStatusChange(

@@ -403,7 +403,11 @@ describe("approval executor — unknown action types", () => {
     vi.clearAllMocks();
   });
 
-  it("logs the received event without side effects", async () => {
+  it("email.send fails cleanly when resend is unconfigured (no side effects)", async () => {
+    // Sprint N — email.send now has a real executor branch. When
+    // the resend client is null (no RESEND_API_KEY in env) the
+    // branch emits `approval.executor.failed` with
+    // reason=resend_unconfigured and touches nothing else.
     const deps = buildDeps({
       actionType: "email.send",
       decision: "approved",
@@ -414,8 +418,21 @@ describe("approval executor — unknown action types", () => {
     expect(deps.contacts.create).not.toHaveBeenCalled();
     expect(deps.organizations.create).not.toHaveBeenCalled();
     const event = deps.events.insertIfNotExists.mock.calls[0]![2];
-    expect(event.verb).toBe("approval.executor.received");
+    expect(event.verb).toBe("approval.executor.failed");
     expect(event.metadata.action_type).toBe("email.send");
+    expect(event.metadata.reason).toBe("resend_unconfigured");
+  });
+
+  it("still logs the received event for genuinely unknown action types", async () => {
+    const deps = buildDeps({
+      actionType: "follow_up.suggestion",
+      decision: "approved",
+      proposedPayload: {},
+    });
+    await runJob(deps);
+    const event = deps.events.insertIfNotExists.mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.received");
+    expect(event.metadata.action_type).toBe("follow_up.suggestion");
   });
 
   it("noops when the approval doesn't exist", async () => {

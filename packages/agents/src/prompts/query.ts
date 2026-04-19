@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.3.2026-04-18";
+export const QUERY_PROMPT_VERSION = "v7.4.2026-04-18";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -328,6 +328,20 @@ Known action kinds the approval executor can actually apply:
     existing campaign plan. The approval executor starts one
     CampaignEnrollmentWorkflow per contact once approved. Payload:
     { campaignId: ULID, contactIds: ULID[], rationale }.
+  - sms.send (T2) — send a single SMS to a specific number via
+    Twilio. Use when the user asks to "text X" or "SMS X". Payload:
+    { to: E.164, body: string, contactId?: ULID, rationale }.
+    Resolve the phone from the contact's evidence if the user names
+    them; ask for disambiguation if multiple phones are on file.
+  - whatsapp.send (T2) — send a single WhatsApp message. Use when the
+    user explicitly says "WhatsApp". Payload is the same shape as
+    sms.send. Note: WhatsApp needs the recipient to have opted in /
+    messaged the Twilio number first if the account is in sandbox.
+  - contact.opt_out (T2) — mark a contact as opted out of all
+    outbound outreach. Use when the user says "unsubscribe X",
+    "don't contact them anymore", "take X off the list". Payload:
+    { contactId: ULID, reason: string }. This suppresses future
+    calls, emails, SMS, and campaign enrollments.
 
 If the user asks "enroll company X in <something>" / "put Acme's contacts
 in the spring nurture sequence" / "start the outbound SDR cadence for

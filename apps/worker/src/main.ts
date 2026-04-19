@@ -87,6 +87,23 @@ async function main(): Promise<void> {
       ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
     },
     temporal: temporalClient?.client ?? null,
+    twilio:
+      env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER
+        ? {
+            accountSid: env.TWILIO_ACCOUNT_SID,
+            authToken: env.TWILIO_AUTH_TOKEN,
+            fromNumber: env.TWILIO_PHONE_NUMBER,
+            ...(env.TWILIO_WHATSAPP_FROM
+              ? { whatsappFrom: env.TWILIO_WHATSAPP_FROM }
+              : {}),
+          }
+        : null,
+    resend: env.RESEND_API_KEY
+      ? {
+          apiKey: env.RESEND_API_KEY,
+          defaultFrom: env.RESEND_DEFAULT_FROM,
+        }
+      : null,
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
   // Sprint 12 — the OutboundCallWorkflow needs Twilio + S3 + reachable
