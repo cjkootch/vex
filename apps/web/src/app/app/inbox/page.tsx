@@ -211,38 +211,37 @@ export default function InboxPage(): React.ReactElement {
 
 function CallRow({ item }: { item: CallItem }): React.ReactElement {
   const terminal = isTerminalStatus(item.status);
+  const href = item.workflowId
+    ? `/app/calls/${item.workflowId}`
+    : `/app/inbox/${item.id}`;
   return (
-    <li
-      data-testid="inbox-row"
-      data-kind="call"
-      className="flex items-center justify-between gap-3 rounded-lg border border-line bg-muted/20 px-3 py-2.5"
-    >
-      <div className="flex min-w-0 items-center gap-3">
-        <ChannelIcon group="call" />
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm text-white">
-            <span>Phone call</span>
-            <StatusBadge status={item.status ?? "unknown"} />
-          </div>
-          <div className="mt-0.5 font-mono text-[11px] text-white/40">
-            {item.callSid ?? item.id}
-            {item.durationSeconds !== null && (
-              <span className="ml-2">{formatDuration(item.durationSeconds)}</span>
-            )}
+    <li data-testid="inbox-row" data-kind="call">
+      <Link
+        href={href}
+        className="flex items-center justify-between gap-3 rounded-lg border border-line bg-muted/20 px-3 py-2.5 hover:bg-muted/40"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <ChannelIcon group="call" />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm text-white">
+              <span>Phone call</span>
+              <StatusBadge status={item.status ?? "unknown"} />
+            </div>
+            <div className="mt-0.5 font-mono text-[11px] text-white/40">
+              {item.callSid ?? item.id}
+              {item.durationSeconds !== null && (
+                <span className="ml-2">{formatDuration(item.durationSeconds)}</span>
+              )}
+            </div>
           </div>
         </div>
-      </div>
-      <div className="flex flex-shrink-0 items-center gap-3 text-xs text-white/50">
-        <span>{relTime(item.occurredAt)}</span>
-        {item.workflowId && (
-          <Link
-            href={`/app/calls/${item.workflowId}`}
-            className="rounded-md border border-line px-2 py-1 text-white/70 hover:bg-muted/40"
-          >
-            {terminal ? "View" : "Live →"}
-          </Link>
-        )}
-      </div>
+        <div className="flex flex-shrink-0 items-center gap-3 text-xs text-white/50">
+          <span>{relTime(item.occurredAt)}</span>
+          <span className="rounded-md border border-line px-2 py-1 text-white/70">
+            {item.workflowId ? (terminal ? "View" : "Live →") : "Details →"}
+          </span>
+        </div>
+      </Link>
     </li>
   );
 }

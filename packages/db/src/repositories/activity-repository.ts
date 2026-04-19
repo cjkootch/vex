@@ -118,4 +118,60 @@ export class ActivityRepository {
       .limit(1);
     return rows[0] ?? null;
   }
+
+  async findById(tx: Tx, id: string): Promise<Activity | null> {
+    const rows = await tx
+      .select()
+      .from(activities)
+      .where(eq(activities.id, id))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  async findByCallSid(tx: Tx, callSid: string): Promise<Activity | null> {
+    const rows = await tx
+      .select()
+      .from(activities)
+      .where(
+        and(
+          eq(activities.type, "voice_call"),
+          sql`${activities.metadata} ->> 'call_sid' = ${callSid}`,
+        ),
+      )
+      .limit(1);
+    return rows[0] ?? null;
+  }
+
+  /**
+   * Merge a metadata patch into an existing activity, optionally
+   * bumping `result` + `duration_seconds`. Used by the Twilio demo
+   * status/recording callbacks to advance a queued row through the
+   * ringing → in-progress → completed lifecycle without blowing away
+   * earlier metadata (script, initiated_by, etc.).
+   */
+  async patchMetadata(
+    tx: Tx,
+    id: string,
+    patch: {
+      result?: string;
+      durationSeconds?: number;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<Activity> {
+    const update: Record<string, unknown> = {};
+    if (patch.result !== undefined) update["result"] = patch.result;
+    if (patch.durationSeconds !== undefined) {
+      update["durationSeconds"] = patch.durationSeconds;
+    }
+    if (patch.metadata && Object.keys(patch.metadata).length > 0) {
+      update["metadata"] = sql`${activities.metadata} || ${JSON.stringify(patch.metadata)}::jsonb`;
+    }
+    const [row] = await tx
+      .update(activities)
+      .set(update)
+      .where(eq(activities.id, id))
+      .returning();
+    if (!row) throw new Error(`activity ${id} not found`);
+    return row;
+  }
 }

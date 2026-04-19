@@ -1,4 +1,12 @@
-import { Controller, Get, Inject, Query, UseGuards } from "@nestjs/common";
+import {
+  Controller,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Query,
+  UseGuards,
+} from "@nestjs/common";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import {
   withTenant,
@@ -203,6 +211,40 @@ export class CommunicationsController {
 
       return { items: merged, nextBefore };
     });
+  }
+
+  /**
+   * GET /communications/activities/:id — full drill-in payload for a
+   * voice_call activity. Returns the raw metadata/result/duration so
+   * the inbox detail page can render recording links, status history,
+   * script or scenario used, etc. 404 if the id belongs to another
+   * tenant (RLS in withTenant hides it).
+   */
+  @Get("activities/:id")
+  async activity(@Param("id") id: string): Promise<{
+    id: string;
+    type: string;
+    occurredAt: string;
+    result: string | null;
+    durationSeconds: number | null;
+    transcriptRef: string | null;
+    metadata: Record<string, unknown>;
+    relatedObjectIds: Record<string, unknown>;
+  }> {
+    const row = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.activities.findById(tx, id),
+    );
+    if (!row) throw new NotFoundException();
+    return {
+      id: row.id,
+      type: row.type,
+      occurredAt: row.occurredAt.toISOString(),
+      result: row.result,
+      durationSeconds: row.durationSeconds,
+      transcriptRef: row.transcriptRef,
+      metadata: (row.metadata ?? {}) as Record<string, unknown>,
+      relatedObjectIds: (row.relatedObjectIds ?? {}) as Record<string, unknown>,
+    };
   }
 }
 
