@@ -462,6 +462,94 @@ export class MarketingController {
       counts: result.counts,
     };
   }
+
+  /**
+   * Per-campaign engagement metrics. Groups the `touchpoints` table
+   * by channel verb for rows linked to this campaign and computes
+   * open / click / bounce / reply rates. Fed by the existing Resend +
+   * Twilio webhook normalizers — every email.sent / email.opened /
+   * email.clicked / email.bounced / sms.delivered / whatsapp.replied
+   * etc. lands as a row here and surfaces on the campaign page.
+   */
+  @Get("campaigns/:id/metrics")
+  async metrics(@Param("id") campaignId: string): Promise<{
+    campaignId: string;
+    totals: {
+      enrollments: number;
+      sent: number;
+      delivered: number;
+      opened: number;
+      clicked: number;
+      replied: number;
+      bounced: number;
+      failed: number;
+    };
+    rates: {
+      delivery_rate: number | null;
+      open_rate: number | null;
+      click_rate: number | null;
+      click_through_rate: number | null;
+      reply_rate: number | null;
+      bounce_rate: number | null;
+    };
+    by_channel: Array<{
+      channel: string;
+      count: number;
+    }>;
+  }> {
+    const [breakdown, enrollmentCounts] = await withTenant(
+      this.db,
+      this.tenant.tenantId,
+      async (tx) =>
+        Promise.all([
+          this.touchpoints.channelBreakdownByCampaign(tx, campaignId),
+          this.enrollments.countByState(tx, campaignId),
+        ]),
+    );
+
+    const total = (verbSuffix: string): number =>
+      breakdown
+        .filter((r) => r.channel.endsWith(`.${verbSuffix}`))
+        .reduce((sum, r) => sum + r.count, 0);
+
+    const sent = total("sent");
+    const delivered = total("delivered");
+    const opened = total("opened");
+    const clicked = total("clicked");
+    const replied = total("replied");
+    const bounced = total("bounced");
+    const failed = total("failed");
+    const enrollments = Object.values(enrollmentCounts).reduce(
+      (sum: number, n) => sum + (typeof n === "number" ? n : 0),
+      0,
+    );
+
+    const safe = (numerator: number, denominator: number): number | null =>
+      denominator === 0 ? null : numerator / denominator;
+
+    return {
+      campaignId,
+      totals: {
+        enrollments,
+        sent,
+        delivered,
+        opened,
+        clicked,
+        replied,
+        bounced,
+        failed,
+      },
+      rates: {
+        delivery_rate: safe(delivered, sent),
+        open_rate: safe(opened, sent),
+        click_rate: safe(clicked, sent),
+        click_through_rate: safe(clicked, opened),
+        reply_rate: safe(replied, sent),
+        bounce_rate: safe(bounced, sent),
+      },
+      by_channel: breakdown,
+    };
+  }
 }
 
 function toListRow(row: CampaignWithRollups): CampaignListRow {
