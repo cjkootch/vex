@@ -75,7 +75,10 @@ export interface OrganizationListRow {
   industry: string | null;
   fitScore: number | null;
   status: string;
+  kind: string | null;
   contactCount: number;
+  productCount: number;
+  dealCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -151,7 +154,11 @@ export class OrganizationsController {
           .limit(limit);
 
         if (rows.length === 0) return [];
-        const counts = await loadContactCounts(tx);
+        const [contactCounts, productCounts, dealCounts] = await Promise.all([
+          loadContactCounts(tx),
+          loadProductCounts(tx),
+          loadBuyerDealCounts(tx),
+        ]);
 
         return rows.map((row) => ({
           id: row.id,
@@ -160,7 +167,10 @@ export class OrganizationsController {
           industry: row.industry,
           fitScore: row.fitScore,
           status: row.status,
-          contactCount: counts.get(row.id) ?? 0,
+          kind: row.kind,
+          contactCount: contactCounts.get(row.id) ?? 0,
+          productCount: productCounts.get(row.id) ?? 0,
+          dealCount: dealCounts.get(row.id) ?? 0,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),
         }));
@@ -242,7 +252,10 @@ export class OrganizationsController {
         industry: organization.industry,
         fitScore: organization.fitScore,
         status: organization.status,
+        kind: organization.kind ?? null,
         contactCount: 0,
+        productCount: 0,
+        dealCount: 0,
         createdAt: organization.createdAt.toISOString(),
         updatedAt: organization.updatedAt.toISOString(),
       },
@@ -448,6 +461,8 @@ export class OrganizationsController {
         role: d.buyerOrgId === id ? "buyer" : "seller",
       }));
 
+      const productRows = await this.orgProducts.listForOrg(tx, id);
+
       const detail: OrganizationDetail = {
         id: after.id,
         legalName: after.legalName,
@@ -455,9 +470,12 @@ export class OrganizationsController {
         industry: after.industry,
         fitScore: after.fitScore,
         status: after.status,
+        kind: after.kind ?? null,
         sourceOfTruth: after.sourceOfTruth,
         externalKeys: after.externalKeys,
         contactCount: contacts.length,
+        productCount: productRows.length,
+        dealCount: deals.length,
         createdAt: after.createdAt.toISOString(),
         updatedAt: after.updatedAt.toISOString(),
         contacts: contacts.map((c) => ({
@@ -540,6 +558,8 @@ export class OrganizationsController {
           role: d.buyerOrgId === id ? "buyer" : "seller",
         }));
 
+        const productRows = await this.orgProducts.listForOrg(tx, id);
+
         const detail: OrganizationDetail = {
           id: row.id,
           legalName: row.legalName,
@@ -547,9 +567,12 @@ export class OrganizationsController {
           industry: row.industry,
           fitScore: row.fitScore,
           status: row.status,
+          kind: row.kind ?? null,
           sourceOfTruth: row.sourceOfTruth,
           externalKeys: row.externalKeys,
           contactCount: contacts.length,
+          productCount: productRows.length,
+          dealCount: deals.length,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),
           contacts: contacts.map((c) => ({
@@ -729,6 +752,32 @@ async function loadContactCounts(tx: Tx): Promise<Map<string, number>> {
     })
     .from(schema.contactOrgMemberships)
     .groupBy(schema.contactOrgMemberships.orgId);
+  const out = new Map<string, number>();
+  for (const r of rows) out.set(r.orgId, Number(r.count));
+  return out;
+}
+
+async function loadProductCounts(tx: Tx): Promise<Map<string, number>> {
+  const rows = await tx
+    .select({
+      orgId: schema.organizationProducts.orgId,
+      count: count(),
+    })
+    .from(schema.organizationProducts)
+    .groupBy(schema.organizationProducts.orgId);
+  const out = new Map<string, number>();
+  for (const r of rows) out.set(r.orgId, Number(r.count));
+  return out;
+}
+
+async function loadBuyerDealCounts(tx: Tx): Promise<Map<string, number>> {
+  const rows = await tx
+    .select({
+      orgId: schema.fuelDeals.buyerOrgId,
+      count: count(),
+    })
+    .from(schema.fuelDeals)
+    .groupBy(schema.fuelDeals.buyerOrgId);
   const out = new Map<string, number>();
   for (const r of rows) out.set(r.orgId, Number(r.count));
   return out;
