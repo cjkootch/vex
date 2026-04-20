@@ -110,6 +110,17 @@ async function main(): Promise<void> {
       ...(env.S3_ENDPOINT ? { endpoint: env.S3_ENDPOINT } : {}),
     },
     temporal: temporalClient?.client ?? null,
+    // Temporal-less fallback for outbound_call. When Temporal is down
+    // but we still have Twilio + APP_BASE_URL, the executor dials
+    // Twilio directly using these callback URLs. Same endpoints the
+    // Temporal activity uses.
+    outboundCallCallbacks: env.APP_BASE_URL
+      ? {
+          twimlUrl: `${env.APP_BASE_URL.replace(/\/$/, "")}/calls/twilio/twiml`,
+          statusCallbackUrl: `${env.APP_BASE_URL.replace(/\/$/, "")}/calls/twilio/status`,
+          recordingCallbackUrl: `${env.APP_BASE_URL.replace(/\/$/, "")}/calls/twilio/recording`,
+        }
+      : null,
     twilio:
       env.TWILIO_ACCOUNT_SID && env.TWILIO_AUTH_TOKEN && env.TWILIO_PHONE_NUMBER
         ? {
