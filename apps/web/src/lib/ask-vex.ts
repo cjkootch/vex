@@ -20,8 +20,8 @@ export type AskVexSubjectType =
 export interface AskVexArgs {
   type: AskVexSubjectType;
   id: string;
-  label?: string | null;
-  ask?: string | null;
+  label?: string | null | undefined;
+  ask?: string | null | undefined;
 }
 
 export function buildAskVexHref(args: AskVexArgs): string {
