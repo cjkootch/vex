@@ -46,7 +46,8 @@ export type AgentJobKind =
   | "daily_brief"
   | "research"
   | "follow_up"
-  | "lead_qualification";
+  | "lead_qualification"
+  | "reactivation_batch";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;

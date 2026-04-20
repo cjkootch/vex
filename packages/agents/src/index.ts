@@ -94,12 +94,14 @@ export {
   ResearchAgent,
   CallPrepAgent,
   LeadQualificationAgent,
+  ReactivationBatchAgent,
   type AgentContext,
   type AgentOutput,
   type IAgent,
   type ResearchAgentInput,
   type CallPrepAgentInput,
   type LeadQualificationInput,
+  type ReactivationBatchInput,
 } from "./agents/index.js";
 export {
   evaluateGate,

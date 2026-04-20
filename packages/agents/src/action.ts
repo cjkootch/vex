@@ -461,6 +461,31 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     paymentTerms: z.string().max(500).optional(),
     rationale: z.string().max(500).optional(),
   }),
+  // lead.reactivate_draft: trigger a multi-step reactivation
+  // workflow. One operator approval kicks off an agent run that:
+  //   1) loads each named contact + their org + recent activity
+  //   2) drafts a personalised re-engagement email per contact via
+  //      Claude (market-outreach prompt)
+  //   3) creates one pending email.send approval per contact
+  // Operator reviews each draft individually in the inbox. The
+  // parent approval is T2 because it spawns N downstream
+  // email.send approvals; each draft stays T2 too so the human
+  // reviews copy before it leaves the building.
+  //
+  // Claude supplies the contact ids directly from the evidence
+  // pack (up to 20). productContext + angle are free-form strings
+  // the reactivation agent feeds into the per-contact Claude call
+  // so every draft shares the same thesis (e.g. "Q3 parboiled rice
+  // availability", "LC60D terms opened"). The operator's "why now"
+  // sits in `rationale`.
+  z.object({
+    kind: z.literal("lead.reactivate_draft"),
+    tier: z.literal(ApprovalTier.T2),
+    contactIds: z.array(zUlid).min(1).max(20),
+    productContext: z.string().min(1).max(500),
+    angle: z.string().min(1).max(500).optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
   // touchpoint.log: record a manual touchpoint (phone call, meeting,
   // off-platform chat) that the operator had with a contact or org.
   // Lands a touchpoint row so the contact timeline stays complete
