@@ -177,6 +177,15 @@ export const EnvSchema = z.object({
    * `X-VTC-Timestamp`.
    */
   WEBSITE_CHAT_WEBHOOK_SECRET: z.string().min(1).optional(),
+  /**
+   * Slack Incoming Webhook URL — when set, the worker posts a hot-
+   * lead nudge to the configured channel every time the
+   * LeadQualificationAgent fires a `lead.hot` signal. When unset,
+   * every notify is a no-op. Create one at api.slack.com/apps →
+   * Create New App → Incoming Webhooks → Add New Webhook to
+   * Workspace. Keep the URL secret; anyone with it can post.
+   */
+  SLACK_WEBHOOK_URL: z.string().url().optional(),
 
   // Temporal
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
