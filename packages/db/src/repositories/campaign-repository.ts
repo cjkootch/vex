@@ -1,4 +1,5 @@
 import { and, desc, eq, sql } from "drizzle-orm";
+import { createId } from "@vex/domain";
 import type { CampaignStatus } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { campaigns, type Campaign } from "../schema/campaigns.js";
@@ -37,6 +38,39 @@ export class CampaignRepository {
       .where(eq(campaigns.id, id))
       .limit(1);
     return row ?? null;
+  }
+
+  /**
+   * Insert a new campaign row. Caller is responsible for inserting
+   * the corresponding campaign_steps inside the same transaction —
+   * `applyCampaignCreate` in the approval executor does both in one
+   * withTenant() so a crash between insert-campaign and insert-steps
+   * rolls the whole thing back.
+   */
+  async create(
+    tx: Tx,
+    tenantId: string,
+    data: {
+      id?: string;
+      channel: string;
+      objective?: string | null;
+      source?: string | null;
+      medium?: string | null;
+    },
+  ): Promise<Campaign> {
+    const [row] = await tx
+      .insert(campaigns)
+      .values({
+        id: data.id ?? createId(),
+        tenantId,
+        channel: data.channel,
+        objective: data.objective ?? null,
+        source: data.source ?? null,
+        medium: data.medium ?? null,
+      })
+      .returning();
+    if (!row) throw new Error("campaign insert returned no row");
+    return row;
   }
 
   async list(tx: Tx, limit = 100): Promise<Campaign[]> {

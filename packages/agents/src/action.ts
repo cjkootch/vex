@@ -149,6 +149,40 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     contactIds: z.array(zUlid).min(1).max(500),
     rationale: z.string().min(1).max(1000),
   }),
+  // Sprint T.4 — chat-initiated workflow authoring. When the catalog
+  // has no plan that fits, the agent can propose a brand-new multi-
+  // channel campaign: { name, channel, steps: [...] }. On approve,
+  // the executor inserts the campaign row + all step rows in one
+  // transaction so `campaign.enroll_batch` can immediately target
+  // the new campaign id. Steps map 1:1 to campaign_steps columns
+  // (position, channel, delay, tier, autoApprove, templateRef,
+  // gateConditionJson).
+  z.object({
+    kind: z.literal("campaign.create"),
+    tier: z.literal(ApprovalTier.T2),
+    name: z.string().min(1).max(200),
+    /**
+     * Dominant channel of the plan. Used as the campaigns.channel
+     * column; step-level channels still ride per-row on campaign_steps.
+     */
+    channel: z.enum(["email", "sms", "whatsapp", "voice", "multi"]),
+    objective: z.string().max(500).optional(),
+    steps: z
+      .array(
+        z.object({
+          position: z.number().int().min(0).max(50),
+          channel: z.enum(["email", "sms", "whatsapp", "voice", "manual"]),
+          delayAfterPriorMs: z.number().int().min(0).max(90 * 24 * 3600_000),
+          tier: z.enum(["T0", "T1", "T2", "T3"]),
+          autoApprove: z.boolean(),
+          templateRef: z.string().max(200).optional().nullable(),
+          gateConditionJson: z.record(z.unknown()).optional(),
+        }),
+      )
+      .min(1)
+      .max(20),
+    rationale: z.string().min(1).max(1000),
+  }),
   // Sprint N — chat-initiated one-off messaging. The agent proposes a
   // single SMS or WhatsApp message at a specific phone number. On
   // approve, the executor fires through Twilio's Messages API and

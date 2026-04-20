@@ -132,4 +132,95 @@ describe("ActionDescriptor", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts a valid campaign.create with 3 multi-channel steps", () => {
+    const parsed = ActionDescriptor.parse({
+      kind: "campaign.create",
+      tier: ApprovalTier.T2,
+      name: "Haiti food nurture",
+      channel: "multi",
+      objective: "Warm up Haiti importers on parboiled rice spots",
+      steps: [
+        {
+          position: 0,
+          channel: "email",
+          delayAfterPriorMs: 0,
+          tier: "T2",
+          autoApprove: false,
+        },
+        {
+          position: 1,
+          channel: "email",
+          delayAfterPriorMs: 3 * 86_400_000,
+          tier: "T2",
+          autoApprove: false,
+        },
+        {
+          position: 2,
+          channel: "sms",
+          delayAfterPriorMs: 7 * 86_400_000,
+          tier: "T2",
+          autoApprove: false,
+        },
+      ],
+      rationale: "No existing Haitian-importer cadence; propose a new 3-step multi-channel nurture.",
+    });
+    expect(parsed.kind).toBe("campaign.create");
+    expect(actionRequiresApproval(parsed)).toBe(true);
+  });
+
+  it("rejects campaign.create with zero steps", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "campaign.create",
+        tier: ApprovalTier.T2,
+        name: "empty",
+        channel: "email",
+        steps: [],
+        rationale: "x",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects campaign.create with invalid step channel", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "campaign.create",
+        tier: ApprovalTier.T2,
+        name: "bad-channel",
+        channel: "email",
+        steps: [
+          {
+            position: 0,
+            channel: "fax", // not in enum
+            delayAfterPriorMs: 0,
+            tier: "T2",
+            autoApprove: false,
+          },
+        ],
+        rationale: "x",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects campaign.create at T1 (must be T2)", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "campaign.create",
+        tier: ApprovalTier.T1,
+        name: "wrong-tier",
+        channel: "email",
+        steps: [
+          {
+            position: 0,
+            channel: "email",
+            delayAfterPriorMs: 0,
+            tier: "T1",
+            autoApprove: true,
+          },
+        ],
+        rationale: "x",
+      }),
+    ).toThrow();
+  });
 });
