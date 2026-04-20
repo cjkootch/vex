@@ -266,6 +266,98 @@ export class WebhooksController {
   }
 
   /**
+   * POST /webhooks/email-inbound — provider-agnostic inbound email.
+   *
+   * Accepts a canonical JSON payload any inbound-email service can POST
+   * after a thin translation shim (Resend Inbound, SendGrid Inbound
+   * Parse, Postmark Inbound, Mailgun Routes, AWS SES → Lambda). Shape:
+   *
+   *   { event: "email.received",
+   *     from: "<addr>", to: ["<addr>"],
+   *     subject?, text?, html?,
+   *     message_id: "<RFC5322 Message-ID>",
+   *     in_reply_to?: "<Message-ID this replies to>",
+   *     received_at?: "<ISO-8601>" }
+   *
+   * Signed with the same HMAC verifier as /webhooks/website-chat +
+   * /webhooks/form — one secret to configure in the email-provider
+   * translation shim.
+   *
+   * Idempotency: provider_event_id = message_id so webhook retries of
+   * the same Message-ID collapse at the raw_events layer. The
+   * normalizer also uses message_id in its event idempotency key so
+   * a replayed raw_event still lands a single event row.
+   */
+  @Post("email-inbound")
+  @HttpCode(204)
+  async emailInboundWebhook(
+    @Req() req: RawBodyRequest<FastifyRequest>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<void> {
+    const rawBody = req.rawBody;
+    if (!rawBody) throw new BadRequestException("missing_body");
+
+    const verdict = this.websiteChat.verify(req.headers, rawBody);
+    if (!verdict.ok) {
+      this.log.warn(`email-inbound webhook rejected: ${verdict.reason}`);
+      throw new BadRequestException("invalid_signature");
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawBody.toString("utf8")) as Record<string, unknown>;
+    } catch {
+      throw new BadRequestException("invalid_json");
+    }
+
+    const eventKind =
+      typeof payload["event"] === "string"
+        ? (payload["event"] as string)
+        : undefined;
+    if (eventKind !== "email.received") {
+      throw new BadRequestException("unsupported_event");
+    }
+
+    const messageId =
+      typeof payload["message_id"] === "string"
+        ? (payload["message_id"] as string)
+        : undefined;
+    if (!messageId) {
+      throw new BadRequestException("missing_message_id");
+    }
+
+    const tenantId = this.resolveTenant("email_inbound", payload);
+    const checksum = sha256Hex(rawBody);
+    const headersForStorage = pickHeaders(req.headers, [
+      "x-vtc-timestamp",
+      "x-vtc-signature",
+      "x-idempotency-key",
+      "content-type",
+    ]);
+
+    const result = await withTenant(this.db, tenantId, async (tx) =>
+      this.rawEvents.insertIfNotExists(
+        tx,
+        tenantId,
+        "email_inbound",
+        messageId,
+        headersForStorage,
+        payload,
+        checksum,
+      ),
+    );
+
+    if (result.isNew) {
+      await addNormalizationJob(this.queue, {
+        raw_event_id: result.id,
+        tenant_id: tenantId,
+      });
+    }
+
+    void reply;
+  }
+
+  /**
    * POST /webhooks/form — inbound lead events from the VTC marketing
    * site's #lead-form. One event kind today: `form.submitted`. Shares
    * the HMAC signing secret with /webhooks/website-chat since both

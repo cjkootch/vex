@@ -1,6 +1,7 @@
 import type { Job, Queue } from "bullmq";
 import { withTenant, type Db, type RawEventRepository } from "@vex/db";
 import {
+  EmailInboundNormalizer,
   FormFillNormalizer,
   ResendNormalizer,
   TwilioNormalizer,
@@ -116,6 +117,11 @@ export function buildNormalizationProcessor(deps: NormalizationProcessorDeps) {
           outcome = await new FormFillNormalizer(normalizerDeps).normalize(
             input,
           );
+          break;
+        case "email_inbound":
+          outcome = await new EmailInboundNormalizer(
+            normalizerDeps,
+          ).normalize(input);
           break;
         default:
           throw new Error(`unsupported provider: ${raw.provider}`);
