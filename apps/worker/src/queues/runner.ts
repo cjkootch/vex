@@ -126,6 +126,19 @@ export interface QueueRunnerOptions {
     webhookUrl: string;
     appBaseUrl: string | null;
   } | null;
+  /**
+   * Twilio callback URLs used by the Temporal-less outbound_call
+   * fallback. When Temporal is down (`temporal` above is null) but
+   * we still have Twilio creds + an API base URL, the executor
+   * dials Twilio directly instead of failing with
+   * `temporal_unavailable`. Same endpoint paths the Temporal path
+   * uses; constructed once in main.ts from APP_BASE_URL.
+   */
+  outboundCallCallbacks?: {
+    twimlUrl: string;
+    statusCallbackUrl: string;
+    recordingCallbackUrl: string;
+  } | null;
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
   defaultWorkspaceId?: string;
@@ -264,6 +277,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       temporal: options.temporal ?? null,
       twilio: twilioForExecutor,
       resend: resendForExecutor,
+      outboundCallCallbacks: options.outboundCallCallbacks ?? null,
       redis: connection,
       agentsQueue: queues.agents,
     }),
@@ -491,6 +505,17 @@ export interface ApprovalExecutorDeps {
    * `approval.executor.failed` in that case.
    */
   twilio: TwilioClient | null;
+  /**
+   * API base URL used to build Twilio callback URLs on the Temporal-
+   * less outbound_call fallback (e.g. APP_BASE_URL env). Null when
+   * not configured; the fallback path then emits
+   * `approval.executor.failed` with a clear reason.
+   */
+  outboundCallCallbacks?: {
+    twimlUrl: string;
+    statusCallbackUrl: string;
+    recordingCallbackUrl: string;
+  } | null;
   /**
    * Resend client for the email.send branch. Null when
    * RESEND_API_KEY isn't set.
@@ -866,14 +891,118 @@ async function applyOutboundCall(
     return;
   }
   if (!deps.temporal) {
-    await emitExecutorFailed(
-      tx,
-      deps,
+    // Fallback: no Temporal cluster configured. If we have Twilio +
+    // a public API base URL for the TwiML callbacks, dial directly.
+    // Loses the workflow state machine (auto-retry, recording→S3,
+    // backup-signal waits) but delivers a ringing phone for demo /
+    // test / operator-joined flows. Emit a distinct audit event so
+    // the UI can still surface "applied" vs a silent failure.
+    if (!deps.twilio) {
+      await emitExecutorFailed(
+        tx,
+        deps,
+        tenantId,
+        approval.id,
+        "outbound_call",
+        "temporal_unavailable_and_no_twilio",
+      );
+      return;
+    }
+    if (!deps.outboundCallCallbacks) {
+      await emitExecutorFailed(
+        tx,
+        deps,
+        tenantId,
+        approval.id,
+        "outbound_call",
+        "temporal_unavailable_and_no_app_base_url",
+      );
+      return;
+    }
+    if (approval.appliedObjectId) {
+      await recordExecutorReplay(tx, deps, tenantId, approval, "outbound_call");
+      return;
+    }
+    // Deterministic workflow id so the conference name + call detail
+    // URL match what the rest of the system expects.
+    const agentRun = await deps.agentRuns.create(tx, tenantId, {
+      agentName: "outbound_call",
+      inputRefs: {
+        contact_id: contactId,
+        org_id: orgId,
+        initiated_by: "chat_agent",
+        to_number: toNumber,
+        chat_approval_id: approval.id,
+        fallback: "direct_twilio_no_temporal",
+      },
+    });
+    const workflowId = WorkflowId.outboundCall(agentRun.id);
+
+    if (aiMode && aiInstructions) {
+      try {
+        await deps.redis.setex(
+          `vex:call-scenario:${workflowId}`,
+          300,
+          aiInstructions,
+        );
+      } catch {
+        /* non-fatal — call still fires with default prompt */
+      }
+    }
+
+    const twimlUrl = withCallParamsForFallback(
+      deps.outboundCallCallbacks.twimlUrl,
+      workflowId,
       tenantId,
-      approval.id,
-      "outbound_call",
-      "temporal_unavailable",
+      aiMode,
     );
+    const statusCallback = withCallParamsForFallback(
+      deps.outboundCallCallbacks.statusCallbackUrl,
+      workflowId,
+      tenantId,
+    );
+    const recordingStatusCallback = withCallParamsForFallback(
+      deps.outboundCallCallbacks.recordingCallbackUrl,
+      workflowId,
+      tenantId,
+    );
+    try {
+      const { callSid, status } = await deps.twilio.createOutboundCall({
+        to: toNumber,
+        twimlUrl,
+        statusCallback,
+        recordingStatusCallback,
+      });
+      await deps.approvals.markApplied(tx, approval.id, callSid);
+      await deps.events.insertIfNotExists(tx, tenantId, {
+        verb: "approval.executor.applied",
+        subjectType: "approval",
+        subjectId: approval.id,
+        actorType: "system",
+        actorId: "approval_executor",
+        objectType: "approval",
+        objectId: approval.id,
+        occurredAt: new Date(),
+        idempotencyKey: `approval.executor:${approval.id}`,
+        metadata: {
+          action_type: "outbound_call",
+          workflow_id: workflowId,
+          agent_run_id: agentRun.id,
+          twilio_call_sid: callSid,
+          twilio_status: status,
+          fallback: "direct_twilio_no_temporal",
+        },
+      });
+    } catch (err) {
+      await emitExecutorFailed(
+        tx,
+        deps,
+        tenantId,
+        approval.id,
+        "outbound_call",
+        `twilio_call_failed: ${(err as Error).message}`,
+      );
+    }
     return;
   }
 
@@ -2184,6 +2313,22 @@ async function applyCreateDeal(
       applied_by: approval.reviewerId,
     },
   });
+}
+
+/**
+ * Append the wf + tenant query params Twilio needs on every callback
+ * URL. Mirrors withCallParams in call-activities.ts so the Temporal
+ * and Temporal-less paths hit the same API endpoints.
+ */
+function withCallParamsForFallback(
+  baseUrl: string,
+  workflowId: string,
+  tenantId: string,
+  aiMode?: boolean,
+): string {
+  const joinChar = baseUrl.includes("?") ? "&" : "?";
+  const extras = aiMode ? "&aiMode=true" : "";
+  return `${baseUrl}${joinChar}wf=${encodeURIComponent(workflowId)}&tenant=${encodeURIComponent(tenantId)}${extras}`;
 }
 
 /**

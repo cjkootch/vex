@@ -664,7 +664,7 @@ function localHourIn(timezone: string, at: Date): number {
  * (Sprint K `<Start><Stream>` fork) knows which tenant's escalation
  * pipeline to invoke.
  */
-function withCallParams(
+export function withCallParams(
   baseUrl: string,
   workflowId: string,
   tenantId: string,
