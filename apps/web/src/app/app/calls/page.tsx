@@ -8,7 +8,6 @@ import {
   WorkspaceModeProvider,
   useWorkspaceMode,
 } from "@/lib/workspace-mode-context";
-import { InitiateCallButton } from "@/components/calls/initiate-call-button";
 
 /**
  * /app/calls — Sprint 12 outbound-call surface.
@@ -25,7 +24,11 @@ import { InitiateCallButton } from "@/components/calls/initiate-call-button";
  * bandwidth.
  */
 
-const POLL_INTERVAL_MS = 5_000;
+// 5s polling against /api/agent-runs + /api/approvals on every open
+// /app/calls tab tripped the API throttle (429). 15s is plenty for a
+// list view — the call detail page (where live-listen lives) has its
+// own faster poll bound to a single workflow id.
+const POLL_INTERVAL_MS = 15_000;
 const CALLS_AGENT_NAME = "outbound_call";
 
 interface AgentRunItem {
@@ -400,20 +403,54 @@ function CompletedRow({ run }: { run: AgentRunItem }) {
 
 function EmptyState() {
   return (
-    <section className="rounded-lg border border-line bg-muted/20 px-6 py-8 text-center">
-      <p className="text-sm text-white/60">
-        No outbound calls yet. Enable <code className="font-mono text-white/80">outbound_call</code> in workspace settings,
-        then initiate a call from a contact profile.
+    <section className="rounded-lg border border-line bg-muted/20 px-6 py-8">
+      <h2 className="text-base font-semibold text-white">No outbound calls yet</h2>
+      <p className="mt-2 text-sm text-white/70">
+        Calls are queued from a specific contact. Open a contact in{" "}
+        <Link href="/app/contacts" className="text-accent hover:underline">
+          Contacts
+        </Link>{" "}
+        and click <span className="font-mono text-white">Call</span> on
+        their profile, or just ask in{" "}
+        <Link href="/app/chat" className="text-accent hover:underline">
+          Chat
+        </Link>{" "}
+        — &ldquo;call Cole Kutschinski&rdquo; queues a T3 approval the
+        same way.
       </p>
-      <div className="mt-4">
-        <InitiateCallButton
-          contactId="SELECT_CONTACT"
-          contactName="the selected contact"
-        />
+
+      <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+        <div className="rounded-md border border-line bg-canvas/40 p-3">
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-accent">
+            AI dials
+          </div>
+          <p className="text-white/80">
+            <span className="font-semibold text-white">Vex calls.</span>{" "}
+            Twilio dials the contact and OpenAI Realtime holds the
+            conversation using the qualifier prompt (or a custom one if
+            you supplied <code className="font-mono">aiInstructions</code>).
+            You can listen in or unmute to take over from the call
+            detail page.
+          </p>
+        </div>
+        <div className="rounded-md border border-line bg-canvas/40 p-3">
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-white/60">
+            Operator joins
+          </div>
+          <p className="text-white/80">
+            <span className="font-semibold text-white">You call.</span>{" "}
+            Twilio dials the contact and bridges the call into a
+            conference. Open the detail page → <em>Join call</em> to
+            speak with them. Vex stays available to assist via the
+            transcript or hand-off.
+          </p>
+        </div>
       </div>
-      <p className="mt-3 text-xs text-white/40">
-        (The button above is a sanity check — you&rsquo;ll see a 404 until you
-        pass a real contact id.)
+
+      <p className="mt-4 text-xs text-white/40">
+        Either way, every call requires a T3 approval before Twilio
+        dials. Make sure <code className="font-mono">outbound_call</code>{" "}
+        is in your workspace&rsquo;s <code className="font-mono">enabled_agents</code>.
       </p>
     </section>
   );
