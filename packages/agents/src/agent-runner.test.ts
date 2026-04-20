@@ -77,6 +77,7 @@ function buildDeps(workspaceSettings: {
       organizations: {} as never,
       contacts: {} as never,
       leads: {} as never,
+      documents: {} as never,
       summaries: {} as never,
       touchpoints: {} as never,
       activities: {} as never,

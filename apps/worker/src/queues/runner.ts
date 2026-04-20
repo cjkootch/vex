@@ -4,6 +4,7 @@ import {
   AgentRunner,
   DailyBriefAgent,
   FollowUpAgent,
+  LeadQualificationAgent,
   ResearchAgent,
   backpressureEngaged,
   buildDlqProcessor,
@@ -154,6 +155,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     memberships: repos.memberships,
     leads: repos.leads,
     documents: repos.documents,
+    agentsQueue: queues.agents,
   });
   const dlqProcessor = buildDlqProcessor({
     db,
@@ -184,6 +186,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     organizations: repos.organizations,
     contacts: repos.contacts,
     leads: repos.leads,
+    documents: repos.documents,
     summaries: repos.summaries,
     touchpoints: repos.touchpoints,
     activities: repos.activities,
@@ -333,6 +336,18 @@ function buildAgentProcessor(runner: AgentRunner) {
         return runner.run(new ResearchAgent({ organizationId: orgId }), {
           workspaceId: data.workspace_id,
         });
+      }
+      case "lead_qualification": {
+        const conversationId = data.input?.["conversation_id"];
+        if (typeof conversationId !== "string") {
+          throw new Error(
+            "lead_qualification job missing input.conversation_id",
+          );
+        }
+        return runner.run(
+          new LeadQualificationAgent({ conversationId }),
+          { workspaceId: data.workspace_id },
+        );
       }
       default:
         throw new Error(`unknown agent kind: ${(data as { kind: string }).kind}`);

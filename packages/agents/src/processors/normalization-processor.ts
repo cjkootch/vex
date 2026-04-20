@@ -1,4 +1,4 @@
-import type { Job } from "bullmq";
+import type { Job, Queue } from "bullmq";
 import { withTenant, type Db, type RawEventRepository } from "@vex/db";
 import {
   ResendNormalizer,
@@ -17,7 +17,8 @@ import type {
   OrganizationRepository,
   TouchpointRepository,
 } from "@vex/db";
-import type { NormalizationJobData } from "../queues.js";
+import { addAgentJob } from "../queues.js";
+import type { AgentJobData, NormalizationJobData } from "../queues.js";
 
 export interface NormalizationProcessorDeps {
   db: Db;
@@ -31,6 +32,13 @@ export interface NormalizationProcessorDeps {
   memberships?: ContactOrgMembershipRepository;
   leads?: LeadRepository;
   documents?: DocumentRepository;
+  /**
+   * Optional agents queue. When provided, a successful website_chat
+   * `conversation.ended` normalization enqueues a `lead_qualification`
+   * agent job so Claude can extract structured fields from the
+   * transcript. Omit in tests that don't care about the follow-up.
+   */
+  agentsQueue?: Queue<AgentJobData>;
 }
 
 /**
@@ -108,6 +116,32 @@ export function buildNormalizationProcessor(deps: NormalizationProcessorDeps) {
       }
 
       await deps.rawEvents.updateStatus(tx, raw.id, "processed");
+
+      // Fan-out hook: a successful website_chat conversation.ended
+      // normalization queues the LeadQualificationAgent so Claude
+      // extracts {product, volume, destination, timeline, urgency,
+      // intent} from the transcript. Runs outside the tx so an
+      // agents-queue hiccup can't roll back the normalization.
+      if (
+        deps.agentsQueue &&
+        raw.provider === "website_chat" &&
+        (raw.payload as { event?: unknown }).event === "conversation.ended"
+      ) {
+        const conversationId = (raw.payload as { conversation_id?: unknown })
+          .conversation_id;
+        if (typeof conversationId === "string") {
+          await addAgentJob(
+            deps.agentsQueue,
+            {
+              kind: "lead_qualification",
+              workspace_id: tenantId,
+              input: { conversation_id: conversationId },
+            },
+            conversationId,
+          );
+        }
+      }
+
       return outcome;
     });
   };

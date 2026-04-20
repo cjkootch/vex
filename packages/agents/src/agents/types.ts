@@ -4,6 +4,7 @@ import type {
   AgentRunRepository,
   ApprovalRepository,
   ContactRepository,
+  DocumentRepository,
   EventRepository,
   LeadRepository,
   OrganizationRepository,
@@ -46,6 +47,7 @@ export interface AgentContext {
   approvals: ApprovalRepository;
   agentRuns: AgentRunRepository;
   workspaces: WorkspaceRepository;
+  documents: DocumentRepository;
 }
 
 /**

@@ -42,7 +42,11 @@ export interface DlqJobData extends NormalizationJobData {
 }
 
 /** Agent job payload — kind drives which agent the worker constructs. */
-export type AgentJobKind = "daily_brief" | "research" | "follow_up";
+export type AgentJobKind =
+  | "daily_brief"
+  | "research"
+  | "follow_up"
+  | "lead_qualification";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;

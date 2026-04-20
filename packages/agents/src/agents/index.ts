@@ -7,3 +7,7 @@ export {
   DealEvaluatorAgent,
   type DealEvaluatorInput,
 } from "./deal-evaluator.js";
+export {
+  LeadQualificationAgent,
+  type LeadQualificationInput,
+} from "./lead-qualification.js";

@@ -93,11 +93,13 @@ export {
   FollowUpAgent,
   ResearchAgent,
   CallPrepAgent,
+  LeadQualificationAgent,
   type AgentContext,
   type AgentOutput,
   type IAgent,
   type ResearchAgentInput,
   type CallPrepAgentInput,
+  type LeadQualificationInput,
 } from "./agents/index.js";
 export {
   evaluateGate,
