@@ -152,6 +152,24 @@ export class LeadQualificationAgent implements IAgent {
       });
     }
 
+    // Sprint T.2 — bigger autonomy leap. When the qualification has
+    // enough signal to seed a deal (specific product + parseable
+    // volume + a buyer org on the lead), propose a T2 crm.create_deal
+    // with VTC-sensible defaults (CIF, negotiated pricing, LC60D).
+    // Operator reviews + can reject the deal without blocking the
+    // email reply; the two are independent approvals.
+    const dealProposal = isHot
+      ? buildDealProposal({
+          parsed,
+          lead,
+          source: this.input.source,
+          agentRunId: ctx.agentRunId,
+        })
+      : null;
+    if (dealProposal) {
+      proposedActions.push(dealProposal);
+    }
+
     return {
       costUsd: 0,
       outputRefs: {
@@ -163,10 +181,11 @@ export class LeadQualificationAgent implements IAgent {
         hot: isHot,
         draft_proposed: Boolean(draftReply && contactEmail),
         draft_skip_reason: buildDraftSkipReason(isHot, draftReply, contactEmail),
+        deal_proposed: Boolean(dealProposal),
       },
       proposedActions,
       internalWrites: isHot ? 2 : 1,
-      rationale: `qualified lead ${lead.id} from ${this.input.source}${isHot ? " (hot)" : ""}${proposedActions.length > 0 ? " + auto-draft" : ""}`,
+      rationale: `qualified lead ${lead.id} from ${this.input.source}${isHot ? " (hot)" : ""}${proposedActions.length > 0 ? ` + ${proposedActions.length} proposal${proposedActions.length === 1 ? "" : "s"}` : ""}`,
     };
   }
 
@@ -326,6 +345,195 @@ function buildDraftSkipReason(
   if (!draft) return "no_draft_reply";
   if (!email) return "no_contact_email";
   return null;
+}
+
+/** crm.create_deal action enum — subset that matches qualification products. */
+type DealProduct =
+  | "ulsd"
+  | "gasoline_87"
+  | "gasoline_91"
+  | "jet_a"
+  | "jet_a1"
+  | "avgas"
+  | "lfo"
+  | "hfo"
+  | "lng"
+  | "lpg"
+  | "biodiesel_b20"
+  | "rice"
+  | "beans"
+  | "pork"
+  | "chicken"
+  | "cooking_oil"
+  | "powdered_milk";
+
+/**
+ * Map the qualification's free-form product to the crm.create_deal
+ * enum. The qualifier prompt is already locked to a specific set of
+ * product strings; this table promotes each to the executor's accepted
+ * enum (names differ slightly, e.g. `jet` vs `jet_a`). Returns null
+ * when the product is unknown / ambiguous — the deal proposal is
+ * skipped rather than defaulted to a wrong SKU.
+ */
+export function mapQualificationProduct(
+  product: unknown,
+): DealProduct | null {
+  if (typeof product !== "string") return null;
+  const p = product.trim().toLowerCase();
+  const table: Record<string, DealProduct> = {
+    rice: "rice",
+    beans: "beans",
+    pork: "pork",
+    chicken: "chicken",
+    oil: "cooking_oil",
+    "cooking oil": "cooking_oil",
+    legumes: "beans", // close-enough mapping
+    ulsd: "ulsd",
+    gasoline: "gasoline_87", // default to the more-common SKU
+    gasoline_87: "gasoline_87",
+    gasoline_91: "gasoline_91",
+    jet: "jet_a",
+    jet_a: "jet_a",
+    jet_a1: "jet_a1",
+    lpg: "lpg",
+    hfo: "hfo",
+    lfo: "lfo",
+    mgo: "ulsd", // MGO is effectively ULSD for trading purposes
+    // Products the qualification schema knows but crm.create_deal
+    // doesn't (sugar, flour, poultry) stay null.
+  };
+  return table[p] ?? null;
+}
+
+/** Food SKUs vs fuel SKUs. */
+function isFoodProduct(p: DealProduct): boolean {
+  return (
+    p === "rice" ||
+    p === "beans" ||
+    p === "pork" ||
+    p === "chicken" ||
+    p === "cooking_oil" ||
+    p === "powdered_milk"
+  );
+}
+
+export interface ParsedVolume {
+  value: number;
+  unit: "usg" | "mt" | "kg" | "lbs" | "containers";
+}
+
+/**
+ * Parse Claude's free-form volume string (e.g. "500 MT", "1,200 USG",
+ * "200k MT", "50 containers") into a { value, unit } pair that
+ * matches crm.create_deal's schema. Handles commas, k/m/kt/mt
+ * suffixes, and a handful of unit spellings. Returns null on any
+ * format the parser doesn't recognise so the deal proposal skips
+ * rather than lands with a wrong number.
+ */
+export function parseVolume(raw: unknown): ParsedVolume | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim().toLowerCase().replace(/,/g, "");
+  if (s.length === 0) return null;
+
+  // Order matters: longer unit strings first.
+  const unitPatterns: Array<{ re: RegExp; unit: ParsedVolume["unit"] }> = [
+    { re: /containers?\b/, unit: "containers" },
+    { re: /\bmt\b|metric\s*tons?|\bt\b(?!on)/, unit: "mt" },
+    { re: /\bkg\b|kilo(gram)?s?\b/, unit: "kg" },
+    { re: /\blbs?\b|pounds?\b/, unit: "lbs" },
+    { re: /\busg\b|gal(lon)?s?\b/, unit: "usg" },
+  ];
+
+  let unit: ParsedVolume["unit"] | null = null;
+  let body = s;
+  for (const { re, unit: u } of unitPatterns) {
+    if (re.test(body)) {
+      unit = u;
+      body = body.replace(re, "").trim();
+      break;
+    }
+  }
+  if (!unit) return null;
+
+  // Parse the numeric prefix, honouring k / m / kt / mm multipliers.
+  const m = body.match(/^([\d.]+)\s*(k|m|kt|mm)?$/i);
+  if (!m) return null;
+  const base = Number.parseFloat(m[1]!);
+  if (!Number.isFinite(base) || base <= 0) return null;
+  const suffix = (m[2] ?? "").toLowerCase();
+  const mult = suffix === "k" || suffix === "kt" ? 1_000 : suffix === "m" || suffix === "mm" ? 1_000_000 : 1;
+  return { value: base * mult, unit };
+}
+
+/**
+ * Build a deal-proposal ProposedAction from a qualification. Returns
+ * null when any required field can't be derived (unmappable product,
+ * unparseable volume, missing lead.orgId). Defaults the unknowns
+ * (incoterm, pricing basis, payment terms) to VTC-sensible choices so
+ * the operator sees a concrete proposal they can tweak rather than a
+ * mostly-empty draft.
+ */
+export function buildDealProposal(args: {
+  parsed: Record<string, unknown>;
+  lead: { id: string; orgId: string | null };
+  source: "website_chat" | "website_form";
+  agentRunId: string;
+}): ProposedAction | null {
+  const { parsed, lead, source, agentRunId } = args;
+  if (!lead.orgId) return null;
+  const product = mapQualificationProduct(parsed["product"]);
+  if (!product) return null;
+  const volume = parseVolume(parsed["volume"]);
+  if (!volume) return null;
+
+  const lineOfBusiness: "food" | "fuel" = isFoodProduct(product) ? "food" : "fuel";
+  // Food default MT, fuel default USG. parseVolume captured the
+  // actual unit the lead used; keep their unit when plausible,
+  // otherwise fall back to the line-default.
+  const volumeUnit = volume.unit;
+
+  const destination = typeof parsed["destination"] === "string" ? parsed["destination"].trim() : null;
+  const timeline = typeof parsed["timeline"] === "string" ? parsed["timeline"].trim() : null;
+  const summary = typeof parsed["summary"] === "string" ? parsed["summary"].trim() : "";
+
+  const notesParts = [
+    timeline ? `Timeline: ${timeline}` : null,
+    summary ? `Summary: ${summary}` : null,
+  ].filter((x): x is string => Boolean(x));
+  const notes = notesParts.length > 0 ? notesParts.join("\n") : undefined;
+
+  // Deterministic-ish dealRef so the operator can see which lead
+  // sourced it. Uses the last 6 chars of the agent run id so a re-run
+  // on the same lead produces a different ref (avoids the "two
+  // pending proposals for the same deal" confusion — operator will
+  // naturally reject the older one).
+  const year = new Date().getFullYear();
+  const suffix = agentRunId.slice(-6).toUpperCase();
+  const dealRef = `VTC-${year}-L${suffix}`;
+
+  const payload: Record<string, unknown> = {
+    dealRef,
+    lineOfBusiness,
+    product,
+    incoterm: "cif",
+    pricingBasis: "negotiated",
+    paymentTerms: "lc_60d",
+    volumeUsg: volume.value,
+    volumeUnit,
+    buyerOrgId: lead.orgId,
+    rationale: `Auto-drafted from ${source} hot-lead qualification. Review pricing basis + payment terms before approving.`.slice(0, 1000),
+    auto_drafted_from: "lead_qualification",
+    lead_id: lead.id,
+  };
+  if (destination) payload["destinationPort"] = destination;
+  if (notes) payload["notes"] = notes;
+
+  return {
+    kind: "crm.create_deal",
+    tier: "T2",
+    payload,
+    rationale: `Hot-lead qualification produced product + volume; drafting ${lineOfBusiness} deal shell for review.`,
+  };
 }
 
 function parseQualificationJson(raw: string): Record<string, unknown> | null {
