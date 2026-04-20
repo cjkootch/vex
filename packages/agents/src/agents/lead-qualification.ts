@@ -1,4 +1,5 @@
 import { TenantId } from "@vex/domain";
+import type { ProposedAction } from "@vex/integrations";
 import type { AgentContext, AgentOutput, IAgent } from "./types.js";
 
 /**
@@ -122,6 +123,35 @@ export class LeadQualificationAgent implements IAgent {
       });
     }
 
+    // Sprint T.1 — autonomy leap. On hot leads where Claude produced a
+    // usable draft_reply AND the contact has an email on file, emit a
+    // T2 email.send proposed action. AgentRunner routes it through
+    // ApprovalGate so it lands as a pending approval in /app/approvals.
+    // Operator reviews + approves; applyEmailSend fires the Resend
+    // post-commit. Lead arrives → draft already waiting for review.
+    const proposedActions: ProposedAction[] = [];
+    const draftReply = isHot ? extractDraftReply(parsed) : null;
+    const contact = lead.contactId
+      ? await ctx.contacts.findById(ctx.tx, lead.contactId)
+      : null;
+    const contactEmail = contact?.emails?.[0] ?? null;
+    if (draftReply && contactEmail) {
+      proposedActions.push({
+        kind: "email.send",
+        tier: "T2",
+        payload: {
+          to: [contactEmail],
+          subject: draftReply.subject,
+          body: draftReply.body,
+          contact_id: lead.contactId,
+          lead_id: lead.id,
+          source: this.input.source,
+          auto_drafted_from: "lead_qualification",
+        },
+        rationale: `Auto-drafted reply on hot lead (${parsed["buying_intent"] ?? "?"} / ${parsed["urgency"] ?? "?"}). Operator review gate before send.`,
+      });
+    }
+
     return {
       costUsd: 0,
       outputRefs: {
@@ -131,10 +161,12 @@ export class LeadQualificationAgent implements IAgent {
         ...(content.sourceObjectId ? { source_object_id: content.sourceObjectId } : {}),
         qualification: parsed,
         hot: isHot,
+        draft_proposed: Boolean(draftReply && contactEmail),
+        draft_skip_reason: buildDraftSkipReason(isHot, draftReply, contactEmail),
       },
-      proposedActions: [],
+      proposedActions,
       internalWrites: isHot ? 2 : 1,
-      rationale: `qualified lead ${lead.id} from ${this.input.source}${isHot ? " (hot)" : ""}`,
+      rationale: `qualified lead ${lead.id} from ${this.input.source}${isHot ? " (hot)" : ""}${proposedActions.length > 0 ? " + auto-draft" : ""}`,
     };
   }
 
@@ -227,7 +259,11 @@ Return ONLY a JSON object of this exact shape — no prose:
   "timeline": "<string, e.g. Q3 2026 or null>",
   "urgency": "immediate" | "near_term" | "exploratory" | "unknown",
   "buying_intent": "intent_to_buy" | "qualifying" | "exploring" | "not_interested",
-  "summary": "<one-sentence human summary for the operator>"
+  "summary": "<one-sentence human summary for the operator>",
+  "draft_reply": {
+    "subject": "<string, <= 80 chars>",
+    "body": "<string, 80-160 words>"
+  } | null
 }
 
 Rules:
@@ -235,7 +271,14 @@ Rules:
 - For form submissions the "Product interest" field maps roughly to product: food → null (ambiguous, needs the message), fuel → null (same), vehicles/multiple → null. Only fill "product" if the message names a specific SKU.
 - "immediate" means the visitor wants a quote now; "near_term" = weeks; "exploratory" = months/unclear.
 - "intent_to_buy" requires explicit buying language ("need", "want to order", "what's your price on"). "qualifying" = asking specifics about delivery/terms. "exploring" = general info questions.
-- summary MUST be one sentence, ≤140 chars, written for a busy trade-desk operator.`;
+- summary MUST be one sentence, ≤140 chars, written for a busy trade-desk operator.
+- draft_reply INSTRUCTIONS:
+  - Include ONLY when buying_intent === "intent_to_buy" OR urgency === "immediate". Otherwise use null.
+  - Write it as VTC replying TO the lead — address them by name, acknowledge their specific ask, propose a concrete next step.
+  - Next step = "20-minute call this week" OR "send a spec sheet" OR "confirm current laycan availability", pick the one that matches the thread. ONE ask per email.
+  - Tone: peer-to-peer trader voice. Direct. Numeric. No "I hope this finds you well", no "just touching base". Apply the brand-voice preamble above if provided.
+  - Do NOT invent prices, laycan dates, or contract terms that weren't in the inbound.
+  - Body is plain text, paragraphs separated by blank lines. No greeting/sign-off — Resend template handles those.`;
 
 /**
  * A qualification is "hot" when either signal trips: explicit buying
@@ -249,6 +292,40 @@ export function isHotSignal(parsed: Record<string, unknown>): boolean {
     parsed["buying_intent"] === "intent_to_buy" ||
     parsed["urgency"] === "immediate"
   );
+}
+
+/**
+ * Pull Claude's optional draft_reply out of the parsed payload and
+ * validate it's a usable email. Rejects anything shorter than 20 chars
+ * of body or 3 chars of subject — those are Claude fumbling the
+ * shape, not something the operator wants to review. Returns null on
+ * any validation failure so the agent just skips the auto-draft.
+ */
+export function extractDraftReply(
+  parsed: Record<string, unknown>,
+): { subject: string; body: string } | null {
+  const raw = parsed["draft_reply"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  const subject = obj["subject"];
+  const body = obj["body"];
+  if (typeof subject !== "string" || typeof body !== "string") return null;
+  const s = subject.trim();
+  const b = body.trim();
+  if (s.length < 3 || s.length > 200) return null;
+  if (b.length < 20 || b.length > 4000) return null;
+  return { subject: s, body: b };
+}
+
+function buildDraftSkipReason(
+  isHot: boolean,
+  draft: { subject: string; body: string } | null,
+  email: string | null,
+): string | null {
+  if (!isHot) return "not_hot";
+  if (!draft) return "no_draft_reply";
+  if (!email) return "no_contact_email";
+  return null;
 }
 
 function parseQualificationJson(raw: string): Record<string, unknown> | null {
