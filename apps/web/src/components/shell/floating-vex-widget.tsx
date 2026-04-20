@@ -125,14 +125,21 @@ export function FloatingVexWidget() {
   return (
     <>
       {/* FAB — always visible on /app/*, hidden on /app/chat */}
+      {/*
+        The SVG ring IS the FAB. No bg-accent on the button — the
+        VexIconMark paints its own circle in the accent color. Keeps
+        the pills their natural 80%-of-the-circle scale (matching the
+        reference icon), which a tiny SVG inside a bg-accent <button>
+        can't do.
+      */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? "Close Vex widget" : "Ask Vex"}
         aria-expanded={open}
-        className="fixed bottom-6 right-6 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full bg-accent text-white shadow-lg transition hover:scale-105 hover:bg-accent/90 md:h-14 md:w-14"
+        className="fixed bottom-6 right-6 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full text-accent shadow-lg shadow-accent/30 transition hover:scale-105 hover:text-accent/90 md:h-14 md:w-14"
       >
-        <VexIconMark className="h-7 w-7 md:h-8 md:w-8" title="Ask Vex" />
+        <VexIconMark className="h-full w-full" title="Ask Vex" />
       </button>
 
       {/* Drawer */}
