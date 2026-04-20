@@ -20,6 +20,11 @@ const OptOutBody = z.object({
   reason: z.string().min(1).max(500),
 });
 
+const BulkArchiveBody = z.object({
+  contactIds: z.array(z.string().min(1).max(40)).min(1).max(500),
+  reason: z.string().max(500).optional(),
+});
+
 const MembershipInput = z.object({
   orgId: z.string().min(1),
   role: z.string().max(200).optional(),
@@ -312,6 +317,29 @@ export class ContactsController {
       reason: parsed.data.reason,
     });
     return { contact };
+  }
+
+  /**
+   * Bulk soft-delete (archive). Called from the /app/contacts list
+   * when the operator checks N rows + confirms in the typed-
+   * confirmation modal. Flips status='archived' on each id + emits
+   * one `contacts.bulk_archived` audit event for the batch. Max 500
+   * per request so the UI can't accidentally archive a whole
+   * workspace in a single click.
+   */
+  @Post("bulk-archive")
+  async bulkArchive(@Body() raw: unknown) {
+    const parsed = BulkArchiveBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const result = await this.service.bulkArchive({
+      tenantId: this.tenant.tenantId,
+      contactIds: parsed.data.contactIds,
+      actorUserId: this.tenant.userId,
+      ...(parsed.data.reason !== undefined ? { reason: parsed.data.reason } : {}),
+    });
+    return result;
   }
 }
 

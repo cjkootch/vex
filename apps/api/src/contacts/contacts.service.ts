@@ -141,6 +141,57 @@ export class ContactsService {
     });
   }
 
+  /**
+   * Bulk soft-delete. Flips `status` on every supplied contact id to
+   * `archived`. Single audit event covers the batch so operators can
+   * trace "who archived these N contacts and when" from one row in
+   * the events feed.
+   */
+  async bulkArchive(args: {
+    tenantId: string;
+    contactIds: readonly string[];
+    actorUserId: string;
+    reason?: string;
+  }): Promise<{ archivedCount: number; archivedIds: string[] }> {
+    if (args.contactIds.length === 0) {
+      return { archivedCount: 0, archivedIds: [] };
+    }
+    return withTenant(this.db, args.tenantId, async (tx) => {
+      const updated = await this.contacts.updateStatusByIds(
+        tx,
+        args.contactIds,
+        "archived",
+      );
+      const archivedIds = updated.map((c) => c.id);
+      if (archivedIds.length > 0) {
+        await this.events.insertIfNotExists(tx, args.tenantId, {
+          verb: "contacts.bulk_archived",
+          subjectType: "contact",
+          // Use the first id as the subject so the contact-detail
+          // timeline at /app/contacts/:id surfaces the archive event
+          // for at least one of the batch.
+          subjectId: archivedIds[0]!,
+          actorType: "user",
+          actorId: args.actorUserId,
+          objectType: "contact",
+          objectId: archivedIds[0]!,
+          occurredAt: new Date(),
+          idempotencyKey: `contacts.bulk_archived:${args.actorUserId}:${Date.now()}:${archivedIds.length}`,
+          metadata: {
+            archived_count: archivedIds.length,
+            requested_count: args.contactIds.length,
+            archived_ids: archivedIds,
+            reason: args.reason ?? null,
+          },
+        });
+      }
+      this.log.log(
+        `bulk-archived ${archivedIds.length}/${args.contactIds.length} contacts by ${args.actorUserId}`,
+      );
+      return { archivedCount: archivedIds.length, archivedIds };
+    });
+  }
+
   async listSuppressed(tenantId: string, limit = 200): Promise<Contact[]> {
     return withTenant(this.db, tenantId, async (tx) =>
       this.contacts.listSuppressed(tx, limit),
