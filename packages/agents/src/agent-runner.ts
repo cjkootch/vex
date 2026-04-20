@@ -268,7 +268,11 @@ export class AgentRunner {
    * Pre-run cost-budget gate. Reads today's cost for the tenant from the
    * CostLedger. If today's spend is already at or above the workspace's
    * `daily_cost_limit`, the run is skipped. Returns `{ skipped: false }`
-   * when the ledger repository isn't wired (unit-test path).
+   * when the ledger repository isn't wired (unit-test path) OR when the
+   * underlying query throws (e.g. the `cost_ledger` table hasn't been
+   * migrated yet in this environment). A missing ledger must NEVER block
+   * agents — it fails open with a warning, because the alternative is
+   * every agent run dying at the gate.
    */
   private async checkCostGate(
     tenantId: string,
@@ -278,9 +282,24 @@ export class AgentRunner {
     const cap = typeof limitUsd === "number" && limitUsd > 0
       ? limitUsd
       : DEFAULT_DAILY_COST_LIMIT_USD;
-    const micros = await withTenant(this.deps.db, tenantId, async (tx: Tx) =>
-      this.deps.costLedgerRepo!.sumForTenantToday(tx, tenantId),
-    );
+    let micros: number;
+    try {
+      micros = await withTenant(this.deps.db, tenantId, async (tx: Tx) =>
+        this.deps.costLedgerRepo!.sumForTenantToday(tx, tenantId),
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          service: "agent_runner.cost_gate",
+          msg: "cost ledger unavailable — failing open",
+          error: (err as Error).message,
+          tenant_id: tenantId,
+        }),
+      );
+      return { skipped: false };
+    }
     const spentUsd = micros / 1_000_000;
     if (spentUsd >= cap) {
       return {
