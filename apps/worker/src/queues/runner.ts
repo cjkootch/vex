@@ -553,6 +553,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyEnrollBatch(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "campaign.create") {
+          await applyCampaignCreate(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "email.send") {
           await applyEmailSend(tx, deps, workspace_id, approval);
           return;
@@ -2315,6 +2319,149 @@ async function applyEnrollBatch(
       }
     }
   }
+}
+
+/**
+ * Approved `campaign.create` — materialise a new campaigns row + all
+ * its campaign_steps rows in one transaction. Sprint T.4 unlocks the
+ * chat agent to DESIGN a workflow end-to-end: when the campaigns
+ * catalog doesn't have a plan that fits, the agent proposes a
+ * multi-channel cadence and the operator approves the whole thing
+ * at once.
+ *
+ * On success stamps `appliedObjectId = <new campaign id>` so a
+ * `campaign.enroll_batch` proposed against the same id right after
+ * can resolve it via approval metadata if it lands before the
+ * approvals inbox refreshes.
+ *
+ * Idempotency: markApplied with the new campaign's id. Replay short-
+ * circuits via recordExecutorReplay — the tx commit is the
+ * synchronisation point so a crash between `campaigns.create` and
+ * `campaignSteps.create` rolls the whole thing back.
+ */
+async function applyCampaignCreate(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  interface StepInput {
+    position?: number;
+    channel?: string;
+    delayAfterPriorMs?: number;
+    tier?: string;
+    autoApprove?: boolean;
+    templateRef?: string | null;
+    gateConditionJson?: Record<string, unknown>;
+  }
+  const payload = approval.proposedPayload as {
+    name?: string;
+    channel?: string;
+    objective?: string;
+    steps?: StepInput[];
+    rationale?: string;
+  } | null;
+
+  if (
+    !payload?.name ||
+    !payload.channel ||
+    !Array.isArray(payload.steps) ||
+    payload.steps.length === 0
+  ) {
+    await recordExecutorFailure(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "campaign.create",
+      "missing name / channel / steps",
+    );
+    return;
+  }
+
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "campaign.create");
+    return;
+  }
+
+  // Normalise step shape + check for position gaps before any insert
+  // so a bad plan fails with a clean message instead of a partial write.
+  const steps = [...payload.steps].sort(
+    (a, b) => (a.position ?? 0) - (b.position ?? 0),
+  );
+  for (let i = 0; i < steps.length; i++) {
+    const s = steps[i]!;
+    if (typeof s.position !== "number" || s.position !== i) {
+      await recordExecutorFailure(
+        tx,
+        deps,
+        tenantId,
+        approval.id,
+        "campaign.create",
+        `step positions must be 0..${steps.length - 1} contiguous; saw ${JSON.stringify(steps.map((x) => x.position))}`,
+      );
+      return;
+    }
+    if (!s.channel) {
+      await recordExecutorFailure(
+        tx,
+        deps,
+        tenantId,
+        approval.id,
+        "campaign.create",
+        `step ${s.position} is missing channel`,
+      );
+      return;
+    }
+  }
+
+  // Persist the campaign header — objective holds the operator-facing
+  // name (there's no dedicated `name` column on `campaigns`; the Marketing
+  // page renders `objective || "(untitled)"` today). The channel column
+  // takes the plan-level dominant channel ("email" / "multi" / etc).
+  const campaign = await deps.campaigns.create(tx, tenantId, {
+    channel: payload.channel,
+    objective: payload.name,
+    ...(payload.objective ? { source: payload.objective } : {}),
+  });
+
+  // Insert each step inside the same tx. CampaignStepRepository.create
+  // stamps tenant_id and defaults the rest.
+  for (const s of steps) {
+    await deps.campaignSteps.create(tx, tenantId, {
+      campaignId: campaign.id,
+      position: s.position!,
+      channel: s.channel!,
+      delayAfterPriorMs: s.delayAfterPriorMs ?? 0,
+      tier: s.tier ?? "T2",
+      autoApprove: s.autoApprove ?? false,
+      templateRef: s.templateRef ?? null,
+      gateConditionJson: s.gateConditionJson ?? {},
+    });
+  }
+
+  await deps.approvals.markApplied(tx, approval.id, campaign.id);
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "campaign.created",
+    subjectType: "campaign",
+    subjectId: campaign.id,
+    actorType: "user",
+    actorId: approval.reviewerId ?? "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `campaign.created:${approval.id}`,
+    metadata: {
+      approval_id: approval.id,
+      campaign_id: campaign.id,
+      name: payload.name,
+      channel: payload.channel,
+      step_count: steps.length,
+      rationale: payload.rationale ?? null,
+      applied_by: approval.reviewerId,
+    },
+  });
 }
 
 /**

@@ -355,6 +355,33 @@ Known action kinds the approval executor can actually apply:
     existing campaign plan. The approval executor starts one
     CampaignEnrollmentWorkflow per contact once approved. Payload:
     { campaignId: ULID, contactIds: ULID[], rationale }.
+  - campaign.create (T2) — DESIGN a brand-new multi-channel cadence
+    when nothing in the campaigns catalog fits. Use only after
+    surveying existing plans and explaining in prose why none match.
+    Payload:
+      { name: string,
+        channel: "email" | "sms" | "whatsapp" | "voice" | "multi",
+        objective?: string,
+        steps: Array<{
+          position: 0..N (contiguous, zero-based),
+          channel: "email" | "sms" | "whatsapp" | "voice" | "manual",
+          delayAfterPriorMs: integer (0 = send immediately),
+          tier: "T0" | "T1" | "T2" | "T3",
+          autoApprove: boolean,
+          templateRef?: string,
+          gateConditionJson?: object
+        }>,
+        rationale }
+    VTC defaults for a nurture cadence:
+      Step 0 email, T2, autoApprove false, delay 0 — intro + spec
+      Step 1 email, T2, autoApprove false, delay 3 days — follow-up
+      Step 2 sms, T2, autoApprove false, delay 7 days — check-in
+      Step 3 voice, T3, autoApprove false, delay 14 days — call
+    Don't set autoApprove=true on T2+ steps — the operator-review
+    invariant is the whole point of the gate. NEVER propose
+    campaign.create AND campaign.enroll_batch in the same response;
+    ask the operator to approve the plan first, then a follow-up
+    chat turn can enroll contacts once the new campaign id exists.
   - sms.send (T2) — send a single SMS to a specific number via
     Twilio. Use when the user asks to "text X" or "SMS X". Payload:
     { to: E.164, body: string, contactId?: ULID, rationale }.
