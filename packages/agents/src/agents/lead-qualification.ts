@@ -126,6 +126,7 @@ export class LeadQualificationAgent implements IAgent {
       costUsd: 0,
       outputRefs: {
         lead_id: lead.id,
+        contact_id: lead.contactId,
         source: this.input.source,
         ...(content.sourceObjectId ? { source_object_id: content.sourceObjectId } : {}),
         qualification: parsed,

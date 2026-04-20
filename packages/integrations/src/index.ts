@@ -64,6 +64,13 @@ export {
 } from "./tavily.js";
 export { pricing } from "./pricing.js";
 export {
+  SlackNotifier,
+  buildHotLeadBlocks,
+  type HotLeadSlackPayload,
+  type SlackNotifierConfig,
+  type SlackNotifyResult,
+} from "./slack.js";
+export {
   FormFillNormalizer,
   ResendNormalizer,
   TwilioNormalizer,

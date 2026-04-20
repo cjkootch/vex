@@ -66,6 +66,7 @@ import {
   WorkflowId,
   createResendClient,
   createTwilioClient,
+  SlackNotifier,
   type TwilioClient,
 } from "@vex/integrations";
 
@@ -114,6 +115,16 @@ export interface QueueRunnerOptions {
   resend?: {
     apiKey: string;
     defaultFrom: string;
+  } | null;
+  /**
+   * Sprint S.3 — optional Slack Incoming Webhook URL. When set, hot-
+   * lead qualifications (LeadQualificationAgent firing `hot: true`)
+   * post a nudge to the configured channel. When null/absent, the
+   * notifier no-ops silently.
+   */
+  slack?: {
+    webhookUrl: string;
+    appBaseUrl: string | null;
   } | null;
   /** Sprint 6 ships single-tenant scheduling. Sprint 7 will iterate every
    *  workspace and schedule per-workspace. */
@@ -201,7 +212,17 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     retrieval,
   });
 
-  const agentWorker = createAgentWorker(buildAgentProcessor(runner), connection);
+  const slackNotifier = options.slack
+    ? new SlackNotifier({
+        webhookUrl: options.slack.webhookUrl,
+        appBaseUrl: options.slack.appBaseUrl ?? null,
+      })
+    : null;
+
+  const agentWorker = createAgentWorker(
+    buildAgentProcessor(runner, slackNotifier),
+    connection,
+  );
   await agentWorker.waitUntilReady();
 
   const twilioForExecutor =
@@ -321,7 +342,14 @@ async function sampleQueueDepths(queues: QueueHandles): Promise<void> {
   }
 }
 
-function buildAgentProcessor(runner: AgentRunner) {
+function stringOrNull(v: unknown): string | null {
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+function buildAgentProcessor(
+  runner: AgentRunner,
+  slack: SlackNotifier | null,
+) {
   return async (job: Job<AgentJobData>) => {
     const data = job.data;
     if (!data.workspace_id) throw new Error("agent job missing workspace_id");
@@ -344,30 +372,59 @@ function buildAgentProcessor(runner: AgentRunner) {
         const source = data.input?.["source"];
         const conversationId = data.input?.["conversation_id"];
         const leadId = data.input?.["lead_id"];
+        let record;
         if (source === "website_form") {
           if (typeof leadId !== "string") {
             throw new Error(
               "lead_qualification (website_form) job missing input.lead_id",
             );
           }
-          return runner.run(
+          record = await runner.run(
             new LeadQualificationAgent({ source: "website_form", leadId }),
             { workspaceId: data.workspace_id },
           );
-        }
-        // Legacy + explicit `source: "website_chat"` path.
-        if (typeof conversationId !== "string") {
-          throw new Error(
-            "lead_qualification (website_chat) job missing input.conversation_id",
+        } else {
+          // Legacy + explicit `source: "website_chat"` path.
+          if (typeof conversationId !== "string") {
+            throw new Error(
+              "lead_qualification (website_chat) job missing input.conversation_id",
+            );
+          }
+          record = await runner.run(
+            new LeadQualificationAgent({
+              source: "website_chat",
+              conversationId,
+            }),
+            { workspaceId: data.workspace_id },
           );
         }
-        return runner.run(
-          new LeadQualificationAgent({
-            source: "website_chat",
-            conversationId,
-          }),
-          { workspaceId: data.workspace_id },
-        );
+
+        // Post-commit Slack nudge on hot-signal qualifications. The
+        // agent's tx has already closed by the time we get here —
+        // a Slack outage can't roll back the qualification write.
+        // Null slack → no-op; notifier logs internally on any
+        // network error.
+        if (slack && record.outputRefs && record.outputRefs["hot"] === true) {
+          const out = record.outputRefs;
+          const qualification =
+            (out["qualification"] as Record<string, unknown> | undefined) ?? {};
+          await slack.notifyHotLead({
+            leadId: (out["lead_id"] as string | undefined) ?? "unknown",
+            contactId: (out["contact_id"] as string | null | undefined) ?? null,
+            contactName: null,
+            orgName: null,
+            buyingIntent: stringOrNull(qualification["buying_intent"]),
+            urgency: stringOrNull(qualification["urgency"]),
+            product: stringOrNull(qualification["product"]),
+            volume: stringOrNull(qualification["volume"]),
+            destination: stringOrNull(qualification["destination"]),
+            timeline: stringOrNull(qualification["timeline"]),
+            summary: stringOrNull(qualification["summary"]),
+            source: (out["source"] as string | undefined) ?? null,
+          });
+        }
+
+        return record;
       }
       case "reactivation_batch": {
         const contactIds = data.input?.["contact_ids"];

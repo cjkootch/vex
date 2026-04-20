@@ -127,6 +127,12 @@ async function main(): Promise<void> {
           defaultFrom: env.RESEND_DEFAULT_FROM,
         }
       : null,
+    slack: env.SLACK_WEBHOOK_URL
+      ? {
+          webhookUrl: env.SLACK_WEBHOOK_URL,
+          appBaseUrl: env.APP_BASE_URL ?? null,
+        }
+      : null,
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
   // Sprint 12 — the OutboundCallWorkflow needs Twilio + S3 + reachable

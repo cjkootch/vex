@@ -42,6 +42,14 @@ export interface AgentRunRecord {
   internalWrites: number;
   rationale?: string;
   error?: string;
+  /**
+   * Agent-specific outputs the caller may want to react to. Copied
+   * verbatim from `AgentOutput.outputRefs`. Consumed by the worker
+   * post-process hooks (e.g. Slack notification on `hot: true` from
+   * lead_qualification) so side effects stay outside the agent's
+   * transaction.
+   */
+  outputRefs?: Record<string, unknown>;
 }
 
 /**
@@ -249,6 +257,7 @@ export class AgentRunner {
         costUsd: output.costUsd,
         approvalsCreated,
         internalWrites: output.internalWrites,
+        outputRefs: output.outputRefs,
       };
       if (output.rationale !== undefined) record.rationale = output.rationale;
       return record;
