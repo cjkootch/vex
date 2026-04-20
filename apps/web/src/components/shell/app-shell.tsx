@@ -32,104 +32,193 @@ interface NavItem {
   matchKey: string;
 }
 
+interface NavGroup {
+  /** null = render the items at the top level (no header). */
+  id: string | null;
+  label: string | null;
+  items: NavItem[];
+}
+
 // Heroicons-outline inspired paths, 24×24 viewBox, single stroke.
-const NAV_ITEMS: NavItem[] = [
+const ITEM_BRIEF: NavItem = {
+  href: "/app",
+  label: "Brief",
+  matchKey: "/app",
+  iconPath: "M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10",
+};
+const ITEM_CHAT: NavItem = {
+  href: "/app/chat",
+  label: "Chat",
+  matchKey: "/app/chat",
+  iconPath:
+    "M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.26 0-2.46-.23-3.55-.65L3 21l1.67-4.5C3.6 15.2 3 13.66 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
+};
+const ITEM_INBOX: NavItem = {
+  href: "/app/inbox",
+  label: "Inbox",
+  matchKey: "/app/inbox",
+  iconPath:
+    "M4 13h3l2 3h6l2-3h3M4 7h16l-2 13a1 1 0 01-1 1H7a1 1 0 01-1-1L4 7zM8 7V4a1 1 0 011-1h6a1 1 0 011 1v3",
+};
+const ITEM_DEALS: NavItem = {
+  href: "/app/deals",
+  label: "Deals",
+  matchKey: "/app/deals",
+  iconPath: "M4 7h16M4 12h16M4 17h16",
+};
+const ITEM_COMPANIES: NavItem = {
+  href: "/app/companies",
+  label: "Companies",
+  matchKey: "/app/companies",
+  iconPath:
+    "M3 21h18M5 21V7l7-4 7 4v14M9 9h1M9 13h1M9 17h1M14 9h1M14 13h1M14 17h1",
+};
+const ITEM_CONTACTS: NavItem = {
+  href: "/app/contacts",
+  label: "Contacts",
+  matchKey: "/app/contacts",
+  iconPath:
+    "M16 11c1.657 0 3-1.79 3-4s-1.343-4-3-4-3 1.79-3 4 1.343 4 3 4zM8 11c1.657 0 3-1.79 3-4S9.657 3 8 3 5 4.79 5 7s1.343 4 3 4zM2 20c0-3.314 2.686-6 6-6s6 2.686 6 6M14 14c3.314 0 6 2.686 6 6",
+};
+const ITEM_MARKETING: NavItem = {
+  href: "/app/marketing",
+  label: "Marketing",
+  matchKey: "/app/marketing",
+  iconPath:
+    "M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z",
+};
+const ITEM_CALLS: NavItem = {
+  // Live-listen + take-over for in-flight AI outbound calls. Detail
+  // page renders the LiveListenPanel; index lists active calls so
+  // the operator can join one mid-flight without an approval ping.
+  href: "/app/calls",
+  label: "Calls",
+  matchKey: "/app/calls",
+  iconPath:
+    "M5 4h3l2 5-2.5 1.5a11 11 0 005 5L14 13l5 2v3a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z",
+};
+const ITEM_VOICE: NavItem = {
+  // Voice-note inbox / processed sessions index.
+  href: "/app/voice",
+  label: "Voice",
+  matchKey: "/app/voice",
+  iconPath:
+    "M12 14a3 3 0 003-3V6a3 3 0 10-6 0v5a3 3 0 003 3zM5 11a7 7 0 0014 0M12 18v3m-3 0h6",
+};
+const ITEM_APPROVALS: NavItem = {
+  href: "/app/approvals",
+  label: "Approvals",
+  matchKey: "/app/approvals",
+  iconPath: "M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+};
+const ITEM_FOLLOW_UPS: NavItem = {
+  href: "/app/follow-ups",
+  label: "Follow-ups",
+  matchKey: "/app/follow-ups",
+  iconPath: "M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+};
+const ITEM_SIGNALS: NavItem = {
+  href: "/app/signals",
+  label: "Signals",
+  matchKey: "/app/signals",
+  iconPath: "M13 10V3L4 14h7v7l9-11h-7z",
+};
+const ITEM_IMPORT: NavItem = {
+  href: "/app/import",
+  label: "Import",
+  matchKey: "/app/import",
+  iconPath: "M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4",
+};
+const ITEM_STRATEGY: NavItem = {
+  // Sprint-S strategy. Owner-only server-side. The prompt layer
+  // prepends this on every chat call so every response is conditioned
+  // on the operator-authored company context.
+  href: "/app/strategy",
+  label: "Strategy",
+  matchKey: "/app/strategy",
+  iconPath: "M12 2l4 4-4 4M12 22l-4-4 4-4M2 12l4-4 4 4M22 12l-4 4-4-4",
+};
+const ITEM_ADMIN: NavItem = {
+  // Sprint-13 admin console. Non-owners get a 403-style denied page
+  // server-side, so exposing the link unconditionally is safe and
+  // avoids coupling the shell to role state.
+  href: "/app/admin",
+  label: "Admin",
+  matchKey: "/app/admin",
+  iconPath: "M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z",
+};
+
+// Grouped nav. Brief + Chat sit at the top with no header (daily-
+// drivers); the rest cluster by function. Group state (open/closed)
+// persists per-user via localStorage so dropdowns remember.
+const NAV_GROUPS: NavGroup[] = [
+  { id: null, label: null, items: [ITEM_BRIEF, ITEM_CHAT] },
   {
-    href: "/app",
-    label: "Brief",
-    matchKey: "/app",
-    iconPath:
-      "M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10",
+    id: "pipeline",
+    label: "Pipeline",
+    items: [ITEM_DEALS, ITEM_COMPANIES, ITEM_CONTACTS],
   },
   {
-    href: "/app/chat",
-    label: "Chat",
-    matchKey: "/app/chat",
-    iconPath:
-      "M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.26 0-2.46-.23-3.55-.65L3 21l1.67-4.5C3.6 15.2 3 13.66 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
+    id: "outreach",
+    label: "Outreach",
+    items: [
+      ITEM_INBOX,
+      ITEM_CALLS,
+      ITEM_VOICE,
+      ITEM_MARKETING,
+      ITEM_FOLLOW_UPS,
+    ],
   },
   {
-    href: "/app/inbox",
-    label: "Inbox",
-    matchKey: "/app/inbox",
-    iconPath:
-      "M4 13h3l2 3h6l2-3h3M4 7h16l-2 13a1 1 0 01-1 1H7a1 1 0 01-1-1L4 7zM8 7V4a1 1 0 011-1h6a1 1 0 011 1v3",
+    id: "autonomy",
+    label: "Autonomy",
+    items: [ITEM_APPROVALS, ITEM_SIGNALS],
   },
   {
-    href: "/app/deals",
-    label: "Deals",
-    matchKey: "/app/deals",
-    iconPath: "M4 7h16M4 12h16M4 17h16",
-  },
-  {
-    href: "/app/companies",
-    label: "Companies",
-    matchKey: "/app/companies",
-    iconPath:
-      "M3 21h18M5 21V7l7-4 7 4v14M9 9h1M9 13h1M9 17h1M14 9h1M14 13h1M14 17h1",
-  },
-  {
-    href: "/app/contacts",
-    label: "Contacts",
-    matchKey: "/app/contacts",
-    iconPath:
-      "M16 11c1.657 0 3-1.79 3-4s-1.343-4-3-4-3 1.79-3 4 1.343 4 3 4zM8 11c1.657 0 3-1.79 3-4S9.657 3 8 3 5 4.79 5 7s1.343 4 3 4zM2 20c0-3.314 2.686-6 6-6s6 2.686 6 6M14 14c3.314 0 6 2.686 6 6",
-  },
-  {
-    href: "/app/marketing",
-    label: "Marketing",
-    matchKey: "/app/marketing",
-    iconPath:
-      "M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z",
-  },
-  {
-    href: "/app/approvals",
-    label: "Approvals",
-    matchKey: "/app/approvals",
-    iconPath: "M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-  },
-  {
-    href: "/app/follow-ups",
-    label: "Follow-ups",
-    matchKey: "/app/follow-ups",
-    iconPath:
-      "M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-  },
-  {
-    href: "/app/signals",
-    label: "Signals",
-    matchKey: "/app/signals",
-    iconPath:
-      "M13 10V3L4 14h7v7l9-11h-7z",
-  },
-  {
-    href: "/app/import",
-    label: "Import",
-    matchKey: "/app/import",
-    iconPath:
-      "M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4",
-  },
-  {
-    // Sprint-S strategy. Owner-only server-side. The prompt layer
-    // prepends this on every chat call so every response is
-    // conditioned on the operator-authored company context.
-    href: "/app/strategy",
-    label: "Strategy",
-    matchKey: "/app/strategy",
-    iconPath:
-      "M12 2l4 4-4 4M12 22l-4-4 4-4M2 12l4-4 4 4M22 12l-4 4-4-4",
-  },
-  {
-    // Sprint-13 admin console. Non-owners get a 403-style denied page
-    // rendered server-side, so exposing the link unconditionally is
-    // safe and avoids coupling the shell to role state.
-    href: "/app/admin",
-    label: "Admin",
-    matchKey: "/app/admin",
-    iconPath:
-      "M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z",
+    id: "workspace",
+    label: "Workspace",
+    items: [ITEM_STRATEGY, ITEM_IMPORT, ITEM_ADMIN],
   },
 ];
+
+const NAV_GROUP_STORAGE_KEY = "vex.nav.collapsedGroups.v1";
+
+function loadCollapsedGroups(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(NAV_GROUP_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return new Set(parsed.filter((s): s is string => typeof s === "string"));
+    }
+    return new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveCollapsedGroups(set: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      NAV_GROUP_STORAGE_KEY,
+      JSON.stringify([...set]),
+    );
+  } catch {
+    /* quota / private mode — in-memory still works */
+  }
+}
+
+function isItemActive(item: NavItem, pathname: string): boolean {
+  return item.matchKey === "/app"
+    ? pathname === "/app"
+    : pathname === item.matchKey || pathname.startsWith(`${item.matchKey}/`);
+}
+
+function groupHasActive(group: NavGroup, pathname: string): boolean {
+  return group.items.some((i) => isItemActive(i, pathname));
+}
 
 // WorkspaceContextType from @vex/ui is "deal" | "organization" |
 // "global" | "queue"; ContextChip's type is "deal" | "organization" |
@@ -430,46 +519,81 @@ function SideRail({
   pending,
   navCounts,
 }: SideRailProps) {
+  // Per-group open/closed state. Hydrate from localStorage on mount;
+  // any group containing the active route is force-opened so the
+  // current page is always reachable in the rail.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    setCollapsedGroups(loadCollapsedGroups());
+  }, []);
+  const toggleGroup = (id: string): void => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveCollapsedGroups(next);
+      return next;
+    });
+  };
+
   return (
     <aside
       className={`${collapsed ? "w-14" : "w-60"} hidden flex-shrink-0 flex-col border-r border-line bg-muted/20 transition-[width] md:flex`}
     >
-      <nav className="flex-1 p-2" aria-label="Primary">
-        {NAV_ITEMS.map((item) => {
-          // Brief matches only exactly; other items match their prefix
-          // so nested routes (e.g. /app/deals/:id) keep the parent active.
-          const active =
-            item.matchKey === "/app"
-              ? pathname === "/app"
-              : pathname === item.matchKey ||
-                pathname.startsWith(`${item.matchKey}/`);
-          const badge = badgeCountFor(item.href, pending, navCounts);
-          const badgeTone = badgeToneFor(item.href, navCounts);
+      <nav className="flex-1 overflow-y-auto p-2" aria-label="Primary">
+        {NAV_GROUPS.map((group) => {
+          // A group with no id renders its items at the top level
+          // without a header (Brief + Chat — the daily-driver pair).
+          if (group.id === null) {
+            return (
+              <div key="__top" className="mb-2">
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    pathname={pathname}
+                    collapsed={collapsed}
+                    pending={pending}
+                    navCounts={navCounts}
+                  />
+                ))}
+              </div>
+            );
+          }
+          const hasActive = groupHasActive(group, pathname);
+          // Active route always reveals its group, regardless of the
+          // operator's persisted preference. Otherwise the persisted
+          // collapsed flag wins.
+          const open = hasActive || !collapsedGroups.has(group.id);
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={`mb-1 flex items-center gap-3 rounded-md px-2 py-2 text-sm transition ${
-                active
-                  ? "bg-white/10 text-white"
-                  : "text-white/60 hover:bg-white/5 hover:text-white"
-              }`}
-            >
-              <Icon path={item.iconPath} />
-              {collapsed ? null : <span>{item.label}</span>}
-              {!collapsed && badge !== null ? (
-                <span
-                  className={`ml-auto rounded-full px-1.5 py-0.5 text-xs ${
-                    badgeTone === "bad"
-                      ? "bg-red-500/20 text-red-300"
-                      : "bg-amber-400/20 text-amber-300"
-                  }`}
+            <div key={group.id} className="mb-2">
+              {!collapsed && (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.id!)}
+                  aria-expanded={open}
+                  className="flex w-full items-center justify-between rounded-md px-2 py-1 text-[10px] uppercase tracking-wider text-white/40 transition hover:text-white/70"
                 >
-                  {badge}
-                </span>
-              ) : null}
-            </Link>
+                  <span>{group.label}</span>
+                  <span aria-hidden="true" className="opacity-60">
+                    {open ? "▾" : "▸"}
+                  </span>
+                </button>
+              )}
+              {(collapsed || open) &&
+                group.items.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    pathname={pathname}
+                    collapsed={collapsed}
+                    pending={pending}
+                    navCounts={navCounts}
+                  />
+                ))}
+            </div>
           );
         })}
       </nav>
@@ -482,6 +606,56 @@ function SideRail({
         {collapsed ? "›" : "‹"}
       </button>
     </aside>
+  );
+}
+
+/**
+ * Single nav row — used by SideRail + MobileNav so the active state,
+ * badge, and icon stay identical between the two surfaces.
+ */
+function NavLink({
+  item,
+  pathname,
+  collapsed,
+  pending,
+  navCounts,
+  onClick,
+}: {
+  item: NavItem;
+  pathname: string;
+  collapsed: boolean;
+  pending: number;
+  navCounts: NavCounts;
+  onClick?: () => void;
+}) {
+  const active = isItemActive(item, pathname);
+  const badge = badgeCountFor(item.href, pending, navCounts);
+  const badgeTone = badgeToneFor(item.href, navCounts);
+  return (
+    <Link
+      href={item.href}
+      aria-current={active ? "page" : undefined}
+      {...(onClick ? { onClick } : {})}
+      className={`mb-0.5 flex items-center gap-3 rounded-md px-2 py-2 text-sm transition ${
+        active
+          ? "bg-white/10 text-white"
+          : "text-white/60 hover:bg-white/5 hover:text-white"
+      }`}
+    >
+      <Icon path={item.iconPath} />
+      {collapsed ? null : <span>{item.label}</span>}
+      {!collapsed && badge !== null ? (
+        <span
+          className={`ml-auto rounded-full px-1.5 py-0.5 text-xs ${
+            badgeTone === "bad"
+              ? "bg-red-500/20 text-red-300"
+              : "bg-amber-400/20 text-amber-300"
+          }`}
+        >
+          {badge}
+        </span>
+      ) : null}
+    </Link>
   );
 }
 
@@ -546,42 +720,40 @@ function MobileNav({
           <VexLogo className="h-6 w-9 text-white" />
         </div>
         <div className="flex-1 overflow-auto p-2">
-          {NAV_ITEMS.map((item) => {
-            const active =
-              item.matchKey === "/app"
-                ? pathname === "/app"
-                : pathname === item.matchKey ||
-                  pathname.startsWith(`${item.matchKey}/`);
-            const badge = badgeCountFor(item.href, pending, navCounts);
-            const badgeTone = badgeToneFor(item.href, navCounts);
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                onClick={onClose}
-                className={`mb-1 flex items-center gap-3 rounded-md px-3 py-3 text-sm transition ${
-                  active
-                    ? "bg-white/10 text-white"
-                    : "text-white/70 hover:bg-white/5 hover:text-white"
-                }`}
-              >
-                <Icon path={item.iconPath} />
-                <span>{item.label}</span>
-                {badge !== null ? (
-                  <span
-                    className={`ml-auto rounded-full px-1.5 py-0.5 text-xs ${
-                      badgeTone === "bad"
-                        ? "bg-red-500/20 text-red-300"
-                        : "bg-amber-400/20 text-amber-300"
-                    }`}
-                  >
-                    {badge}
-                  </span>
-                ) : null}
-              </Link>
-            );
-          })}
+          {NAV_GROUPS.map((group) =>
+            group.id === null ? (
+              <div key="__mtop" className="mb-2">
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    pathname={pathname}
+                    collapsed={false}
+                    pending={pending}
+                    navCounts={navCounts}
+                    onClick={onClose}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div key={group.id} className="mb-3">
+                <div className="px-2 py-1 text-[10px] uppercase tracking-wider text-white/40">
+                  {group.label}
+                </div>
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.href}
+                    item={item}
+                    pathname={pathname}
+                    collapsed={false}
+                    pending={pending}
+                    navCounts={navCounts}
+                    onClick={onClose}
+                  />
+                ))}
+              </div>
+            ),
+          )}
         </div>
       </nav>
     </div>
