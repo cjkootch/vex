@@ -197,6 +197,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     agentRuns: repos.agentRuns,
     approvals: repos.approvals,
     organizations: repos.organizations,
+    orgProducts: repos.orgProducts,
     contacts: repos.contacts,
     leads: repos.leads,
     documents: repos.documents,

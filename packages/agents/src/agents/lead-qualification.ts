@@ -170,6 +170,23 @@ export class LeadQualificationAgent implements IAgent {
       proposedActions.push(dealProposal);
     }
 
+    // Sprint T.3 — biggest autonomy leap yet. When we've drafted a
+    // buy-side deal, also fan out supplier RFQ drafts: look up orgs
+    // that carry the same product, pick a contact with an email on
+    // each, and draft a templated RFQ. Caps at 3 supplier drafts so
+    // we don't drown the approvals queue on a hot product.
+    const supplierProposals = dealProposal
+      ? await buildSupplierRfqProposals({
+          ctx,
+          parsed,
+          dealPayload: dealProposal.payload as Record<string, unknown>,
+          buyerOrgId: lead.orgId!,
+          leadId: lead.id,
+          maxDrafts: 3,
+        })
+      : [];
+    for (const p of supplierProposals) proposedActions.push(p);
+
     return {
       costUsd: 0,
       outputRefs: {
@@ -182,6 +199,7 @@ export class LeadQualificationAgent implements IAgent {
         draft_proposed: Boolean(draftReply && contactEmail),
         draft_skip_reason: buildDraftSkipReason(isHot, draftReply, contactEmail),
         deal_proposed: Boolean(dealProposal),
+        supplier_rfqs_proposed: supplierProposals.length,
       },
       proposedActions,
       internalWrites: isHot ? 2 : 1,
@@ -534,6 +552,134 @@ export function buildDealProposal(args: {
     payload,
     rationale: `Hot-lead qualification produced product + volume; drafting ${lineOfBusiness} deal shell for review.`,
   };
+}
+
+/**
+ * Render a templated RFQ body that asks a supplier for availability +
+ * indicative terms on a specific product / volume / destination. Pure,
+ * deterministic — no LLM — so the operator can trust the draft matches
+ * the deal it's paired with. Exported for testing.
+ */
+export function renderSupplierRfqBody(args: {
+  product: string;
+  volume: string;
+  destination?: string | null;
+  timeline?: string | null;
+  dealRef?: string | null;
+}): { subject: string; body: string } {
+  const {
+    product,
+    volume,
+    destination,
+    timeline,
+    dealRef,
+  } = args;
+  const subjectParts: string[] = [`RFQ — ${volume} ${product}`];
+  if (destination) subjectParts.push(`into ${destination}`);
+  if (timeline) subjectParts.push(`(${timeline})`);
+  const subject = subjectParts.join(" ").slice(0, 140);
+
+  const whereClause = destination ? ` into ${destination}` : "";
+  const whenClause = timeline ? ` on ${timeline}` : "";
+  const lines = [
+    "Hi team,",
+    "",
+    `VTC has a buyer asking for ${volume} of ${product}${whereClause}${whenClause}. Can you spot availability + indicative terms (CIF, LC60D standard)?`,
+    "",
+    "If viable: reply with laycan window + port options and we'll loop the buyer in.",
+    "",
+    dealRef ? `Ref: ${dealRef}` : "Thanks,",
+  ];
+  return { subject, body: lines.join("\n") };
+}
+
+/** Org kinds we'd reasonably RFQ on a buy-side deal. */
+const SUPPLIER_KINDS = new Set(["supplier", "broker", "buyer_broker"]);
+
+/**
+ * Look up candidate suppliers for the product on the drafted deal,
+ * then build up to `maxDrafts` `email.send` ProposedActions — one RFQ
+ * per supplier that has a contact with an email. Skips the buyer's
+ * own org and any supplier that can't be emailed (no contacts, no
+ * emails). Returns [] when nothing can be drafted.
+ *
+ * T2 approvals — every RFQ routes through ApprovalGate so the trader
+ * reviews the supplier choice + draft body before anything sends.
+ *
+ * Exported for test exercise + so other agents can reuse the same
+ * shape (e.g. a future deal-level matcher that fires when a
+ * buy-side deal is created manually).
+ */
+export async function buildSupplierRfqProposals(args: {
+  ctx: AgentContext;
+  parsed: Record<string, unknown>;
+  dealPayload: Record<string, unknown>;
+  buyerOrgId: string;
+  leadId: string;
+  maxDrafts: number;
+}): Promise<ProposedAction[]> {
+  const { ctx, parsed, dealPayload, buyerOrgId, leadId, maxDrafts } = args;
+  const product = typeof dealPayload["product"] === "string" ? dealPayload["product"] : null;
+  const volumeValue = typeof dealPayload["volumeUsg"] === "number" ? dealPayload["volumeUsg"] : null;
+  const volumeUnit = typeof dealPayload["volumeUnit"] === "string" ? dealPayload["volumeUnit"] : null;
+  if (!product || !volumeValue || !volumeUnit) return [];
+
+  const volumeDisplay = `${Math.round(volumeValue).toLocaleString()} ${volumeUnit.toUpperCase()}`;
+  const destination = typeof parsed["destination"] === "string" ? parsed["destination"].trim() || null : null;
+  const timeline = typeof parsed["timeline"] === "string" ? parsed["timeline"].trim() || null : null;
+  const dealRef = typeof dealPayload["dealRef"] === "string" ? dealPayload["dealRef"] : null;
+
+  // listForProduct returns up to `limit` rows across all orgs that
+  // carry this product. We over-fetch (limit 20) so filtering by kind
+  // + email still leaves us enough candidates to pick 3.
+  const rows = await ctx.orgProducts.listForProduct(ctx.tx, product, 20);
+  if (rows.length === 0) return [];
+
+  const proposals: ProposedAction[] = [];
+  const seenOrgIds = new Set<string>();
+
+  for (const row of rows) {
+    if (proposals.length >= maxDrafts) break;
+    if (row.orgId === buyerOrgId) continue;
+    if (seenOrgIds.has(row.orgId)) continue;
+    seenOrgIds.add(row.orgId);
+
+    const org = await ctx.organizations.findById(ctx.tx, row.orgId);
+    if (!org) continue;
+    if (!SUPPLIER_KINDS.has(org.kind ?? "")) continue;
+
+    const contacts = await ctx.contacts.findByOrgId(ctx.tx, org.id);
+    const contactWithEmail = contacts.find((c) => (c.emails?.[0] ?? null) !== null);
+    if (!contactWithEmail) continue;
+    const to = contactWithEmail.emails?.[0];
+    if (!to) continue;
+
+    const draft = renderSupplierRfqBody({
+      product,
+      volume: volumeDisplay,
+      destination,
+      timeline,
+      dealRef,
+    });
+
+    proposals.push({
+      kind: "email.send",
+      tier: "T2",
+      payload: {
+        to: [to],
+        subject: draft.subject,
+        body: draft.body,
+        contact_id: contactWithEmail.id,
+        lead_id: leadId,
+        supplier_org_id: org.id,
+        product,
+        auto_drafted_from: "lead_qualification.supplier_rfq",
+      },
+      rationale: `RFQ draft to ${org.legalName} — they carry ${product} per org_products. Review supplier choice + terms before sending.`,
+    });
+  }
+
+  return proposals;
 }
 
 function parseQualificationJson(raw: string): Record<string, unknown> | null {

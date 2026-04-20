@@ -7,6 +7,7 @@ import type {
   DocumentRepository,
   EventRepository,
   LeadRepository,
+  OrganizationProductRepository,
   OrganizationRepository,
   RetrievalService,
   SummaryRepository,
@@ -37,6 +38,7 @@ export interface AgentContext {
   retrieval: RetrievalService;
 
   organizations: OrganizationRepository;
+  orgProducts: OrganizationProductRepository;
   contacts: ContactRepository;
   leads: LeadRepository;
   summaries: SummaryRepository;

@@ -75,6 +75,7 @@ function buildDeps(workspaceSettings: {
         decide: vi.fn(),
       } as never,
       organizations: {} as never,
+      orgProducts: {} as never,
       contacts: {} as never,
       leads: {} as never,
       documents: {} as never,
