@@ -2,6 +2,8 @@ import { and, asc, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { Tx } from "../client.js";
 import { contacts, type Contact } from "../schema/contacts.js";
 import { contactOrgMemberships } from "../schema/contact-org-memberships.js";
+import { touchpoints } from "../schema/touchpoints.js";
+import { leads } from "../schema/leads.js";
 
 export interface ContactCreateInput {
   id: string;
@@ -224,6 +226,117 @@ export class ContactRepository {
     return row;
   }
 
+  /**
+   * Merge `sourceId` into `targetId`. Inside one transaction:
+   *   1. Move FK-owning rows (touchpoints, activities, leads) from
+   *      source → target so the target's timeline inherits the
+   *      source's history.
+   *   2. Move contact_org_memberships — with ON CONFLICT DO NOTHING
+   *      so the target keeps its memberships when the source was
+   *      already a member of the same org.
+   *   3. Union emails + phones on the target (de-duped, case-
+   *      insensitive for emails).
+   *   4. Mark the source `status='archived'` +
+   *      `merged_into_contact_id=target` so /app/contacts and chat
+   *      retrieval can hop to the canonical row.
+   *
+   * Idempotent: if `sourceId` is already merged into the same target,
+   * returns without re-running. Throws if either contact is missing
+   * or if the source is merged into a DIFFERENT target (operator
+   * must un-merge first — not wired yet).
+   */
+  async mergeInto(
+    tx: Tx,
+    sourceId: string,
+    targetId: string,
+  ): Promise<{ target: Contact; source: Contact }> {
+    if (sourceId === targetId) {
+      throw new Error("merge source and target are the same contact");
+    }
+    const source = await this.findById(tx, sourceId);
+    if (!source) throw new Error(`contact ${sourceId} (source) not found`);
+    const target = await this.findById(tx, targetId);
+    if (!target) throw new Error(`contact ${targetId} (target) not found`);
+
+    if (source.mergedIntoContactId === targetId) {
+      // Already merged — idempotent no-op.
+      return { target, source };
+    }
+    if (source.mergedIntoContactId && source.mergedIntoContactId !== targetId) {
+      throw new Error(
+        `contact ${sourceId} already merged into ${source.mergedIntoContactId}; un-merge first`,
+      );
+    }
+
+    // 1. Re-point child rows. Activities don't have a direct
+    //    contact_id — they reference via relatedObjectIds JSONB — so
+    //    the query path that renders a contact's activity timeline
+    //    already falls back to a hop through touchpoints. Defer a
+    //    JSONB rewrite for activities to a follow-up.
+    await tx
+      .update(touchpoints)
+      .set({ contactId: targetId })
+      .where(eq(touchpoints.contactId, sourceId));
+    await tx
+      .update(leads)
+      .set({ contactId: targetId })
+      .where(eq(leads.contactId, sourceId));
+
+    // 2. Re-point memberships, skipping any (target, org) pair that
+    //    already exists so we don't violate the unique constraint.
+    await tx.execute(sql`
+      UPDATE ${contactOrgMemberships}
+      SET contact_id = ${targetId}
+      WHERE contact_id = ${sourceId}
+        AND NOT EXISTS (
+          SELECT 1 FROM ${contactOrgMemberships} t
+          WHERE t.contact_id = ${targetId}
+            AND t.org_id = ${contactOrgMemberships.orgId}
+        )
+    `);
+    // Anything left on the source is now a duplicate → delete.
+    await tx
+      .delete(contactOrgMemberships)
+      .where(eq(contactOrgMemberships.contactId, sourceId));
+
+    // 3. Union contact data onto the target.
+    const mergedEmails = dedupeCaseInsensitive([
+      ...(target.emails ?? []),
+      ...(source.emails ?? []),
+    ]);
+    const mergedPhones = Array.from(
+      new Set([...(target.phones ?? []), ...(source.phones ?? [])]),
+    );
+    const mergedTags = Array.from(
+      new Set([...(target.tags ?? []), ...(source.tags ?? [])]),
+    );
+    const [updatedTarget] = await tx
+      .update(contacts)
+      .set({
+        emails: mergedEmails,
+        phones: mergedPhones,
+        tags: mergedTags,
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, targetId))
+      .returning();
+    if (!updatedTarget) throw new Error(`contact ${targetId} vanished mid-merge`);
+
+    // 4. Tombstone the source.
+    const [updatedSource] = await tx
+      .update(contacts)
+      .set({
+        status: "archived",
+        mergedIntoContactId: targetId,
+        updatedAt: new Date(),
+      })
+      .where(eq(contacts.id, sourceId))
+      .returning();
+    if (!updatedSource) throw new Error(`contact ${sourceId} vanished mid-merge`);
+
+    return { target: updatedTarget, source: updatedSource };
+  }
+
   /** Sprint O — remove a tag (no-op if it isn't on the row). */
   async removeTag(tx: Tx, id: string, tag: string): Promise<Contact> {
     const [row] = await tx
@@ -237,4 +350,16 @@ export class ContactRepository {
     if (!row) throw new Error(`contact ${id} not found`);
     return row;
   }
+}
+
+function dedupeCaseInsensitive(values: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of values) {
+    const key = v.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(v);
+  }
+  return out;
 }

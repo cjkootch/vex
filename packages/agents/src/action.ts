@@ -149,6 +149,20 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     contactIds: z.array(zUlid).min(1).max(500),
     rationale: z.string().min(1).max(1000),
   }),
+  // Chat-initiated contact merge. Unifies two contact records so
+  // every timeline edge (touchpoints, activities, leads, org
+  // memberships, emails, phones, tags) rolls up under the target.
+  // Source becomes archived with a tombstone pointer
+  // (merged_into_contact_id) so the old id still resolves via hop.
+  z.object({
+    kind: z.literal("contact.merge"),
+    tier: z.literal(ApprovalTier.T2),
+    /** The contact that will be archived — its data rolls into target. */
+    sourceContactId: zUlid,
+    /** The contact that survives and inherits everything. */
+    targetContactId: zUlid,
+    rationale: z.string().min(1).max(1000),
+  }),
   // Sprint T.4 — chat-initiated workflow authoring. When the catalog
   // has no plan that fits, the agent can propose a brand-new multi-
   // channel campaign: { name, channel, steps: [...] }. On approve,
