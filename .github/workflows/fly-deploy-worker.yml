@@ -1,0 +1,57 @@
+name: Fly deploy (apps/worker)
+
+# Auto-deploys apps/worker to Fly.io (vex-worker app) on every push
+# to main. Mirrors fly-deploy.yml for the API so the worker and API
+# can't drift silently on different code versions.
+#
+# Requires FLY_API_TOKEN in repo secrets (same token used for vex-api).
+# Without the token the preflight skips the deploy so forks / branch
+# CI keep working.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/worker/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+      - "fly.worker.toml"
+      - ".github/workflows/fly-deploy-worker.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: fly-deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: preflight-secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      has_token: ${{ steps.check.outputs.has_token }}
+    steps:
+      - id: check
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${FLY_API_TOKEN:-}" ]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy:
+    name: fly-deploy-worker
+    needs: preflight
+    if: ${{ needs.preflight.outputs.has_token == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: flyctl deploy --remote-only --config fly.worker.toml
