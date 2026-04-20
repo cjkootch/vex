@@ -217,6 +217,46 @@ const DealScorecardPanel = z.object({
   flags: z.array(z.string()).optional(),
 });
 
+/**
+ * Approval-flow swimlane. Rendered as one row per tier (T0…T3) with
+ * a horizontal strip of pills in chronological order. Each pill maps
+ * 1:1 to an `approvals` row, keyed by `approvalId` when present so
+ * the operator can click through to the full approval detail.
+ *
+ * Use this when the operator asks "what's pending on VTC-2026-008?",
+ * "walk me through the approval gates for this deal", or any
+ * where-is-the-blocker question that a flat list of statuses hides.
+ *
+ * `status` values map to VTC's approval lifecycle:
+ *   - pending       → queued, waiting on a reviewer
+ *   - approved      → human-approved
+ *   - rejected      → human-rejected (show reason in `reason`)
+ *   - auto_approved → policy-approved without a human click (T0/T1)
+ *   - not_started   → predicted / implied gate that hasn't been proposed yet
+ */
+const ApprovalFlowStep = z.object({
+  tier: z.enum(["T0", "T1", "T2", "T3"]),
+  label: z.string().min(1).max(160),
+  status: z.enum(["pending", "approved", "rejected", "auto_approved", "not_started"]),
+  /** ULID — click-through target when present. */
+  approvalId: z.string().optional(),
+  /** e.g. "email.send", "crm.create_deal", "campaign.enroll_batch". */
+  actionType: z.string().optional(),
+  occurredAt: z.string().optional(),
+  reviewer: z.string().optional(),
+  reason: z.string().max(500).optional(),
+  /** Short human-readable bullets ("OFAC pending", "missing dealRef"). */
+  blockers: z.array(z.string().max(200)).max(5).optional(),
+});
+
+const ApprovalFlowPanel = z.object({
+  type: z.literal("approval_flow"),
+  title: z.string().min(1),
+  /** Loose context ref — VTC-2026-008, lead id, contact id, campaign id. */
+  contextRef: z.string().optional(),
+  steps: z.array(ApprovalFlowStep).min(1).max(30),
+});
+
 export const ManifestPanel = z.discriminatedUnion("type", [
   ProfilePanel,
   TablePanel,
@@ -231,6 +271,7 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   ConfirmEntityPanel,
   RouteMapPanel,
   DealScorecardPanel,
+  ApprovalFlowPanel,
   // Signal-only panel: ManifestCanvas intercepts it to switch workspace
   // mode and show a toast, never renders a concrete component.
   WorkspaceModeSwitchPanel,
