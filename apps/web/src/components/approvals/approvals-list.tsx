@@ -28,6 +28,8 @@ export function ApprovalsList() {
   const [decided, setDecided] = useState<ApprovalRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkRunning, setBulkRunning] = useState(false);
 
   useEffect(() => {
     void load();
@@ -40,6 +42,7 @@ export function ApprovalsList() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const json = (await r.json()) as { approvals: ApprovalRow[] };
       setItems(json.approvals);
+      setSelected(new Set());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -47,10 +50,31 @@ export function ApprovalsList() {
     }
   }
 
+  function toggle(id: string): void {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll(): void {
+    setSelected((prev) =>
+      prev.size === items.length ? new Set() : new Set(items.map((i) => i.id)),
+    );
+  }
+
   async function decide(id: string, action: "approve" | "reject"): Promise<void> {
     const target = items.find((i) => i.id === id);
     if (!target) return;
     setItems((prev) => prev.filter((i) => i.id !== id));
+    setSelected((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
     try {
       const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/${action}`, {
         method: "POST",
@@ -67,6 +91,56 @@ export function ApprovalsList() {
     }
   }
 
+  async function bulkDecide(action: "approve" | "reject"): Promise<void> {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    const targets = items.filter((i) => selected.has(i.id));
+    setBulkRunning(true);
+    setItems((prev) => prev.filter((i) => !selected.has(i.id)));
+    try {
+      const r = await fetch(`/api/approvals/bulk-decide`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids, decision: action }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const json = (await r.json()) as {
+        decided: Array<Pick<ApprovalRow, "id" | "decision" | "decidedAt">>;
+        skipped: string[];
+      };
+      const decidedIds = new Set(json.decided.map((d) => d.id));
+      // Promote decided rows into the "decided this session" pane.
+      setDecided((prev) => [
+        ...targets
+          .filter((t) => decidedIds.has(t.id))
+          .map((t) => ({
+            ...t,
+            decision:
+              action === "approve"
+                ? ("approved" as const)
+                : ("rejected" as const),
+            decidedAt: new Date().toISOString(),
+          })),
+        ...prev,
+      ]);
+      // Anything the server skipped (already decided, not found) — surface
+      // it briefly so the operator knows not every row moved.
+      if (json.skipped.length > 0) {
+        setError(`${json.skipped.length} already handled — refreshing.`);
+        void load();
+      } else {
+        setSelected(new Set());
+      }
+    } catch (err) {
+      // Revert — bulk failure is rare enough that restoring the full
+      // selection beats trying to reconcile a partial response.
+      setItems((prev) => [...targets, ...prev]);
+      setError((err as Error).message);
+    } finally {
+      setBulkRunning(false);
+    }
+  }
+
   return (
     <div className="space-y-8">
       {error && (
@@ -79,10 +153,56 @@ export function ApprovalsList() {
       )}
 
       <section>
-        <header className="mb-3 flex items-baseline justify-between">
+        <header className="mb-3 flex items-baseline justify-between gap-4">
           <h2 className="text-base font-semibold">Pending</h2>
-          <span className="text-xs text-white/40">{items.length} item{items.length === 1 ? "" : "s"}</span>
+          <div className="flex items-center gap-3 text-xs text-white/40">
+            {items.length > 0 && (
+              <label className="flex items-center gap-1.5 text-white/60">
+                <input
+                  type="checkbox"
+                  data-testid="approvals-select-all"
+                  checked={selected.size === items.length && items.length > 0}
+                  onChange={toggleAll}
+                  className="h-3.5 w-3.5 rounded border-line bg-canvas"
+                />
+                Select all
+              </label>
+            )}
+            <span>
+              {items.length} item{items.length === 1 ? "" : "s"}
+            </span>
+          </div>
         </header>
+        {selected.size > 0 && (
+          <div
+            data-testid="approvals-bulk-bar"
+            className="mb-3 flex items-center justify-between rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-sm"
+          >
+            <span className="text-white/80">
+              {selected.size} selected
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                data-testid="bulk-approve"
+                onClick={() => bulkDecide("approve")}
+                disabled={bulkRunning}
+                className="rounded-md bg-good px-3 py-1 text-xs font-medium text-canvas disabled:opacity-50"
+              >
+                {bulkRunning ? "Approving…" : `Approve ${selected.size}`}
+              </button>
+              <button
+                type="button"
+                data-testid="bulk-reject"
+                onClick={() => bulkDecide("reject")}
+                disabled={bulkRunning}
+                className="rounded-md border border-line px-3 py-1 text-xs text-white/70 hover:bg-white/5 disabled:opacity-50"
+              >
+                Reject {selected.size}
+              </button>
+            </div>
+          </div>
+        )}
         {loading ? (
           <p className="text-sm text-white/50">Loading…</p>
         ) : items.length === 0 ? (
@@ -90,7 +210,13 @@ export function ApprovalsList() {
         ) : (
           <ul className="space-y-3" data-testid="approvals-pending">
             {items.map((item) => (
-              <ApprovalCard key={item.id} item={item} onDecide={decide} />
+              <ApprovalCard
+                key={item.id}
+                item={item}
+                selected={selected.has(item.id)}
+                onToggle={toggle}
+                onDecide={decide}
+              />
             ))}
           </ul>
         )}
@@ -127,9 +253,13 @@ export function ApprovalsList() {
 
 function ApprovalCard({
   item,
+  selected,
+  onToggle,
   onDecide,
 }: {
   item: ApprovalRow;
+  selected: boolean;
+  onToggle: (id: string) => void;
   onDecide: (id: string, action: "approve" | "reject") => void | Promise<void>;
 }) {
   const tier = stringField(item.proposedPayload, "tier") ?? "T?";
@@ -167,6 +297,14 @@ function ApprovalCard({
       className="rounded-lg border border-line bg-muted/40 p-4"
     >
       <header className="mb-2 flex items-start justify-between gap-3">
+        <input
+          type="checkbox"
+          data-testid="approval-select"
+          checked={selected}
+          onChange={() => onToggle(item.id)}
+          className="mt-1 h-4 w-4 rounded border-line bg-canvas"
+          aria-label={`Select approval ${item.id}`}
+        />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-xs text-white/50">
             <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono">{item.actionType}</span>

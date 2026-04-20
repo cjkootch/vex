@@ -14,6 +14,12 @@ import { ApprovalsService } from "./approvals.service.js";
 
 const RejectBody = z.object({ reason: z.string().min(1).optional() });
 
+const BulkDecideBody = z.object({
+  ids: z.array(z.string().min(1)).min(1).max(50),
+  decision: z.enum(["approve", "reject"]),
+  reason: z.string().min(1).max(500).optional(),
+});
+
 @Controller("approvals")
 @UseGuards(JwtAuthGuard)
 export class ApprovalsController {
@@ -50,6 +56,20 @@ export class ApprovalsController {
       reviewerId: this.tenant.userId,
     });
     return { approval };
+  }
+
+  @Post("bulk-decide")
+  async bulkDecide(@Body() raw: unknown) {
+    const body = BulkDecideBody.parse(raw ?? {});
+    const result = await this.service.bulkDecide({
+      tenantId: this.tenant.tenantId,
+      workspaceId: this.tenant.workspaceId,
+      reviewerId: this.tenant.userId,
+      approvalIds: body.ids,
+      decision: body.decision === "approve" ? "approved" : "rejected",
+      ...(body.reason ? { reason: body.reason } : {}),
+    });
+    return result;
   }
 
   @Post(":id/reject")
