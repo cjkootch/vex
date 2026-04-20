@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ConversationThread,
   type ChatTurn,
@@ -143,19 +144,29 @@ export function FloatingVexWidget() {
       </button>
 
       {/* Drawer */}
-      {open ? (
-        <div
-          className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) setOpen(false);
-          }}
-        >
-          <div
-            ref={drawerRef}
-            role="dialog"
-            aria-label="Vex chat widget"
-            className="absolute bottom-0 right-0 top-0 flex w-full max-w-[440px] flex-col border-l border-line bg-bg shadow-2xl"
+      <AnimatePresence>
+        {open ? (
+          <motion.div
+            key="vex-drawer-scrim"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.18, ease: "easeOut" }}
+            className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget) setOpen(false);
+            }}
           >
+            <motion.div
+              ref={drawerRef}
+              role="dialog"
+              aria-label="Vex chat widget"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", stiffness: 340, damping: 34, mass: 0.9 }}
+              className="absolute bottom-0 right-0 top-0 flex w-full max-w-[440px] flex-col border-l border-line bg-bg shadow-2xl"
+            >
             <header className="flex flex-shrink-0 items-center justify-between border-b border-line bg-muted/30 px-4 py-3">
               <div className="flex items-center gap-2">
                 <span className="text-sm font-semibold text-white">
@@ -227,9 +238,10 @@ export function FloatingVexWidget() {
                 </Link>
               </footer>
             ) : null}
-          </div>
-        </div>
-      ) : null}
+            </motion.div>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
     </>
   );
 }
