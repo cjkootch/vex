@@ -10,6 +10,7 @@ import {
   type DocumentRepository,
   type EventRepository,
   type LeadRepository,
+  type OrganizationProductRepository,
   type OrganizationRepository,
   type RetrievalService,
   type SummaryRepository,
@@ -64,6 +65,7 @@ export interface AgentRunnerDeps {
   agentRuns: AgentRunRepository;
   approvals: ApprovalRepository;
   organizations: OrganizationRepository;
+  orgProducts: OrganizationProductRepository;
   contacts: ContactRepository;
   leads: LeadRepository;
   documents: DocumentRepository;
@@ -188,6 +190,7 @@ export class AgentRunner {
         costLedger: this.deps.costLedger,
         retrieval: this.deps.retrieval,
         organizations: this.deps.organizations,
+        orgProducts: this.deps.orgProducts,
         contacts: this.deps.contacts,
         leads: this.deps.leads,
         documents: this.deps.documents,

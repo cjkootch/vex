@@ -1,11 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildDealProposal,
+  buildSupplierRfqProposals,
   extractDraftReply,
   isHotSignal,
   mapQualificationProduct,
   parseVolume,
+  renderSupplierRfqBody,
 } from "./lead-qualification.js";
+import type { AgentContext } from "./types.js";
 
 describe("isHotSignal", () => {
   it("fires on buying_intent=intent_to_buy", () => {
@@ -278,5 +281,247 @@ describe("buildDealProposal", () => {
     expect(action).not.toBeNull();
     expect(action!.payload.destinationPort).toBeUndefined();
     expect(action!.payload.notes).toBeUndefined();
+  });
+});
+
+describe("renderSupplierRfqBody", () => {
+  it("builds a subject + body with all the fields present", () => {
+    const out = renderSupplierRfqBody({
+      product: "rice",
+      volume: "500 MT",
+      destination: "Port-au-Prince",
+      timeline: "Q3 2026",
+      dealRef: "VTC-2026-LABC123",
+    });
+    expect(out.subject).toContain("500 MT");
+    expect(out.subject).toContain("rice");
+    expect(out.subject).toContain("Port-au-Prince");
+    expect(out.subject).toContain("Q3 2026");
+    expect(out.body).toContain("500 MT of rice");
+    expect(out.body).toContain("into Port-au-Prince");
+    expect(out.body).toContain("on Q3 2026");
+    expect(out.body).toContain("CIF, LC60D");
+    expect(out.body).toContain("VTC-2026-LABC123");
+  });
+
+  it("gracefully omits destination / timeline / ref when not supplied", () => {
+    const out = renderSupplierRfqBody({ product: "ulsd", volume: "2,000 USG" });
+    expect(out.subject).toBe("RFQ — 2,000 USG ulsd");
+    expect(out.body).not.toContain("into ");
+    expect(out.body).not.toContain(" on ");
+    expect(out.body).toContain("Thanks,");
+  });
+
+  it("truncates unreasonably-long subjects", () => {
+    const out = renderSupplierRfqBody({
+      product: "rice-long-product-name-that-goes-on-and-on",
+      volume: "500 MT",
+      destination: "A-very-long-destination-name-that-exceeds-reasonable-bounds",
+      timeline: "a-long-timeline-string-because-llms-be-llms",
+    });
+    expect(out.subject.length).toBeLessThanOrEqual(140);
+  });
+});
+
+describe("buildSupplierRfqProposals", () => {
+  const tx = {} as never;
+  const buyerOrgId = "01HORG_BUYER";
+  const leadId = "01HLEAD_A";
+  const parsed: Record<string, unknown> = {
+    destination: "Port-au-Prince",
+    timeline: "Q3 2026",
+  };
+  const dealPayload: Record<string, unknown> = {
+    product: "rice",
+    volumeUsg: 500,
+    volumeUnit: "mt",
+    dealRef: "VTC-2026-LABC123",
+  };
+
+  function makeCtx(overrides: {
+    listForProduct?: (product: string) => Promise<unknown[]>;
+    findById?: (orgId: string) => Promise<unknown>;
+    findByOrgId?: (orgId: string) => Promise<unknown[]>;
+  }): AgentContext {
+    // Real repo signatures are (tx, key, ...); tests don't care about
+    // tx, so we swallow it and forward the semantic key.
+    return {
+      tx,
+      orgProducts: {
+        listForProduct: async (_tx: unknown, product: string) =>
+          overrides.listForProduct
+            ? overrides.listForProduct(product)
+            : [],
+      },
+      organizations: {
+        findById: async (_tx: unknown, orgId: string) =>
+          overrides.findById ? overrides.findById(orgId) : null,
+      },
+      contacts: {
+        findByOrgId: async (_tx: unknown, orgId: string) =>
+          overrides.findByOrgId ? overrides.findByOrgId(orgId) : [],
+      },
+    } as unknown as AgentContext;
+  }
+
+  it("emits one email.send per qualified supplier up to maxDrafts", async () => {
+    const orgRows = [
+      { orgId: "01HORG_S1" },
+      { orgId: "01HORG_S2" },
+      { orgId: "01HORG_S3" },
+      { orgId: "01HORG_S4" },
+    ];
+    const orgs = new Map([
+      ["01HORG_S1", { id: "01HORG_S1", legalName: "Supplier 1", kind: "supplier" }],
+      ["01HORG_S2", { id: "01HORG_S2", legalName: "Supplier 2", kind: "supplier" }],
+      ["01HORG_S3", { id: "01HORG_S3", legalName: "Supplier 3", kind: "supplier" }],
+      ["01HORG_S4", { id: "01HORG_S4", legalName: "Supplier 4", kind: "supplier" }],
+    ]);
+    const contacts = new Map([
+      ["01HORG_S1", [{ id: "c1", emails: ["s1@example.com"] }]],
+      ["01HORG_S2", [{ id: "c2", emails: ["s2@example.com"] }]],
+      ["01HORG_S3", [{ id: "c3", emails: ["s3@example.com"] }]],
+      ["01HORG_S4", [{ id: "c4", emails: ["s4@example.com"] }]],
+    ]);
+    const ctx = makeCtx({
+      listForProduct: async () => orgRows,
+      findById: async (orgId) => orgs.get(orgId) ?? null,
+      findByOrgId: async (orgId) => contacts.get(orgId) ?? [],
+    });
+    const out = await buildSupplierRfqProposals({
+      ctx,
+      parsed,
+      dealPayload,
+      buyerOrgId,
+      leadId,
+      maxDrafts: 3,
+    });
+    expect(out).toHaveLength(3);
+    expect(out[0]!.kind).toBe("email.send");
+    expect(out[0]!.tier).toBe("T2");
+    const payload = out[0]!.payload as Record<string, unknown>;
+    expect(payload["auto_drafted_from"]).toBe("lead_qualification.supplier_rfq");
+    expect(payload["supplier_org_id"]).toBe("01HORG_S1");
+    expect(payload["lead_id"]).toBe(leadId);
+    expect(payload["to"]).toEqual(["s1@example.com"]);
+  });
+
+  it("skips the buyer's own org", async () => {
+    const ctx = makeCtx({
+      listForProduct: async () => [{ orgId: buyerOrgId }, { orgId: "01HORG_S1" }],
+      findById: async (id) => ({
+        id,
+        legalName: "Supplier",
+        kind: "supplier",
+      }),
+      findByOrgId: async () => [{ id: "c1", emails: ["x@example.com"] }],
+    });
+    const out = await buildSupplierRfqProposals({
+      ctx,
+      parsed,
+      dealPayload,
+      buyerOrgId,
+      leadId,
+      maxDrafts: 3,
+    });
+    expect(out).toHaveLength(1);
+    expect((out[0]!.payload as Record<string, unknown>)["supplier_org_id"]).toBe("01HORG_S1");
+  });
+
+  it("skips orgs whose kind isn't supplier / broker", async () => {
+    const ctx = makeCtx({
+      listForProduct: async () => [
+        { orgId: "01HORG_B" },
+        { orgId: "01HORG_SUP" },
+      ],
+      findById: async (id) => ({
+        id,
+        legalName: id,
+        kind: id === "01HORG_B" ? "buyer" : "supplier",
+      }),
+      findByOrgId: async () => [{ id: "c1", emails: ["x@example.com"] }],
+    });
+    const out = await buildSupplierRfqProposals({
+      ctx,
+      parsed,
+      dealPayload,
+      buyerOrgId,
+      leadId,
+      maxDrafts: 3,
+    });
+    expect(out).toHaveLength(1);
+    expect((out[0]!.payload as Record<string, unknown>)["supplier_org_id"]).toBe("01HORG_SUP");
+  });
+
+  it("skips suppliers with no emailable contact", async () => {
+    const ctx = makeCtx({
+      listForProduct: async () => [{ orgId: "01HORG_S1" }, { orgId: "01HORG_S2" }],
+      findById: async (id) => ({ id, legalName: id, kind: "supplier" }),
+      findByOrgId: async (orgId) =>
+        orgId === "01HORG_S1"
+          ? [{ id: "c1", emails: [] }] // no emails
+          : [{ id: "c2", emails: ["ok@example.com"] }],
+    });
+    const out = await buildSupplierRfqProposals({
+      ctx,
+      parsed,
+      dealPayload,
+      buyerOrgId,
+      leadId,
+      maxDrafts: 3,
+    });
+    expect(out).toHaveLength(1);
+    expect((out[0]!.payload as Record<string, unknown>)["supplier_org_id"]).toBe("01HORG_S2");
+  });
+
+  it("returns [] when deal payload is missing product / volume", async () => {
+    const ctx = makeCtx({});
+    const out = await buildSupplierRfqProposals({
+      ctx,
+      parsed,
+      dealPayload: { dealRef: "X" },
+      buyerOrgId,
+      leadId,
+      maxDrafts: 3,
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("returns [] when no orgs carry the product", async () => {
+    const ctx = makeCtx({ listForProduct: async () => [] });
+    const out = await buildSupplierRfqProposals({
+      ctx,
+      parsed,
+      dealPayload,
+      buyerOrgId,
+      leadId,
+      maxDrafts: 3,
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("dedupes multiple product rows pointing to the same org", async () => {
+    const ctx = makeCtx({
+      listForProduct: async () => [
+        { orgId: "01HORG_S1" },
+        { orgId: "01HORG_S1" }, // duplicate
+        { orgId: "01HORG_S2" },
+      ],
+      findById: async (id) => ({ id, legalName: id, kind: "supplier" }),
+      findByOrgId: async () => [{ id: "c", emails: ["x@example.com"] }],
+    });
+    const out = await buildSupplierRfqProposals({
+      ctx,
+      parsed,
+      dealPayload,
+      buyerOrgId,
+      leadId,
+      maxDrafts: 3,
+    });
+    expect(out).toHaveLength(2);
+    const orgIds = out.map(
+      (p) => (p.payload as Record<string, unknown>)["supplier_org_id"],
+    );
+    expect(orgIds).toEqual(["01HORG_S1", "01HORG_S2"]);
   });
 });
