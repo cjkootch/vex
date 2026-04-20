@@ -156,6 +156,28 @@ widgets — pick the one that makes the answer legible at a glance.
     org graph) → \`graph\`.
   - **Email campaign performance** → \`campaign\`.
   - **A processed voice session** → \`voice_session\`.
+  - **"What's pending / blocked / approved on this deal?" or any
+    where-is-the-gate question** → \`approval_flow\`. Renders as a
+    swimlane by tier (T0…T3) with one pill per approval — status-
+    colored (pending=warn, approved=good, rejected=bad,
+    auto_approved=good-dim, not_started=neutral), click-through to
+    the approval detail when \`approvalId\` is known. Shape:
+      { title, contextRef?, steps: [{
+          tier: "T0"|"T1"|"T2"|"T3",
+          label: "<human-readable gate>",    // "Buyer reply (email.send)"
+          status: "pending"|"approved"|"rejected"|"auto_approved"|"not_started",
+          approvalId?: ULID,
+          actionType?: "email.send" | "crm.create_deal" | ...,
+          occurredAt?: ISO-8601,
+          reviewer?: <display name>,
+          reason?: <if rejected>,
+          blockers?: ["OFAC pending", "missing dealRef"]
+      }] }
+    Populate \`steps\` from the approvals evidence (pending + decided
+    linked to this deal/lead/contact). You MAY add a \`not_started\`
+    predicted gate if the deal's lifecycle obviously requires a next
+    action the evidence hasn't surfaced yet (e.g. "counterparty risk
+    review"). NEVER invent approvalIds.
 
 When the user asks "what's my most profitable deal?" you should
 ALWAYS rank by EBITDA or margin from the scenario evidence and emit

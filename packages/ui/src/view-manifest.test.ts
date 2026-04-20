@@ -125,6 +125,91 @@ describe("validateManifest", () => {
     }
   });
 
+  it("accepts an approval_flow panel with tiered steps", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "approval_flow",
+          title: "Deal VTC-2026-008 — approval timeline",
+          contextRef: "VTC-2026-008",
+          steps: [
+            {
+              tier: "T1",
+              label: "Lead qualification",
+              status: "auto_approved",
+              actionType: "lead.qualify",
+              occurredAt: "2026-04-20T15:04:00Z",
+            },
+            {
+              tier: "T2",
+              label: "Buyer reply (email.send)",
+              status: "approved",
+              approvalId: "01HAPPROVAL0000000000000001",
+              actionType: "email.send",
+              occurredAt: "2026-04-20T15:07:00Z",
+              reviewer: "colekut4",
+            },
+            {
+              tier: "T2",
+              label: "Create buy-side deal",
+              status: "pending",
+              approvalId: "01HAPPROVAL0000000000000002",
+              actionType: "crm.create_deal",
+              blockers: ["OFAC screening not cleared"],
+            },
+            {
+              tier: "T3",
+              label: "Counterparty risk review",
+              status: "not_started",
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const p = result.manifest.panels[0];
+      if (p?.type === "approval_flow") {
+        expect(p.steps).toHaveLength(4);
+      } else {
+        throw new Error("expected approval_flow");
+      }
+    }
+  });
+
+  it("rejects approval_flow with an unknown tier", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "approval_flow",
+          title: "x",
+          steps: [{ tier: "T4", label: "bad", status: "pending" }],
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects approval_flow with an unknown status", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "approval_flow",
+          title: "x",
+          steps: [{ tier: "T2", label: "y", status: "stalled" }],
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects approval_flow with zero steps", () => {
+    const result = validateManifest({
+      panels: [{ type: "approval_flow", title: "x", steps: [] }],
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects filterable_table with invalid defaultSort direction", () => {
     const result = validateManifest({
       panels: [
