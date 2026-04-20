@@ -578,6 +578,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyEnrollBatch(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "contact.merge") {
+          await applyContactMerge(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "campaign.create") {
           await applyCampaignCreate(tx, deps, workspace_id, approval);
           return;
@@ -2467,6 +2471,97 @@ async function applyEnrollBatch(
         );
       }
     }
+  }
+}
+
+/**
+ * Approved `contact.merge` — unify two contact records. Delegates to
+ * ContactRepository.mergeInto which rewrites FKs (touchpoints,
+ * activities, leads, memberships), unions emails/phones/tags onto
+ * the target, and tombstones the source
+ * (status=archived + merged_into_contact_id=target). All in one
+ * `withTenant` tx so a crash rolls the whole thing back.
+ *
+ * Idempotent: if `sourceContactId` is already merged into the same
+ * target, the repo returns without re-running + we replay-event.
+ */
+async function applyContactMerge(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    sourceContactId?: string;
+    targetContactId?: string;
+    rationale?: string;
+  } | null;
+  const sourceContactId = payload?.sourceContactId;
+  const targetContactId = payload?.targetContactId;
+  if (!sourceContactId || !targetContactId) {
+    const missing: string[] = [];
+    if (!sourceContactId) missing.push("sourceContactId");
+    if (!targetContactId) missing.push("targetContactId");
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.merge",
+      `missing ${missing.join(" + ")}`,
+    );
+    return;
+  }
+  if (sourceContactId === targetContactId) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.merge",
+      "source and target are the same contact",
+    );
+    return;
+  }
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "contact.merge");
+    return;
+  }
+
+  try {
+    const { target } = await deps.contacts.mergeInto(
+      tx,
+      sourceContactId,
+      targetContactId,
+    );
+    await deps.approvals.markApplied(tx, approval.id, target.id);
+    await deps.events.insertIfNotExists(tx, tenantId, {
+      verb: "contact.merged",
+      subjectType: "contact",
+      subjectId: target.id,
+      actorType: "user",
+      actorId: approval.reviewerId ?? "approval_executor",
+      objectType: "contact",
+      objectId: sourceContactId,
+      occurredAt: new Date(),
+      idempotencyKey: `contact.merged:${approval.id}`,
+      metadata: {
+        approval_id: approval.id,
+        source_contact_id: sourceContactId,
+        target_contact_id: target.id,
+        rationale: payload?.rationale ?? null,
+        applied_by: approval.reviewerId,
+      },
+    });
+  } catch (err) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.merge",
+      (err as Error).message,
+    );
   }
 }
 

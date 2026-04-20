@@ -367,6 +367,9 @@ function ApprovalCard({
     case "campaign.enroll_batch":
       body = <EnrollBatchBody payload={item.proposedPayload} />;
       break;
+    case "contact.merge":
+      body = <ContactMergeBody payload={item.proposedPayload} />;
+      break;
     case "call.request_backup":
       body = <CallBackupBody payload={item.proposedPayload} />;
       break;
@@ -842,6 +845,59 @@ function CreateDealBody({ payload }: { payload: Record<string, unknown> }) {
       {rationale && (
         <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
           “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ContactMergeBody({ payload }: { payload: Record<string, unknown> }) {
+  const sourceId = stringField(payload, "sourceContactId");
+  const targetId = stringField(payload, "targetContactId");
+  const rationale = stringField(payload, "rationale");
+  const missing: string[] = [];
+  if (!sourceId) missing.push("sourceContactId");
+  if (!targetId) missing.push("targetContactId");
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center gap-2 text-sm text-white">
+        <span className="font-semibold">Merge</span>
+        {sourceId ? (
+          <Link
+            href={`/app/contacts/${encodeURIComponent(sourceId)}`}
+            className="font-mono text-white/70 hover:text-accent"
+          >
+            {sourceId.slice(-8)}
+          </Link>
+        ) : (
+          <span className="text-bad">&lt;no source&gt;</span>
+        )}
+        <span className="text-white/50">→</span>
+        {targetId ? (
+          <Link
+            href={`/app/contacts/${encodeURIComponent(targetId)}`}
+            className="font-mono text-white hover:text-accent"
+          >
+            {targetId.slice(-8)}
+          </Link>
+        ) : (
+          <span className="text-bad">&lt;no target&gt;</span>
+        )}
+      </div>
+      <p className="text-[11px] text-white/50">
+        Target keeps the record + inherits source&rsquo;s touchpoints,
+        activities, leads, org memberships, emails, phones, tags. Source
+        is archived with a tombstone pointer (reversible later).
+      </p>
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+      {missing.length > 0 && (
+        <p className="text-xs text-bad">
+          ⚠ Missing required field{missing.length === 1 ? "" : "s"}:{" "}
+          {missing.join(", ")}. Approving this will fail at the executor.
         </p>
       )}
     </div>

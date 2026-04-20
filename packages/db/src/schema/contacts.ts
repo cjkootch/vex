@@ -41,6 +41,12 @@ export const contacts = pgTable(
     /** Sprint O — free-form tags appended by the chat agent. */
     tags: jsonb("tags").$type<string[]>().notNull().default([]),
     status: recordStatusEnum("status").notNull().default("active"),
+    /**
+     * Tombstone pointer: when set, this contact has been merged into
+     * the referenced one. `status` also flips to 'archived' on merge.
+     * Null for all live contacts.
+     */
+    mergedIntoContactId: text("merged_into_contact_id"),
     timezone: text("timezone"),
     optOutAt: timestamp("opt_out_at", { withTimezone: true }),
     optOutReason: text("opt_out_reason"),
@@ -51,6 +57,7 @@ export const contacts = pgTable(
     tenantIdx: index("contacts_tenant_idx").on(t.tenantId),
     orgIdx: index("contacts_org_idx").on(t.orgId),
     statusIdx: index("contacts_status_idx").on(t.status),
+    mergedIntoIdx: index("contacts_merged_into_idx").on(t.mergedIntoContactId),
   }),
 );
 

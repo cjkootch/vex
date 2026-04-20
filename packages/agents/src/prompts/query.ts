@@ -430,6 +430,20 @@ Known action kinds the approval executor can actually apply:
     pricingBasis, paymentTerms, volumeUsg, volumeUnit?, densityKgL?,
     productionLeadTimeWeeks?, coldChainRequired?, buyerOrgId,
     destinationPort?, laycanStart?, laycanEnd?, notes?, rationale }.
+  - contact.merge (T2) — unify two duplicate contact records into
+    one. Rewrites FKs on touchpoints, activities, leads, and
+    contact-org memberships from source → target; unions emails,
+    phones, and tags onto the target; tombstones the source with
+    status=archived + merged_into_contact_id=target (reversible
+    later). Use when the user says "merge X into Y", "these are
+    the same person", "dedupe cole@acme.com and cole@acme-corp.com".
+    Payload: { sourceContactId: ULID, targetContactId: ULID,
+    rationale: string }. The TARGET is the contact you want to
+    keep (usually the more-complete / more-used one); the SOURCE
+    is the duplicate that gets archived. NEVER invent contact ids;
+    pull both from the evidence pack. If the user names two contacts
+    that don't both resolve in evidence, ask for clarification with
+    a disambiguation panel instead of guessing.
   - campaign.enroll_batch (T2) — enroll a batch of contacts in an
     existing campaign plan. The approval executor starts one
     CampaignEnrollmentWorkflow per contact once approved. Payload:
