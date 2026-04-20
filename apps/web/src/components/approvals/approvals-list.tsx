@@ -230,25 +230,116 @@ export function ApprovalsList() {
         </header>
         <ul className="space-y-2" data-testid="approvals-decided">
           {decided.map((item) => (
-            <li
-              key={item.id}
-              className="rounded border border-line/60 bg-canvas/40 px-3 py-2 text-xs text-white/60"
-            >
-              <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono">{item.actionType}</span>{" "}
-              <span
-                className={`ml-2 rounded px-1.5 py-0.5 ${
-                  item.decision === "approved"
-                    ? "bg-good/20 text-good"
-                    : "bg-bad/20 text-bad"
-                }`}
-              >
-                {item.decision}
-              </span>
-            </li>
+            <DecidedRow key={item.id} item={item} />
           ))}
         </ul>
       </section>
     </div>
+  );
+}
+
+/**
+ * Row in the "Decided this session" list. Fires a single-shot
+ * outcome fetch 2s after mount (gives the approval-executor worker
+ * a moment to pick the BullMQ job up), then polls every 10s for up
+ * to a minute. Stops as soon as status is no longer "queued".
+ *
+ * Surfaces the real answer the operator wants: did the side effect
+ * actually land, or did the executor bounce (e.g. "missing toNumber"
+ * on an outbound_call where Claude didn't pull a real phone)?
+ */
+interface ExecutorOutcome {
+  status: "queued" | "applied" | "failed" | "skipped";
+  reason: string | null;
+  actionType: string | null;
+  appliedObjectId: string | null;
+  appliedAt: string | null;
+  occurredAt: string | null;
+}
+
+function DecidedRow({ item }: { item: ApprovalRow }) {
+  const [outcome, setOutcome] = useState<ExecutorOutcome | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (item.decision !== "approved" && item.decision !== "auto_approved") {
+      // Rejected approvals never go to the executor; nothing to poll.
+      return;
+    }
+    let cancelled = false;
+    let attempts = 0;
+    const MAX = 7; // 2s + 6×10s = ~62s total
+    const fetchOnce = async (): Promise<void> => {
+      attempts += 1;
+      try {
+        const r = await fetch(
+          `/api/approvals/${encodeURIComponent(item.id)}/outcome`,
+          { cache: "no-store" },
+        );
+        if (!r.ok) return;
+        const body = (await r.json()) as { outcome: ExecutorOutcome | null };
+        if (cancelled) return;
+        setLoaded(true);
+        if (body.outcome) setOutcome(body.outcome);
+        if (!body.outcome || body.outcome.status === "queued") {
+          if (attempts < MAX) setTimeout(() => void fetchOnce(), 10_000);
+        }
+      } catch {
+        /* silent — caller sees the last status we had */
+      }
+    };
+    const t = setTimeout(() => void fetchOnce(), 2_000);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [item.id, item.decision]);
+
+  const statusTone =
+    outcome?.status === "applied"
+      ? "bg-good/20 text-good"
+      : outcome?.status === "failed"
+        ? "bg-bad/20 text-bad"
+        : outcome?.status === "skipped"
+          ? "bg-white/10 text-white/70"
+          : item.decision === "approved" || item.decision === "auto_approved"
+            ? "bg-good/20 text-good"
+            : "bg-bad/20 text-bad";
+  const statusLabel =
+    outcome?.status === "applied"
+      ? "applied"
+      : outcome?.status === "failed"
+        ? "executor failed"
+        : outcome?.status === "skipped"
+          ? "already applied"
+          : item.decision === "approved" && loaded
+            ? "queued"
+            : item.decision;
+
+  return (
+    <li
+      data-testid="approval-decided-row"
+      className="space-y-1 rounded border border-line/60 bg-canvas/40 px-3 py-2 text-xs text-white/60"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono">
+          {item.actionType}
+        </span>
+        <span className={`rounded px-1.5 py-0.5 ${statusTone}`}>
+          {statusLabel}
+        </span>
+        {outcome?.status === "queued" && item.decision === "approved" ? (
+          <span className="text-[11px] italic text-white/40">
+            executor hasn&rsquo;t run yet…
+          </span>
+        ) : null}
+      </div>
+      {outcome?.status === "failed" && outcome.reason ? (
+        <p className="text-[11px] leading-relaxed text-bad">
+          ⚠ {outcome.reason}
+        </p>
+      ) : null}
+    </li>
   );
 }
 
