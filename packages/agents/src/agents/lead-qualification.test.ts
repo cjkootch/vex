@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { extractDraftReply, isHotSignal } from "./lead-qualification.js";
+import {
+  buildDealProposal,
+  extractDraftReply,
+  isHotSignal,
+  mapQualificationProduct,
+  parseVolume,
+} from "./lead-qualification.js";
 
 describe("isHotSignal", () => {
   it("fires on buying_intent=intent_to_buy", () => {
@@ -105,5 +111,172 @@ describe("extractDraftReply", () => {
         draft_reply: { subject: good.subject, body: "x".repeat(4001) },
       }),
     ).toBeNull();
+  });
+});
+
+describe("mapQualificationProduct", () => {
+  it("maps known food + fuel products", () => {
+    expect(mapQualificationProduct("rice")).toBe("rice");
+    expect(mapQualificationProduct("pork")).toBe("pork");
+    expect(mapQualificationProduct("chicken")).toBe("chicken");
+    expect(mapQualificationProduct("ulsd")).toBe("ulsd");
+    expect(mapQualificationProduct("jet")).toBe("jet_a");
+  });
+
+  it("handles loose spelling + case", () => {
+    expect(mapQualificationProduct("  RICE  ")).toBe("rice");
+    expect(mapQualificationProduct("Cooking Oil")).toBe("cooking_oil");
+  });
+
+  it("maps MGO → ulsd (trading equivalence)", () => {
+    expect(mapQualificationProduct("mgo")).toBe("ulsd");
+  });
+
+  it("returns null on unknown or non-string", () => {
+    expect(mapQualificationProduct(null)).toBeNull();
+    expect(mapQualificationProduct("sugar")).toBeNull(); // known to qual, unknown to deal schema
+    expect(mapQualificationProduct(42)).toBeNull();
+  });
+});
+
+describe("parseVolume", () => {
+  it("parses plain MT + USG quantities", () => {
+    expect(parseVolume("500 MT")).toEqual({ value: 500, unit: "mt" });
+    expect(parseVolume("1200 USG")).toEqual({ value: 1200, unit: "usg" });
+  });
+
+  it("ignores commas as thousands separators", () => {
+    expect(parseVolume("1,200 MT")).toEqual({ value: 1200, unit: "mt" });
+  });
+
+  it("honours k / m suffixes as multipliers", () => {
+    expect(parseVolume("200k MT")).toEqual({ value: 200_000, unit: "mt" });
+    expect(parseVolume("2.5m USG")).toEqual({ value: 2_500_000, unit: "usg" });
+    expect(parseVolume("15kt MT")).toEqual({ value: 15_000, unit: "mt" });
+  });
+
+  it("parses containers", () => {
+    expect(parseVolume("50 containers")).toEqual({
+      value: 50,
+      unit: "containers",
+    });
+    expect(parseVolume("1 container")).toEqual({
+      value: 1,
+      unit: "containers",
+    });
+  });
+
+  it("parses other units", () => {
+    expect(parseVolume("2000 kg")).toEqual({ value: 2000, unit: "kg" });
+    expect(parseVolume("500 lbs")).toEqual({ value: 500, unit: "lbs" });
+    expect(parseVolume("800 gallons")).toEqual({ value: 800, unit: "usg" });
+  });
+
+  it("rejects shapes it can't confidently parse", () => {
+    expect(parseVolume("")).toBeNull();
+    expect(parseVolume("some rice")).toBeNull();
+    expect(parseVolume("500")).toBeNull(); // no unit
+    expect(parseVolume("abc MT")).toBeNull();
+    expect(parseVolume(null)).toBeNull();
+    expect(parseVolume(500 as unknown)).toBeNull();
+  });
+
+  it("rejects zero or negative volumes", () => {
+    expect(parseVolume("0 MT")).toBeNull();
+    expect(parseVolume("-500 MT")).toBeNull();
+  });
+});
+
+describe("buildDealProposal", () => {
+  const baseParsed: Record<string, unknown> = {
+    product: "rice",
+    volume: "500 MT",
+    destination: "Port-au-Prince",
+    timeline: "Q3 2026",
+    urgency: "immediate",
+    buying_intent: "intent_to_buy",
+    summary: "Haitian importer needs 500MT parboiled rice Q3 2026.",
+  };
+  const lead = { id: "01HLEAD_A", orgId: "01HORG_A" };
+  const source = "website_form" as const;
+  const agentRunId = "01HRUN_DEAL_PROPOSAL_A1B2C3";
+
+  it("returns a crm.create_deal action when all required data is present", () => {
+    const action = buildDealProposal({ parsed: baseParsed, lead, source, agentRunId });
+    expect(action).not.toBeNull();
+    expect(action!.kind).toBe("crm.create_deal");
+    expect(action!.tier).toBe("T2");
+    const p = action!.payload;
+    expect(p.product).toBe("rice");
+    expect(p.lineOfBusiness).toBe("food");
+    expect(p.volumeUsg).toBe(500);
+    expect(p.volumeUnit).toBe("mt");
+    expect(p.buyerOrgId).toBe("01HORG_A");
+    expect(p.incoterm).toBe("cif");
+    expect(p.pricingBasis).toBe("negotiated");
+    expect(p.paymentTerms).toBe("lc_60d");
+    expect(p.destinationPort).toBe("Port-au-Prince");
+    expect(p.dealRef).toMatch(/^VTC-\d{4}-L[A-Z0-9]{6}$/);
+    expect(p.notes).toContain("Timeline: Q3 2026");
+    expect(p.notes).toContain("Summary: Haitian importer");
+    expect(p.auto_drafted_from).toBe("lead_qualification");
+    expect(p.lead_id).toBe("01HLEAD_A");
+  });
+
+  it("classifies fuel deals correctly", () => {
+    const action = buildDealProposal({
+      parsed: { ...baseParsed, product: "ulsd", volume: "2,000 USG" },
+      lead,
+      source,
+      agentRunId,
+    });
+    expect(action!.payload.lineOfBusiness).toBe("fuel");
+    expect(action!.payload.volumeUnit).toBe("usg");
+    expect(action!.payload.volumeUsg).toBe(2000);
+  });
+
+  it("returns null without a buyer org on the lead", () => {
+    expect(
+      buildDealProposal({
+        parsed: baseParsed,
+        lead: { id: "x", orgId: null },
+        source,
+        agentRunId,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null on unmappable product", () => {
+    expect(
+      buildDealProposal({
+        parsed: { ...baseParsed, product: "sugar" },
+        lead,
+        source,
+        agentRunId,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null on unparseable volume", () => {
+    expect(
+      buildDealProposal({
+        parsed: { ...baseParsed, volume: "some rice" },
+        lead,
+        source,
+        agentRunId,
+      }),
+    ).toBeNull();
+  });
+
+  it("omits destination + notes when the qualification didn't provide them", () => {
+    const action = buildDealProposal({
+      parsed: { product: "rice", volume: "500 MT" },
+      lead,
+      source,
+      agentRunId,
+    });
+    expect(action).not.toBeNull();
+    expect(action!.payload.destinationPort).toBeUndefined();
+    expect(action!.payload.notes).toBeUndefined();
   });
 });
