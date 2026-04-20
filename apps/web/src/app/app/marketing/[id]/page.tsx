@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Tabs } from "@/components/ui/tabs";
+import { buildAskVexHref } from "@/lib/ask-vex";
 
 interface CampaignTouchpoint {
   id: string;
@@ -104,7 +105,12 @@ export default function CampaignDetailPage({
           </p>
         </div>
         <Link
-          href={`/app/chat?ask=${encodeURIComponent(`Why did ${ref} drop in opens?`)}`}
+          href={buildAskVexHref({
+            type: "campaign",
+            id: campaign.id,
+            label: ref,
+            ask: `Why did ${ref} drop in opens?`,
+          })}
           className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
         >
           Ask Vex →

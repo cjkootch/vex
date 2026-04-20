@@ -33,6 +33,20 @@ const QueryBody = z.object({
       contact_id: z.string().optional(),
     })
     .optional(),
+  /**
+   * Sprint T — subject-scoped chat. Set when the operator opens
+   * chat from a contact/deal/organization/campaign page (the Ask Vex
+   * button deep-links `?scope=type:id`) or when the floating widget
+   * is open on a subject page. The retrieval layer pins the subject
+   * in the evidence pack so every answer in the session is biased
+   * toward it.
+   */
+  scope: z
+    .object({
+      type: z.enum(["contact", "deal", "organization", "campaign"]),
+      id: z.string().min(1).max(40),
+    })
+    .optional(),
 });
 type QueryBody = z.infer<typeof QueryBody>;
 
@@ -57,6 +71,7 @@ export class QueryController {
       idempotencyKey,
       message: body.message,
       ...(body.history ? { history: body.history } : {}),
+      ...(body.scope ? { scope: body.scope } : {}),
     });
     return {
       answer: result.answer,
@@ -103,6 +118,8 @@ export class QueryController {
         tenantId: this.tenant.tenantId,
         idempotencyKey,
         message: body.message,
+        ...(body.history ? { history: body.history } : {}),
+        ...(body.scope ? { scope: body.scope } : {}),
       });
       for (const chunk of chunkText(result.answer, 40)) {
         write("token", { text: chunk });

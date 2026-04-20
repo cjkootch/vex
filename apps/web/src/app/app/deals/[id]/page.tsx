@@ -9,6 +9,7 @@ import { QuickActions } from "@/components/crm/quick-actions";
 import { SignalsPanel } from "@/components/signals/signals-panel";
 import { EditDealForm } from "@/components/crm/edit-deal-form";
 import { Tabs } from "@/components/ui/tabs";
+import { buildAskVexHref } from "@/lib/ask-vex";
 
 interface DealDetail {
   id: string;
@@ -134,7 +135,12 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
             Edit
           </button>
           <Link
-            href={`/app/chat?ask=${encodeURIComponent(`Score deal ${deal.dealRef}`)}`}
+            href={buildAskVexHref({
+              type: "deal",
+              id: deal.id,
+              label: deal.dealRef,
+              ask: `Score deal ${deal.dealRef}`,
+            })}
             className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
           >
             Ask Vex →

@@ -5,6 +5,7 @@ import {
   useVexQuery,
   type HistoryTurn,
   type ManifestEvent,
+  type QueryScope,
 } from "@/lib/use-vex-query";
 import { renderProse } from "@/lib/render-prose";
 import { ManifestCanvas } from "@/components/canvas/manifest-canvas";
@@ -22,12 +23,35 @@ export interface ChatTurn {
 interface Props {
   turns: ChatTurn[];
   onTurns: (turns: ChatTurn[]) => void;
+  /**
+   * Sprint T — scoped chat. When set, every query in this thread
+   * ships a `scope: {type, id}` field that pins the subject in the
+   * evidence pack. Undefined = global-scope (default).
+   */
+  scope?: QueryScope;
+  /**
+   * Sprint T — one-shot initial prompt, typically injected via
+   * `?ask=...` URL param when deep-linked from a subject page's
+   * Ask Vex button. Populates the input on mount so the operator
+   * can edit before sending. Empty string / undefined is a no-op.
+   */
+  initialDraft?: string;
 }
 
-export function ConversationThread({ turns, onTurns }: Props) {
-  const [input, setInput] = useState("");
+export function ConversationThread({ turns, onTurns, scope, initialDraft }: Props) {
+  const [input, setInput] = useState(initialDraft ?? "");
   const { text, manifest, isStreaming, wakingUp, error, send } = useVexQuery();
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const initialDraftAppliedRef = useRef<string | undefined>(initialDraft);
+  // If a new initialDraft arrives (e.g. operator clicks a different
+  // subject's Ask Vex while already on /app/chat), refresh the input
+  // once — but don't clobber what they've typed mid-edit.
+  useEffect(() => {
+    if (initialDraft && initialDraft !== initialDraftAppliedRef.current) {
+      setInput(initialDraft);
+      initialDraftAppliedRef.current = initialDraft;
+    }
+  }, [initialDraft]);
 
   // Stream just finished — append the assistant turn to history.
   useEffect(() => {
@@ -82,7 +106,7 @@ export function ConversationThread({ turns, onTurns }: Props) {
       role: t.role,
       text: t.text,
     }));
-    void send(message, history);
+    void send(message, history, scope);
   }
 
   return (
