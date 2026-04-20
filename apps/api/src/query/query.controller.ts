@@ -77,6 +77,7 @@ export class QueryController {
       answer: result.answer,
       manifest: result.manifest,
       proposed_actions: result.proposedActions,
+      created_approvals: result.createdApprovals,
       evidence_refs: result.evidenceRefs,
       cost_usd: result.costUsd,
       cache_hit: result.cacheHit,
@@ -127,6 +128,7 @@ export class QueryController {
       write("manifest", {
         manifest: result.manifest,
         proposed_actions: result.proposedActions,
+        created_approvals: result.createdApprovals,
         evidence_refs: result.evidenceRefs,
         cost_usd: result.costUsd,
         cache_hit: result.cacheHit,
