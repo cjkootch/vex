@@ -34,23 +34,23 @@ const Lead = z.object({
 
 const Page = z
   .object({
-    url: z.string().optional(),
-    referrer: z.string().optional(),
-    utm: z.record(z.string()).optional(),
+    url: z.string().nullish(),
+    referrer: z.string().nullish(),
+    utm: z.record(z.string()).nullish(),
   })
-  .optional();
+  .nullish();
 
 const Message = z.object({
   role: z.enum(["user", "assistant", "system"]),
   text: z.string(),
-  ts: z.string().optional(),
+  ts: z.string().nullish(),
 });
 
 const Started = z.object({
   event: z.literal("conversation.started"),
   conversation_id: z.string().min(1),
-  website_version: z.string().optional(),
-  timestamp: z.string().optional(),
+  website_version: z.string().nullish(),
+  timestamp: z.string().nullish(),
   lead: Lead,
   page: Page,
 });
@@ -58,8 +58,8 @@ const Started = z.object({
 const Ended = z.object({
   event: z.literal("conversation.ended"),
   conversation_id: z.string().min(1),
-  website_version: z.string().optional(),
-  timestamp: z.string().optional(),
+  website_version: z.string().nullish(),
+  timestamp: z.string().nullish(),
   lead: Lead,
   page: Page,
   messages: z.array(Message).min(1),
@@ -319,7 +319,7 @@ function extractDomain(email: string): string {
 }
 
 function renderTranscript(
-  messages: Array<{ role: string; text: string; ts?: string | undefined }>,
+  messages: Array<{ role: string; text: string; ts?: string | null | undefined }>,
 ): string {
   return messages
     .map((m) => {
