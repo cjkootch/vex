@@ -1,6 +1,7 @@
 import type { Job, Queue } from "bullmq";
 import { withTenant, type Db, type RawEventRepository } from "@vex/db";
 import {
+  FormFillNormalizer,
   ResendNormalizer,
   TwilioNormalizer,
   WebsiteChatNormalizer,
@@ -108,6 +109,11 @@ export function buildNormalizationProcessor(deps: NormalizationProcessorDeps) {
           break;
         case "website_chat":
           outcome = await new WebsiteChatNormalizer(normalizerDeps).normalize(
+            input,
+          );
+          break;
+        case "website_form":
+          outcome = await new FormFillNormalizer(normalizerDeps).normalize(
             input,
           );
           break;

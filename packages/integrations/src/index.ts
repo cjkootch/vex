@@ -64,6 +64,7 @@ export {
 } from "./tavily.js";
 export { pricing } from "./pricing.js";
 export {
+  FormFillNormalizer,
   ResendNormalizer,
   TwilioNormalizer,
   WebsiteChatNormalizer,

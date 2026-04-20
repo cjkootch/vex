@@ -264,6 +264,101 @@ export class WebhooksController {
 
     void reply;
   }
+
+  /**
+   * POST /webhooks/form — inbound lead events from the VTC marketing
+   * site's #lead-form. One event kind today: `form.submitted`. Shares
+   * the HMAC signing secret with /webhooks/website-chat since both
+   * originate from the same Vercel edge function on the website.
+   *
+   * Idempotency: provider_event_id is `<form_id>:<email>:<timestamp>`
+   * so a webhook retry of the same submission collapses at the
+   * raw_events layer. Near-simultaneous double-clicks (same email,
+   * distinct timestamps) further dedupe at the events layer via the
+   * 5-minute bucketed idempotency key the normalizer emits.
+   */
+  @Post("form")
+  @HttpCode(204)
+  async websiteFormWebhook(
+    @Req() req: RawBodyRequest<FastifyRequest>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<void> {
+    const rawBody = req.rawBody;
+    if (!rawBody) throw new BadRequestException("missing_body");
+
+    const verdict = this.websiteChat.verify(req.headers, rawBody);
+    if (!verdict.ok) {
+      this.log.warn(`website-form webhook rejected: ${verdict.reason}`);
+      throw new BadRequestException("invalid_signature");
+    }
+
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(rawBody.toString("utf8")) as Record<string, unknown>;
+    } catch {
+      throw new BadRequestException("invalid_json");
+    }
+
+    const eventKind =
+      typeof payload["event"] === "string"
+        ? (payload["event"] as string)
+        : undefined;
+    if (eventKind !== "form.submitted") {
+      throw new BadRequestException("unsupported_event");
+    }
+
+    const formId =
+      typeof payload["form_id"] === "string"
+        ? (payload["form_id"] as string)
+        : undefined;
+    const lead = payload["lead"] as Record<string, unknown> | undefined;
+    const email =
+      lead && typeof lead["email"] === "string"
+        ? (lead["email"] as string)
+        : undefined;
+    const timestamp =
+      typeof payload["timestamp"] === "string"
+        ? (payload["timestamp"] as string)
+        : undefined;
+    if (!formId || !email) {
+      throw new BadRequestException("missing_form_id_or_email");
+    }
+
+    const tenantId = this.resolveTenant("website_form", payload);
+    const checksum = sha256Hex(rawBody);
+    const headersForStorage = pickHeaders(req.headers, [
+      "x-vtc-timestamp",
+      "x-vtc-signature",
+      "x-idempotency-key",
+      "content-type",
+    ]);
+
+    // Composite id. A retry of the identical submission (same body →
+    // same timestamp) collapses; two genuinely-distinct submissions
+    // from the same person land as separate rows.
+    const providerEventId = `${formId}:${email}:${timestamp ?? "notime"}`;
+
+    const result = await withTenant(this.db, tenantId, async (tx) =>
+      this.rawEvents.insertIfNotExists(
+        tx,
+        tenantId,
+        "website_form",
+        providerEventId,
+        headersForStorage,
+        payload,
+        checksum,
+      ),
+    );
+
+    if (result.isNew) {
+      await addNormalizationJob(this.queue, {
+        raw_event_id: result.id,
+        tenant_id: tenantId,
+      });
+    }
+
+    void reply;
+  }
 }
 
 function sha256Hex(buf: Buffer): string {

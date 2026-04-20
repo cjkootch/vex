@@ -16,6 +16,6 @@ export const WEBHOOK_TENANT_RESOLVER = Symbol("WEBHOOK_TENANT_RESOLVER");
  * tenantId from a per-provider routing config.
  */
 export type WebhookTenantResolver = (
-  provider: "resend" | "twilio" | "website_chat",
+  provider: "resend" | "twilio" | "website_chat" | "website_form",
   payload: unknown,
 ) => string;
