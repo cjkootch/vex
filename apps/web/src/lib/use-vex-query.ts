@@ -2,9 +2,21 @@
 
 import { useCallback, useRef, useState } from "react";
 
+export interface CreatedApproval {
+  approvalId: string;
+  actionType: string;
+  tier: string;
+}
+
 export interface ManifestEvent {
   manifest: unknown;
   proposed_actions?: unknown[];
+  /**
+   * T2+ approvals the server persisted for this turn. The chat UI
+   * renders approve/reject chips inline so the operator can fire
+   * them without leaving the conversation.
+   */
+  created_approvals?: CreatedApproval[];
   evidence_refs?: string[];
   cost_usd?: number;
   cache_hit?: boolean;

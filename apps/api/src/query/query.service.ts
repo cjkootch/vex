@@ -59,10 +59,22 @@ export interface RunQueryInput {
   };
 }
 
+export interface CreatedApproval {
+  approvalId: string;
+  actionType: string;
+  tier: string;
+}
+
 export interface RunQueryOutput {
   answer: string;
   manifest: ViewManifest;
   proposedActions: ProposedAction[];
+  /**
+   * Approvals that were persisted server-side for T2+ proposals in
+   * this turn. Returned so the chat UI can render Approve/Reject
+   * chips inline instead of forcing the operator to /app/approvals.
+   */
+  createdApprovals: CreatedApproval[];
   evidenceRefs: string[];
   costUsd: number;
   cacheHit: boolean;
@@ -243,7 +255,7 @@ export class QueryService {
     // and fire them. Until this existed, Claude would prose-say
     // "I'll set up the call" without any row ever reaching the DB
     // and the approval-executor worker had nothing to act on.
-    await this.persistProposedActions(
+    const createdApprovals = await this.persistProposedActions(
       tenantId,
       input.agentRunId,
       queryResult.proposedActions,
@@ -253,6 +265,7 @@ export class QueryService {
       answer,
       manifest,
       proposedActions: queryResult.proposedActions,
+      createdApprovals,
       evidenceRefs,
       costUsd: queryResult.costUsd,
       cacheHit: queryResult.cacheReadTokens > 0,
@@ -275,9 +288,10 @@ export class QueryService {
     tenantId: string,
     agentRunId: AgentRunId | undefined,
     actions: ProposedAction[],
-  ): Promise<void> {
+  ): Promise<CreatedApproval[]> {
     const pending = actions.filter((a) => APPROVAL_TIERS.has(a.tier));
-    if (pending.length === 0) return;
+    if (pending.length === 0) return [];
+    const created: CreatedApproval[] = [];
     try {
       await withTenant(this.db, tenantId, async (tx) => {
         for (const action of pending) {
@@ -307,6 +321,11 @@ export class QueryService {
               audit_event_id: createId(),
             },
           });
+          created.push({
+            approvalId: approval.id,
+            actionType: action.kind,
+            tier: action.tier,
+          });
         }
       });
     } catch (err) {
@@ -314,6 +333,7 @@ export class QueryService {
         `failed to persist ${pending.length} chat-proposed action(s): ${(err as Error).message}`,
       );
     }
+    return created;
   }
 }
 
@@ -366,6 +386,7 @@ function emptyWorkspaceResponse(): RunQueryOutput {
     answer: EMPTY_WORKSPACE_ANSWER,
     manifest: { panels: [] },
     proposedActions: [],
+    createdApprovals: [],
     evidenceRefs: [],
     costUsd: 0,
     cacheHit: false,

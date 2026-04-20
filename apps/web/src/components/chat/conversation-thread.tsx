@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   useVexQuery,
@@ -228,6 +229,7 @@ function Turn({ turn }: { turn: ChatTurn }) {
       </motion.div>
     );
   }
+  const createdApprovals = turn.manifest?.created_approvals ?? [];
   return (
     <motion.div
       {...common}
@@ -237,6 +239,9 @@ function Turn({ turn }: { turn: ChatTurn }) {
       <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90 shadow-sm shadow-black/10">
         {turn.text ? renderProse(turn.text) : <span className="text-white/40">No response.</span>}
       </div>
+      {createdApprovals.length > 0 ? (
+        <InlineApprovalChips approvals={createdApprovals} />
+      ) : null}
       {turn.createdAt && <AgentTrace since={turn.createdAt} />}
       {turn.manifest && (
         <div className="mt-3" data-testid="manifest-canvas">
@@ -244,6 +249,253 @@ function Turn({ turn }: { turn: ChatTurn }) {
         </div>
       )}
     </motion.div>
+  );
+}
+
+interface ChatApprovalState {
+  decision: "pending" | "approved" | "rejected";
+  outcome: null | {
+    status: "queued" | "applied" | "failed" | "skipped";
+    reason: string | null;
+  };
+  inFlight: boolean;
+  error: string | null;
+}
+
+interface CreatedApprovalMeta {
+  approvalId: string;
+  actionType: string;
+  tier: string;
+}
+
+/**
+ * Inline approve/reject chips rendered directly under an assistant
+ * bubble whenever the turn's `created_approvals` is non-empty. Click
+ * Approve or Reject → hits the same /api/approvals/:id/approve|reject
+ * endpoint the full inbox uses, then polls /api/approvals/:id/outcome
+ * on the same cadence as the Decided pane so the operator sees
+ * "applied" / "executor failed: <reason>" without leaving the thread.
+ */
+function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }) {
+  const [state, setState] = useState<Record<string, ChatApprovalState>>(() => {
+    const init: Record<string, ChatApprovalState> = {};
+    for (const a of approvals) {
+      init[a.approvalId] = {
+        decision: "pending",
+        outcome: null,
+        inFlight: false,
+        error: null,
+      };
+    }
+    return init;
+  });
+
+  async function decide(
+    approvalId: string,
+    action: "approve" | "reject",
+  ): Promise<void> {
+    setState((s) => ({
+      ...s,
+      [approvalId]: {
+        ...(s[approvalId] ?? {
+          decision: "pending",
+          outcome: null,
+          inFlight: false,
+          error: null,
+        }),
+        inFlight: true,
+        error: null,
+      },
+    }));
+    try {
+      const r = await fetch(
+        `/api/approvals/${encodeURIComponent(approvalId)}/${action}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({}),
+        },
+      );
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setState((s) => ({
+        ...s,
+        [approvalId]: {
+          decision: action === "approve" ? "approved" : "rejected",
+          outcome: null,
+          inFlight: false,
+          error: null,
+        },
+      }));
+      if (action === "approve") void pollOutcome(approvalId);
+    } catch (err) {
+      setState((s) => ({
+        ...s,
+        [approvalId]: {
+          ...(s[approvalId] ?? {
+            decision: "pending",
+            outcome: null,
+            inFlight: false,
+            error: null,
+          }),
+          inFlight: false,
+          error: (err as Error).message,
+        },
+      }));
+    }
+  }
+
+  async function pollOutcome(approvalId: string): Promise<void> {
+    for (let attempt = 0; attempt < 7; attempt++) {
+      await new Promise((r) => setTimeout(r, attempt === 0 ? 2_000 : 10_000));
+      try {
+        const r = await fetch(
+          `/api/approvals/${encodeURIComponent(approvalId)}/outcome`,
+          { cache: "no-store" },
+        );
+        if (!r.ok) continue;
+        const body = (await r.json()) as {
+          outcome: ChatApprovalState["outcome"];
+        };
+        if (!body.outcome) continue;
+        setState((s) => ({
+          ...s,
+          [approvalId]: {
+            ...(s[approvalId] ?? {
+              decision: "approved",
+              outcome: null,
+              inFlight: false,
+              error: null,
+            }),
+            outcome: body.outcome,
+          },
+        }));
+        if (body.outcome.status !== "queued") return;
+      } catch {
+        /* keep trying until attempts run out */
+      }
+    }
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-2">
+      {approvals.map((a) => {
+        const s = state[a.approvalId];
+        if (!s) return null;
+        return (
+          <InlineApprovalChip
+            key={a.approvalId}
+            approval={a}
+            state={s}
+            onDecide={(action) => void decide(a.approvalId, action)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function InlineApprovalChip({
+  approval,
+  state,
+  onDecide,
+}: {
+  approval: CreatedApprovalMeta;
+  state: ChatApprovalState;
+  onDecide: (action: "approve" | "reject") => void;
+}) {
+  const statusPill = (() => {
+    if (state.outcome?.status === "applied") {
+      return { tone: "bg-good/20 text-good", label: "applied" };
+    }
+    if (state.outcome?.status === "failed") {
+      return { tone: "bg-bad/20 text-bad", label: "executor failed" };
+    }
+    if (state.outcome?.status === "skipped") {
+      return { tone: "bg-white/10 text-white/70", label: "already applied" };
+    }
+    if (state.decision === "approved") {
+      return { tone: "bg-good/20 text-good", label: "queued" };
+    }
+    if (state.decision === "rejected") {
+      return { tone: "bg-bad/20 text-bad", label: "rejected" };
+    }
+    return null;
+  })();
+
+  const disabled = state.inFlight || state.decision !== "pending";
+
+  return (
+    <div
+      data-testid="inline-approval-chip"
+      className={`flex flex-col gap-1.5 rounded-lg border px-3 py-2 text-xs transition ${
+        state.decision === "pending"
+          ? "border-warn/40 bg-warn/5"
+          : state.outcome?.status === "failed"
+            ? "border-bad/40 bg-bad/5"
+            : "border-good/30 bg-good/5"
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          aria-hidden="true"
+          className={`h-1.5 w-1.5 rounded-full ${
+            state.decision === "pending"
+              ? "bg-warn"
+              : state.outcome?.status === "failed"
+                ? "bg-bad"
+                : "bg-good"
+          }`}
+        />
+        <span className="font-mono text-white/90">{approval.actionType}</span>
+        <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-mono text-white/60">
+          {approval.tier}
+        </span>
+        {statusPill ? (
+          <span className={`rounded px-1.5 py-0.5 ${statusPill.tone}`}>
+            {statusPill.label}
+          </span>
+        ) : null}
+        <span className="ml-auto flex gap-1.5">
+          {state.decision === "pending" ? (
+            <>
+              <button
+                type="button"
+                data-testid="inline-approve"
+                onClick={() => onDecide("approve")}
+                disabled={disabled}
+                className="rounded-md bg-good px-2.5 py-1 text-xs font-medium text-canvas transition hover:bg-good/80 disabled:opacity-40"
+              >
+                Approve
+              </button>
+              <button
+                type="button"
+                data-testid="inline-reject"
+                onClick={() => onDecide("reject")}
+                disabled={disabled}
+                className="rounded-md border border-line px-2.5 py-1 text-xs text-white/70 transition hover:bg-white/5 disabled:opacity-40"
+              >
+                Reject
+              </button>
+            </>
+          ) : (
+            <Link
+              href="/app/approvals"
+              className="text-[11px] text-white/50 underline-offset-2 hover:text-white/80 hover:underline"
+            >
+              Open inbox →
+            </Link>
+          )}
+        </span>
+      </div>
+      {state.outcome?.status === "failed" && state.outcome.reason ? (
+        <p className="text-[11px] leading-relaxed text-bad">
+          ⚠ {state.outcome.reason}
+        </p>
+      ) : null}
+      {state.error ? (
+        <p className="text-[11px] text-bad">⚠ {state.error}</p>
+      ) : null}
+    </div>
   );
 }
 
