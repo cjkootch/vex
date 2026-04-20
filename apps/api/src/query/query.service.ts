@@ -42,6 +42,19 @@ export interface RunQueryInput {
    * for follow-up questions like "change this status to won".
    */
   history?: HistoryTurn[];
+  /**
+   * Sprint T — subject-scoped chat. When the operator clicks "Ask Vex"
+   * from a contact/deal/organization/campaign page or opens the floating
+   * widget while on one of those subjects, the scope is passed through
+   * and the retrieval service pins the subject's full context at the
+   * top of the evidence pack regardless of embedding-score rank. Every
+   * answer in the session is thereby biased toward the subject unless
+   * the operator explicitly clears the scope (X on the chip).
+   */
+  scope?: {
+    type: "contact" | "deal" | "organization" | "campaign";
+    id: string;
+  };
 }
 
 export interface RunQueryOutput {
@@ -94,7 +107,9 @@ export class QueryService {
     );
 
     const pack = await withTenant(this.db, input.tenantId, async (tx) =>
-      this.retrieval.buildEvidencePack(tx, retrievalQuery, embedding),
+      this.retrieval.buildEvidencePack(tx, retrievalQuery, embedding, {
+        ...(input.scope ? { pinned: input.scope } : {}),
+      }),
     );
 
     // Short-circuit ONLY for plainly conversational openers (hello,

@@ -8,6 +8,7 @@ import { EditContactForm } from "@/components/crm/edit-contact-form";
 import { QuickActions } from "@/components/crm/quick-actions";
 import { SignalsPanel } from "@/components/signals/signals-panel";
 import { Tabs } from "@/components/ui/tabs";
+import { buildAskVexHref } from "@/lib/ask-vex";
 
 interface Membership {
   tenantId: string;
@@ -195,7 +196,12 @@ export default function ContactDetailPage({
             Edit
           </button>
           <Link
-            href={`/app/chat?ask=${encodeURIComponent(`What do I know about ${contact.fullName}?`)}`}
+            href={buildAskVexHref({
+              type: "contact",
+              id: contact.id,
+              label: contact.fullName,
+              ask: `What do I know about ${contact.fullName}?`,
+            })}
             className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
           >
             Ask Vex →

@@ -204,9 +204,33 @@ export class RetrievalService {
     tx: Tx,
     queryText: string,
     queryEmbedding: number[],
-    options: { tokenCap?: number; limit?: number } = {},
+    options: {
+      tokenCap?: number;
+      limit?: number;
+      /**
+       * Sprint T — subject-scoped chat. When set, the pinned subject
+       * gets force-injected into the resolved scope so all downstream
+       * hydrations (scope summaries, contacts-for-orgs, hybrid-search
+       * bias) treat it as primary context regardless of whether the
+       * question text names it. Deals are a no-op here because the
+       * per-deal dossier already hydrates every deal.
+       */
+      pinned?: { type: "contact" | "deal" | "organization" | "campaign"; id: string };
+    } = {},
   ): Promise<EvidencePack> {
     const scope = await this.resolveScope(tx, queryText);
+    if (options.pinned) {
+      const { type, id } = options.pinned;
+      if (type === "contact") {
+        scope.contact_ids = dedupeAppend(scope.contact_ids, id);
+      } else if (type === "organization") {
+        scope.org_ids = dedupeAppend(scope.org_ids, id);
+      } else if (type === "campaign") {
+        scope.campaign_ids = dedupeAppend(scope.campaign_ids, id);
+      }
+      // type === "deal" intentionally skipped — fetchDealDossier
+      // already hydrates every deal into the pack.
+    }
     const summariesItems = await this.fetchScopeSummaries(tx, scope);
     const items = await this.hybridSearch(tx, queryText, queryEmbedding, scope, options.limit);
 
@@ -1337,6 +1361,15 @@ export class RetrievalService {
       } satisfies EvidenceItem;
     });
   }
+}
+
+function dedupeAppend(
+  existing: readonly string[] | undefined,
+  id: string,
+): string[] {
+  const list = existing ?? [];
+  if (list.includes(id)) return [...list];
+  return [...list, id];
 }
 
 function collectScopedIds(scope: ResolvedScope): string[] {

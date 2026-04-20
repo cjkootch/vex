@@ -16,6 +16,11 @@ export interface HistoryTurn {
   text: string;
 }
 
+export interface QueryScope {
+  type: "contact" | "deal" | "organization" | "campaign";
+  id: string;
+}
+
 export interface VexQueryState {
   text: string;
   manifest: ManifestEvent | null;
@@ -62,26 +67,35 @@ export function useVexQuery() {
     setState(INITIAL);
   }, []);
 
-  const send = useCallback(async (message: string, history?: HistoryTurn[]) => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const send = useCallback(
+    async (
+      message: string,
+      history?: HistoryTurn[],
+      scope?: QueryScope,
+    ) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    setState({
-      text: "",
-      manifest: null,
-      isStreaming: true,
-      wakingUp: false,
-      error: null,
-    });
-
-    const doFetch = (): Promise<Response> =>
-      fetch("/api/query/stream", {
-        method: "POST",
-        headers: { "content-type": "application/json", accept: "text/event-stream" },
-        body: JSON.stringify({ message, history: history ?? [] }),
-        signal: controller.signal,
+      setState({
+        text: "",
+        manifest: null,
+        isStreaming: true,
+        wakingUp: false,
+        error: null,
       });
+
+      const doFetch = (): Promise<Response> =>
+        fetch("/api/query/stream", {
+          method: "POST",
+          headers: { "content-type": "application/json", accept: "text/event-stream" },
+          body: JSON.stringify({
+            message,
+            history: history ?? [],
+            ...(scope ? { scope } : {}),
+          }),
+          signal: controller.signal,
+        });
 
     try {
       let response = await doFetch();

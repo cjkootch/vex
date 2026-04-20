@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { WorkspaceMode, type WorkspaceModeConfig } from "@vex/ui";
 import {
   WorkspaceModeProvider,
@@ -36,11 +36,29 @@ interface Conversation {
  * lands its provider will be a parent of this one — React allows
  * nested providers and the inner wins, so nothing breaks.
  */
+// useSearchParams needs a Suspense boundary under Next 14's static
+// render path; marking the route dynamic skips prerender and keeps
+// the existing hydrate-from-URL flow intact.
+export const dynamic = "force-dynamic";
+
 export default function ChatPage() {
   return (
     <WorkspaceModeProvider>
       <PinnedPanelsProvider>
-        <ChatPageInner />
+        {/*
+          useSearchParams() inside ChatPageInner forces a client-side
+          bailout during static render; Suspense lets Next 14 tolerate
+          that without failing prerender.
+        */}
+        <Suspense
+          fallback={
+            <div className="flex h-full items-center justify-center text-sm text-white/40">
+              Loading chat…
+            </div>
+          }
+        >
+          <ChatPageInner />
+        </Suspense>
       </PinnedPanelsProvider>
     </WorkspaceModeProvider>
   );
@@ -73,10 +91,66 @@ function loadStoredState(): StoredState | null {
   }
 }
 
+type ChatScope = {
+  type: "contact" | "deal" | "organization" | "campaign";
+  id: string;
+};
+
+function parseScopeParam(raw: string | null): ChatScope | null {
+  if (!raw) return null;
+  const [type, ...idParts] = raw.split(":");
+  const id = idParts.join(":");
+  if (!type || !id) return null;
+  if (
+    type !== "contact" &&
+    type !== "deal" &&
+    type !== "organization" &&
+    type !== "campaign"
+  ) {
+    return null;
+  }
+  return { type, id };
+}
+
+function scopeChipStyles(type: ChatScope["type"]): string {
+  switch (type) {
+    case "contact":
+      return "border-purple-500/40 bg-purple-500/10 text-purple-100";
+    case "deal":
+      return "border-teal-500/40 bg-teal-500/10 text-teal-100";
+    case "organization":
+      return "border-blue-500/40 bg-blue-500/10 text-blue-100";
+    case "campaign":
+      return "border-amber-500/40 bg-amber-500/10 text-amber-100";
+  }
+}
+
 function ChatPageInner() {
   const { mode, config, contextId, contextLabel, contextSublabel, setMode } =
     useWorkspaceMode();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [scope, setScope] = useState<ChatScope | null>(() =>
+    parseScopeParam(searchParams?.get("scope") ?? null),
+  );
+  const [scopeLabel, setScopeLabel] = useState<string | null>(() => {
+    const raw = searchParams?.get("scopeLabel");
+    return raw && raw.length > 0 ? raw : null;
+  });
+  const [initialDraft, setInitialDraft] = useState<string>(() => {
+    const ask = searchParams?.get("ask");
+    return ask ?? "";
+  });
+  // Sync state when the URL params change (e.g. operator clicks a
+  // different contact's Ask Vex while staying on /app/chat).
+  useEffect(() => {
+    const nextScope = parseScopeParam(searchParams?.get("scope") ?? null);
+    setScope(nextScope);
+    const lbl = searchParams?.get("scopeLabel");
+    setScopeLabel(lbl && lbl.length > 0 ? lbl : null);
+    const ask = searchParams?.get("ask");
+    if (ask) setInitialDraft(ask);
+  }, [searchParams]);
   const [conversations, setConversations] = useState<Conversation[]>(() => [
     initialConversation(),
   ]);
@@ -185,9 +259,47 @@ function ChatPageInner() {
             transition: "grid-template-columns 300ms ease",
           }}
         >
-          <div className="min-h-0 min-w-0">
+          <div className="flex min-h-0 min-w-0 flex-col">
+            {scope ? (
+              <div className="flex items-center gap-2 border-b border-line bg-canvas/60 px-6 py-2">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs ${scopeChipStyles(scope.type)}`}
+                >
+                  <span className="uppercase tracking-wide opacity-70">
+                    {scope.type}
+                  </span>
+                  <span className="font-medium">
+                    {scopeLabel ?? scope.id.slice(-8)}
+                  </span>
+                </span>
+                <span className="text-xs text-white/50">
+                  Vex is scoped to this {scope.type}. Answers and
+                  proposed actions bias toward it.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setScope(null);
+                    setScopeLabel(null);
+                    const sp = new URLSearchParams(
+                      (searchParams?.toString() ?? ""),
+                    );
+                    sp.delete("scope");
+                    sp.delete("scopeLabel");
+                    const qs = sp.toString();
+                    router.replace(`/app/chat${qs ? `?${qs}` : ""}`);
+                  }}
+                  className="ml-auto text-xs text-white/50 transition hover:text-white"
+                  aria-label="Clear scope"
+                >
+                  Clear ✕
+                </button>
+              </div>
+            ) : null}
             <ConversationThread
               turns={active.turns}
+              {...(scope ? { scope } : {})}
+              {...(initialDraft ? { initialDraft } : {})}
               onTurns={(turns) =>
                 setConversations((prev) =>
                   prev.map((c) => {
