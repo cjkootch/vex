@@ -494,6 +494,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyFollowUpSchedule(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "touchpoint.log") {
+          await applyTouchpointLog(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "deal.milestone") {
           await applyDealMilestone(tx, deps, workspace_id, approval);
           return;
@@ -1101,6 +1105,114 @@ async function applyFollowUpSchedule(
       action_type: "follow_up.schedule",
       follow_up_id: row.id,
       due_at: dueAt.toISOString(),
+    },
+  });
+}
+
+/**
+ * Sprint Q — insert a manual touchpoint from an approved
+ * `touchpoint.log` approval. The action lets operators say
+ * "I just called John at Acme about the Trinidad fuel deal"
+ * in chat and have the contact timeline stay complete even for
+ * off-platform interactions Vex didn't drive. Idempotent replay:
+ * if the approval was already applied, emit a replay event and
+ * return.
+ */
+async function applyTouchpointLog(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "touchpoint.log");
+    return;
+  }
+  const payload = approval.proposedPayload as
+    | {
+        contactId?: string;
+        orgId?: string;
+        dealId?: string;
+        channel?: string;
+        direction?: "inbound" | "outbound";
+        occurredAt?: string;
+        note?: string;
+      }
+    | null;
+  const channel = payload?.channel;
+  const note = payload?.note;
+  if (!channel || !note) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "touchpoint.log",
+      "missing channel / note",
+    );
+    return;
+  }
+  const hasSubject = Boolean(
+    payload?.contactId || payload?.orgId || payload?.dealId,
+  );
+  if (!hasSubject) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "touchpoint.log",
+      "missing contactId / orgId / dealId",
+    );
+    return;
+  }
+  const occurredAt = payload?.occurredAt
+    ? new Date(payload.occurredAt)
+    : new Date();
+  if (Number.isNaN(occurredAt.getTime())) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "touchpoint.log",
+      "occurredAt is not a valid date",
+    );
+    return;
+  }
+
+  const row = await deps.touchpoints.insert(tx, tenantId, {
+    channel,
+    actor: `approval:${approval.id}`,
+    occurredAt,
+    contactId: payload?.contactId ?? null,
+    orgId: payload?.orgId ?? null,
+    metadata: {
+      direction: payload?.direction ?? "outbound",
+      note,
+      manual: true,
+      ...(payload?.dealId ? { deal_id: payload.dealId } : {}),
+    },
+  });
+
+  await deps.approvals.markApplied(tx, approval.id, row.id);
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "touchpoint.logged",
+    subjectType: "touchpoint",
+    subjectId: row.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "touchpoint.log",
+      touchpoint_id: row.id,
+      channel,
+      contact_id: payload?.contactId ?? null,
+      org_id: payload?.orgId ?? null,
+      deal_id: payload?.dealId ?? null,
     },
   });
 }

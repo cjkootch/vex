@@ -46,4 +46,53 @@ describe("ActionDescriptor", () => {
       }),
     ).toThrow(/ULID/);
   });
+
+  it("accepts a touchpoint.log scoped to a contact (T1, no approval)", () => {
+    const parsed = ActionDescriptor.parse({
+      kind: "touchpoint.log",
+      tier: ApprovalTier.T1,
+      contactId: createId(),
+      channel: "voice.manual",
+      note: "Called John about the Trinidad fuel deal, he'll send terms Thursday",
+      direction: "outbound",
+    });
+    expect(parsed.kind).toBe("touchpoint.log");
+    expect(actionRequiresApproval(parsed)).toBe(false);
+  });
+
+  it("accepts a touchpoint.log scoped to an org + deal without a contact", () => {
+    const parsed = ActionDescriptor.parse({
+      kind: "touchpoint.log",
+      tier: ApprovalTier.T1,
+      orgId: createId(),
+      dealId: createId(),
+      channel: "meeting",
+      note: "Met Cibao's ops team, kickoff for Q3 rice program",
+    });
+    expect(parsed.kind).toBe("touchpoint.log");
+  });
+
+  it("rejects a touchpoint.log with a bad channel", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "touchpoint.log",
+        tier: ApprovalTier.T1,
+        contactId: createId(),
+        channel: "email.resend",
+        note: "hi",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a touchpoint.log with an empty note", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "touchpoint.log",
+        tier: ApprovalTier.T1,
+        contactId: createId(),
+        channel: "voice.manual",
+        note: "",
+      }),
+    ).toThrow();
+  });
 });

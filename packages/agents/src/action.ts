@@ -461,6 +461,36 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     paymentTerms: z.string().max(500).optional(),
     rationale: z.string().max(500).optional(),
   }),
+  // touchpoint.log: record a manual touchpoint (phone call, meeting,
+  // off-platform chat) that the operator had with a contact or org.
+  // Lands a touchpoint row so the contact timeline stays complete
+  // even for interactions Vex didn't drive. Tier T1 — purely a log
+  // write, no outbound effect.
+  //
+  // At least one of contactId/orgId/dealId must be set; we enforce
+  // that in the executor rather than via Zod refine() because
+  // discriminatedUnion rejects ZodEffects members. The prompt tells
+  // Claude to include at least one. Channel values are scoped to
+  // manual entries so they don't collide with provider-emitted
+  // channels (email.resend, sms.twilio, etc).
+  z.object({
+    kind: z.literal("touchpoint.log"),
+    tier: z.literal(ApprovalTier.T1),
+    contactId: zUlid.optional(),
+    orgId: zUlid.optional(),
+    dealId: zUlid.optional(),
+    channel: z.enum([
+      "voice.manual",
+      "meeting",
+      "chat.manual",
+      "email.manual",
+      "other",
+    ]),
+    direction: z.enum(["inbound", "outbound"]).optional(),
+    occurredAt: z.string().datetime().optional(),
+    note: z.string().min(1).max(2000),
+    rationale: z.string().max(500).optional(),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;
