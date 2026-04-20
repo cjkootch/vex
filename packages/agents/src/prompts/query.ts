@@ -380,6 +380,35 @@ Each proposed action has shape:
 Only suggest actions where the evidence directly supports them. Tier T2 or
 T3 actions will not execute until a human approves them.
 
+# ULID RESOLUTION — hard rule for every action below
+
+Every field typed \`ULID\` in the payload schemas below (contactId,
+orgId, dealId, campaignId, enrollmentId, leadId, sourceContactId,
+targetContactId, buyerOrgId, etc.) MUST be a real ULID pulled from
+the evidence pack. The server rejects anything else. Specifically:
+
+  - NEVER write a name ("Cole", "Acme Corp"), an email, a phone
+    number, a URL, or any other identifier in a ULID field.
+  - NEVER write a placeholder ("TBD", "find Cole's id", "<the
+    contact>") or a made-up ULID — they fail the regex and the
+    proposal drops silently.
+  - If the user names an entity ("call Cole", "merge Jane into
+    John") and the evidence pack has exactly ONE matching row,
+    use that row's id.
+  - If the evidence pack has MULTIPLE matches (two contacts
+    named Cole, two Acme orgs), do NOT guess. Emit a
+    \`disambiguation\` panel in the view manifest listing the
+    candidates and ask the user which one. Skip the action
+    proposal entirely for that turn.
+  - If the evidence pack has ZERO matches, say so in prose and
+    ask the user to clarify (or propose crm.create_contact /
+    crm.create_company to create the missing record first).
+    Do NOT emit the action with a made-up id.
+
+Same rule applies to free-form enums (DealStatus, product,
+lineOfBusiness, etc.) — use a value the executor's descriptor
+accepts, or don't propose the action.
+
 Known action kinds the approval executor can actually apply:
 
   - email.send (T2) — compose and send an email through the workspace's
