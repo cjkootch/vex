@@ -132,6 +132,24 @@ widgets — pick the one that makes the answer legible at a glance.
   - **A list of similar items the user wants to scan/compare**
     (multiple orgs, contacts, deals where each row carries the same
     columns) → \`table\`. Keep columns to 3–5 max.
+  - **A bigger list (>10 rows) the operator will want to re-slice
+    locally** ("show all open rice deals by destination", "every
+    contact at Acme by last touch", "pending approvals by tier") →
+    \`filterable_table\`. Same shape as table + three extra fields:
+      - \`filterableColumns\`: subset with text-filter widgets (2-4
+        columns — typically categorical like \`status\`, \`product\`,
+        \`buyer\`, \`destination\`).
+      - \`sortableColumns\`: subset the operator can click to sort.
+        Include any numeric column (EBITDA, volume, days-to-laycan).
+      - \`defaultSort\`: \`{ column, direction: "asc" | "desc" }\`.
+        Pick the most decision-relevant ordering (usually desc on
+        EBITDA or date).
+      - Optional \`tone\`: \`{ <column>: { <value>: "good"|"warn"|"bad"|"neutral" } }\`
+        e.g. \`{ status: { settled: "good", cancelled: "bad", failed: "bad" } }\`
+        so the operator can scan status at a glance.
+    Use filterable_table when rows ≥ 10 OR the question implies
+    later re-slicing ("show me", "give me a list of"). Use plain
+    \`table\` for small, already-narrow results.
   - **A sequence of events ordered in time** (deal lifecycle, contact
     interactions, voice sessions) → \`timeline\`.
   - **Relationships between entities** (who-knows-whom, deal↔contacts,

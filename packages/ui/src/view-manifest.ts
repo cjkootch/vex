@@ -27,6 +27,49 @@ const TablePanel = z.object({
   rows: z.array(z.record(z.string())),
 });
 
+/**
+ * Filterable + sortable variant of TablePanel. Use when the rowset is
+ * large enough that the operator wants to re-slice it without
+ * re-querying Claude (e.g. "show all open rice deals by destination",
+ * then click-filter to Haiti, then sort by EBITDA desc).
+ *
+ * - `columns` : column order (same as TablePanel).
+ * - `rows`    : full rowset; the client filters/sorts locally.
+ * - `filterableColumns` : subset of columns that get a filter widget.
+ *                         Text match (substring, case-insensitive) for now.
+ * - `sortableColumns`   : subset that can be clicked to toggle sort.
+ *                         Numeric-looking values are detected and
+ *                         compared numerically; everything else sorts
+ *                         lexicographically.
+ * - `defaultSort`       : initial sort on mount. Column must be in
+ *                         `sortableColumns` (validator re-checks).
+ * - `tone`              : optional per-column tone hints keyed by
+ *                         column name → { column → { value → tone } }
+ *                         so e.g. a `status` column can render "settled"
+ *                         as good, "failed" as bad.
+ */
+const FilterableTablePanel = z.object({
+  type: z.literal("filterable_table"),
+  title: z.string().min(1),
+  columns: z.array(z.string()).min(1),
+  rows: z.array(z.record(z.string())),
+  /**
+   * Subset of columns that get a text-filter widget. Renderer
+   * silently ignores entries that aren't in `columns` — we don't
+   * superRefine here because discriminatedUnion rejects ZodEffects.
+   */
+  filterableColumns: z.array(z.string()).default([]),
+  sortableColumns: z.array(z.string()).default([]),
+  defaultSort: z
+    .object({
+      column: z.string(),
+      direction: z.enum(["asc", "desc"]),
+    })
+    .optional(),
+  /** column → value → tone, e.g. { status: { settled: "good", failed: "bad" } } */
+  tone: z.record(z.record(z.enum(["good", "warn", "bad", "neutral"]))).optional(),
+});
+
 const TimelinePanel = z.object({
   type: z.literal("timeline"),
   title: z.string().min(1),
@@ -177,6 +220,7 @@ const DealScorecardPanel = z.object({
 export const ManifestPanel = z.discriminatedUnion("type", [
   ProfilePanel,
   TablePanel,
+  FilterableTablePanel,
   TimelinePanel,
   KpiRailPanel,
   EvidencePanel,

@@ -5,6 +5,7 @@ import type { ManifestPanel, ManifestPanelType } from "@vex/ui";
 import { FallbackPanel } from "./panels/fallback-panel";
 import { ProfilePanel } from "./panels/profile-panel";
 import { TablePanel } from "./panels/table-panel";
+import { FilterableTablePanel } from "./panels/filterable-table-panel";
 import { TimelinePanel } from "./panels/timeline-panel";
 import { KpiRailPanel } from "./panels/kpi-rail-panel";
 import { EvidencePanel } from "./panels/evidence-panel";
@@ -48,6 +49,7 @@ export const registry = new ComponentRegistry();
 
 registry.register("profile", ProfilePanel);
 registry.register("table", TablePanel);
+registry.register("filterable_table", FilterableTablePanel);
 registry.register("timeline", TimelinePanel);
 registry.register("kpi_rail", KpiRailPanel);
 registry.register("evidence", EvidencePanel);

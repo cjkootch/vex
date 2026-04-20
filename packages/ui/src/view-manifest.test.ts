@@ -72,6 +72,74 @@ describe("validateManifest", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts a filterable_table with filter + sort config", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "filterable_table",
+          title: "Open rice deals",
+          columns: ["Deal ref", "Buyer", "Destination", "EBITDA", "Status"],
+          rows: [
+            {
+              "Deal ref": "VTC-2026-001",
+              Buyer: "Acme Rice",
+              Destination: "Port-au-Prince",
+              EBITDA: "$45,000",
+              Status: "negotiating",
+            },
+          ],
+          filterableColumns: ["Buyer", "Destination", "Status"],
+          sortableColumns: ["EBITDA"],
+          defaultSort: { column: "EBITDA", direction: "desc" },
+          tone: { Status: { negotiating: "warn", settled: "good", failed: "bad" } },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const p = result.manifest.panels[0];
+      expect(p?.type).toBe("filterable_table");
+    }
+  });
+
+  it("defaults filterable_table filter/sort arrays to [] when omitted", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "filterable_table",
+          title: "x",
+          columns: ["A"],
+          rows: [{ A: "1" }],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const p = result.manifest.panels[0];
+      if (p?.type === "filterable_table") {
+        expect(p.filterableColumns).toEqual([]);
+        expect(p.sortableColumns).toEqual([]);
+      } else {
+        throw new Error("expected filterable_table");
+      }
+    }
+  });
+
+  it("rejects filterable_table with invalid defaultSort direction", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "filterable_table",
+          title: "x",
+          columns: ["A"],
+          rows: [],
+          defaultSort: { column: "A", direction: "bogus" },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects a campaign panel claiming open_confidence: strong", () => {
     const result = validateManifest({
       panels: [
