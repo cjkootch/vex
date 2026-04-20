@@ -279,7 +279,7 @@ const RULES: Rule[] = [
           AND COUNT(*) FILTER (
             WHERE metadata->>'direction' = 'inbound'
           ) = 0
-      `)) as unknown as Array<{
+      `)).rows as unknown as Array<{
         contact_id: string;
         outbound_count: string | number;
         inbound_count: string | number;
@@ -352,7 +352,7 @@ const RULES: Rule[] = [
           WHERE subject_type = 'fuel_deal'
             AND subject_id = ${row.id}
             AND verb = 'deal.milestone.production_started'
-        `)) as unknown as Array<{ c: number }>;
+        `)).rows as unknown as Array<{ c: number }>;
         const started = Number(startedCount[0]?.c ?? 0) > 0;
         if (started) {
           resolve.push(row.id);
