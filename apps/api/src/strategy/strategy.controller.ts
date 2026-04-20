@@ -41,13 +41,18 @@ const STRATEGY_SLOTS = [
 const StrategyInputSchema = z
   .object({
     mission: z.string().max(2000).optional(),
-    target_markets: z.array(z.string().min(1).max(200)).max(20).optional(),
+    // Per-entry cap at 500 so operators can write real sentences, not
+    // just tags — "Caribbean fuel corridors (Jamaica, Haiti, DR, T&T)
+    // with occasional Puerto Rico spot volumes" runs ~100 chars; some
+    // target-market entries reasonably run longer. 20 × 500 = 10kB
+    // worst-case payload, still well within Postgres JSONB comfort.
+    target_markets: z.array(z.string().min(1).max(500)).max(20).optional(),
     icp_buyers: z.string().max(2000).optional(),
     icp_suppliers: z.string().max(2000).optional(),
     brand_voice: z.string().max(2000).optional(),
     pricing_philosophy: z.string().max(2000).optional(),
-    no_go_zones: z.array(z.string().min(1).max(200)).max(20).optional(),
-    growth_priorities: z.array(z.string().min(1).max(200)).max(20).optional(),
+    no_go_zones: z.array(z.string().min(1).max(500)).max(20).optional(),
+    growth_priorities: z.array(z.string().min(1).max(500)).max(20).optional(),
     additional_guidance: z.string().max(5000).optional(),
   })
   .strict();
