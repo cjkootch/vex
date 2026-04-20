@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   useVexQuery,
   type HistoryTurn,
@@ -118,38 +119,65 @@ export function ConversationThread({ turns, onTurns, scope, initialDraft }: Prop
               Ask a question about your accounts, contacts, or campaigns.
             </p>
           )}
-          {turns.map((turn) => (
-            <Turn key={turn.id} turn={turn} />
-          ))}
-          {isStreaming && (
-            <div className="self-start" data-testid="assistant-streaming">
-              <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90">
-                {wakingUp ? (
-                  <span className="text-white/60">
-                    API is waking up — one moment…
-                  </span>
-                ) : text ? (
-                  <>
-                    {renderProse(text)}
-                    <StreamingCaret />
-                  </>
-                ) : (
-                  <TypingIndicator />
-                )}
-              </div>
-              {manifest && (
-                <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-line bg-canvas/60 px-2.5 py-1 text-[10px] uppercase tracking-wider text-white/50">
-                  <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-                  preparing canvas…
+          <AnimatePresence initial={false}>
+            {turns.map((turn) => (
+              <Turn key={turn.id} turn={turn} />
+            ))}
+            {isStreaming && (
+              <motion.div
+                key="streaming"
+                layout
+                initial={{ opacity: 0, y: 10, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 320, damping: 32, mass: 0.8 }}
+                className="self-start"
+                data-testid="assistant-streaming"
+              >
+                <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90 shadow-sm shadow-black/10">
+                  {wakingUp ? (
+                    <span className="text-white/60">
+                      API is waking up — one moment…
+                    </span>
+                  ) : text ? (
+                    <>
+                      {renderProse(text)}
+                      <StreamingCaret />
+                    </>
+                  ) : (
+                    <TypingIndicator />
+                  )}
                 </div>
-              )}
-            </div>
-          )}
-          {error && (
-            <p className="self-start rounded-md bg-bad/10 px-3 py-2 text-sm text-bad">
-              {error}
-            </p>
-          )}
+                {manifest && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.25, ease: "easeOut" }}
+                    className="mt-3 inline-flex items-center gap-2 rounded-md border border-line bg-canvas/60 px-2.5 py-1 text-[10px] uppercase tracking-wider text-white/50"
+                  >
+                    <motion.span
+                      className="inline-block h-1.5 w-1.5 rounded-full bg-accent"
+                      animate={{ opacity: [0.3, 1, 0.3], scale: [0.9, 1.15, 0.9] }}
+                      transition={{ duration: 1.2, repeat: Infinity, ease: "easeInOut" }}
+                    />
+                    preparing canvas…
+                  </motion.div>
+                )}
+              </motion.div>
+            )}
+            {error && (
+              <motion.p
+                key="chat-error"
+                initial={{ opacity: 0, x: -8, scale: 0.98 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: -8, scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 380, damping: 30 }}
+                className="self-start rounded-md bg-bad/10 px-3 py-2 text-sm text-bad"
+              >
+                {error}
+              </motion.p>
+            )}
+          </AnimatePresence>
           <div ref={bottomRef} />
         </div>
       </div>
@@ -182,16 +210,31 @@ export function ConversationThread({ turns, onTurns, scope, initialDraft }: Prop
 }
 
 function Turn({ turn }: { turn: ChatTurn }) {
-  if (turn.role === "user") {
+  const isUser = turn.role === "user";
+  const common = {
+    layout: true,
+    initial: { opacity: 0, y: 10, x: isUser ? 8 : -8, scale: 0.98 },
+    animate: { opacity: 1, y: 0, x: 0, scale: 1 },
+    exit: { opacity: 0, y: -6, scale: 0.98 },
+    transition: { type: "spring" as const, stiffness: 340, damping: 30, mass: 0.8 },
+  };
+  if (isUser) {
     return (
-      <div className="self-end max-w-[85%] rounded-2xl bg-accent/20 px-4 py-3 text-sm text-white">
+      <motion.div
+        {...common}
+        className="self-end max-w-[85%] rounded-2xl bg-accent/20 px-4 py-3 text-sm text-white shadow-sm shadow-accent/20"
+      >
         {turn.text}
-      </div>
+      </motion.div>
     );
   }
   return (
-    <div className="self-start w-full max-w-[85%]" data-testid="assistant-turn">
-      <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90">
+    <motion.div
+      {...common}
+      className="self-start w-full max-w-[85%]"
+      data-testid="assistant-turn"
+    >
+      <div className="rounded-2xl bg-muted/60 px-4 py-3 text-sm text-white/90 shadow-sm shadow-black/10">
         {turn.text ? renderProse(turn.text) : <span className="text-white/40">No response.</span>}
       </div>
       {turn.createdAt && <AgentTrace since={turn.createdAt} />}
@@ -200,7 +243,7 @@ function Turn({ turn }: { turn: ChatTurn }) {
           <ManifestCanvas manifest={turn.manifest.manifest} rawAnswer={turn.text} />
         </div>
       )}
-    </div>
+    </motion.div>
   );
 }
 
@@ -208,31 +251,34 @@ function TypingIndicator() {
   return (
     <span className="inline-flex items-center gap-1" aria-label="Vex is typing">
       <Dot delay={0} />
-      <Dot delay={0.15} />
-      <Dot delay={0.3} />
+      <Dot delay={0.18} />
+      <Dot delay={0.36} />
     </span>
   );
 }
 
 /**
- * Terminal-style blinking caret rendered at the tail of an
- * in-flight streaming answer — Meridian's \"phosphor\" signal that
- * the model is still writing. Hidden once isStreaming flips off.
+ * Terminal-style blinking caret at the tail of a streaming answer.
+ * Framer-motion opacity loop gives a softer blink than `animate-pulse`'s
+ * step-timed cycle — the model is alive, not a dead CRT.
  */
 function StreamingCaret() {
   return (
-    <span
+    <motion.span
       aria-hidden
-      className="ml-0.5 inline-block h-[1em] w-[0.5ch] translate-y-[0.15em] animate-pulse bg-accent"
+      className="ml-0.5 inline-block h-[1em] w-[0.5ch] translate-y-[0.15em] bg-accent"
+      animate={{ opacity: [1, 0.35, 1] }}
+      transition={{ duration: 1, repeat: Infinity, ease: "easeInOut" }}
     />
   );
 }
 
 function Dot({ delay }: { delay: number }) {
   return (
-    <span
-      className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-white/60"
-      style={{ animationDelay: `${delay}s` }}
+    <motion.span
+      className="inline-block h-1.5 w-1.5 rounded-full bg-white/70"
+      animate={{ opacity: [0.35, 1, 0.35], y: [0, -2, 0] }}
+      transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut", delay }}
     />
   );
 }
