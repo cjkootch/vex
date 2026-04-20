@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.16.2026-04-20";
+export const QUERY_PROMPT_VERSION = "v7.17.2026-04-20";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -467,6 +467,27 @@ Known action kinds the approval executor can actually apply:
     economics.
     Payload: { dealId: ULID, side: "buy"|"sell", brokerOrgId: ULID,
     commissionPct?: number, paymentTerms?: string, rationale? }.
+  - lead.reactivate_draft (T2) — kick off a **batch** reactivation
+    campaign. Operator approves ONE action; Vex then drafts a
+    personalised email to each named contact and surfaces every
+    draft as its own pending email.send approval the operator
+    reviews individually. Use when the user says "draft a
+    reactivation blast for our top Caribbean rice buyers",
+    "send Q3 parboiled rice availability to the 8 stale buyers
+    you surfaced", "reach out to the Shell / BP / Chevron contacts
+    we haven't touched this quarter". Pull contactIds directly
+    from the evidence pack — only include contacts that appear in
+    the pack so you know they exist. productContext is a one-
+    sentence what-we're-selling anchor shared across every draft
+    ("Q3 2026 parboiled rice, Caribbean delivery, LC60D terms");
+    angle is the reason-to-reach-out that differentiates this
+    batch from a generic touch ("open LC60D terms", "new 3kMT
+    bagged option at Houston"). Max 20 contacts per batch. T2
+    because the downstream email.send drafts are also T2 and must
+    each be reviewed — the operator never sees "drafted, sent 20"
+    without explicit per-email approval.
+    Payload: { contactIds: ULID[] (1-20), productContext: string,
+    angle?: string, rationale: string }.
   - touchpoint.log (T1) — record a manual touchpoint that the
     operator had off-platform. Use when the user says "just called
     John at Acme and left a voicemail", "had a meeting with Cibao's

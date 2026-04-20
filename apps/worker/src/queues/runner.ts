@@ -1,10 +1,11 @@
-import type { Job, Worker } from "bullmq";
+import type { Job, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import {
   AgentRunner,
   DailyBriefAgent,
   FollowUpAgent,
   LeadQualificationAgent,
+  ReactivationBatchAgent,
   ResearchAgent,
   backpressureEngaged,
   buildDlqProcessor,
@@ -13,6 +14,7 @@ import {
   createAgentWorker,
   createApprovalExecutorWorker,
   createDlqWorker,
+  addAgentJob,
   createNormalizationWorker,
   createQueues,
   createRedisConnection,
@@ -241,6 +243,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       twilio: twilioForExecutor,
       resend: resendForExecutor,
       redis: connection,
+      agentsQueue: queues.agents,
     }),
     connection,
   );
@@ -366,6 +369,35 @@ function buildAgentProcessor(runner: AgentRunner) {
           { workspaceId: data.workspace_id },
         );
       }
+      case "reactivation_batch": {
+        const contactIds = data.input?.["contact_ids"];
+        const productContext = data.input?.["product_context"];
+        if (!Array.isArray(contactIds) || contactIds.length === 0) {
+          throw new Error("reactivation_batch job missing input.contact_ids");
+        }
+        if (typeof productContext !== "string" || productContext.length === 0) {
+          throw new Error(
+            "reactivation_batch job missing input.product_context",
+          );
+        }
+        const angle = data.input?.["angle"];
+        const parentApprovalId = data.input?.["parent_approval_id"];
+        const rationale = data.input?.["rationale"];
+        return runner.run(
+          new ReactivationBatchAgent({
+            contactIds: contactIds.filter(
+              (v): v is string => typeof v === "string",
+            ),
+            productContext,
+            ...(typeof angle === "string" ? { angle } : {}),
+            ...(typeof parentApprovalId === "string"
+              ? { parentApprovalId }
+              : {}),
+            ...(typeof rationale === "string" ? { rationale } : {}),
+          }),
+          { workspaceId: data.workspace_id },
+        );
+      }
       default:
         throw new Error(`unknown agent kind: ${(data as { kind: string }).kind}`);
     }
@@ -413,6 +445,12 @@ export interface ApprovalExecutorDeps {
    * the AI TwiML for the dialed call.
    */
   redis: Redis;
+  /**
+   * Agents queue used to fan out downstream agent runs when an
+   * approval's side effect is itself an agent run (e.g.
+   * `lead.reactivate_draft` → `reactivation_batch` agent).
+   */
+  agentsQueue: Queue<AgentJobData>;
 }
 
 /**
@@ -496,6 +534,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         }
         if (approval.actionType === "touchpoint.log") {
           await applyTouchpointLog(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "lead.reactivate_draft") {
+          await applyLeadReactivateDraft(tx, deps, workspace_id, approval);
           return;
         }
         if (approval.actionType === "deal.milestone") {
@@ -1213,6 +1255,98 @@ async function applyTouchpointLog(
       contact_id: payload?.contactId ?? null,
       org_id: payload?.orgId ?? null,
       deal_id: payload?.dealId ?? null,
+    },
+  });
+}
+
+/**
+ * Sprint R — kick off a batch reactivation draft agent run. The
+ * operator approves one `lead.reactivate_draft` T2; the executor
+ * validates the payload and enqueues a `reactivation_batch` agent
+ * job. The agent drafts one email per contact and proposes one
+ * `email.send` approval per draft for individual review. This
+ * executor is intentionally thin — all the multi-step fan-out
+ * happens inside the agent so cost + audit trails flow through
+ * the agent_runs + cost_ledger tables.
+ */
+async function applyLeadReactivateDraft(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(
+      tx,
+      deps,
+      tenantId,
+      approval,
+      "lead.reactivate_draft",
+    );
+    return;
+  }
+  const payload = approval.proposedPayload as
+    | {
+        contactIds?: string[];
+        productContext?: string;
+        angle?: string;
+        rationale?: string;
+      }
+    | null;
+  const contactIds = Array.isArray(payload?.contactIds)
+    ? payload!.contactIds.filter(
+        (v): v is string => typeof v === "string" && v.length > 0,
+      )
+    : [];
+  const productContext = payload?.productContext;
+  if (contactIds.length === 0 || !productContext) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "lead.reactivate_draft",
+      "missing contactIds / productContext",
+    );
+    return;
+  }
+
+  await addAgentJob(
+    deps.agentsQueue,
+    {
+      kind: "reactivation_batch",
+      workspace_id: tenantId,
+      input: {
+        contact_ids: contactIds,
+        product_context: productContext,
+        angle: payload?.angle ?? null,
+        parent_approval_id: approval.id,
+        rationale: payload?.rationale ?? null,
+      },
+    },
+    `reactivation:${approval.id}`,
+  );
+
+  await deps.approvals.markApplied(
+    tx,
+    approval.id,
+    `reactivation:${approval.id}:${contactIds.length}`,
+  );
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "approval.executor.applied",
+    subjectType: "approval",
+    subjectId: approval.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "lead.reactivate_draft",
+      queued_contact_count: contactIds.length,
+      agent_kind: "reactivation_batch",
     },
   });
 }

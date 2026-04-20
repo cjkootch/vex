@@ -47,6 +47,43 @@ describe("ActionDescriptor", () => {
     ).toThrow(/ULID/);
   });
 
+  it("accepts a lead.reactivate_draft with contacts + product + rationale", () => {
+    const parsed = ActionDescriptor.parse({
+      kind: "lead.reactivate_draft",
+      tier: ApprovalTier.T2,
+      contactIds: [createId(), createId(), createId()],
+      productContext: "Q3 2026 parboiled rice, Caribbean delivery, LC60D",
+      angle: "Open LC60D terms",
+      rationale: "Top 3 Caribbean rice buyers, 90+ days stale",
+    });
+    expect(parsed.kind).toBe("lead.reactivate_draft");
+    expect(actionRequiresApproval(parsed)).toBe(true);
+  });
+
+  it("rejects a lead.reactivate_draft with 0 contacts", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "lead.reactivate_draft",
+        tier: ApprovalTier.T2,
+        contactIds: [],
+        productContext: "rice",
+        rationale: "because",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a lead.reactivate_draft with more than 20 contacts", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "lead.reactivate_draft",
+        tier: ApprovalTier.T2,
+        contactIds: Array.from({ length: 21 }, () => createId()),
+        productContext: "rice",
+        rationale: "too many",
+      }),
+    ).toThrow();
+  });
+
   it("accepts a touchpoint.log scoped to a contact (T1, no approval)", () => {
     const parsed = ActionDescriptor.parse({
       kind: "touchpoint.log",

@@ -11,3 +11,7 @@ export {
   LeadQualificationAgent,
   type LeadQualificationInput,
 } from "./lead-qualification.js";
+export {
+  ReactivationBatchAgent,
+  type ReactivationBatchInput,
+} from "./reactivation.js";
