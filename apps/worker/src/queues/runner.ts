@@ -338,14 +338,31 @@ function buildAgentProcessor(runner: AgentRunner) {
         });
       }
       case "lead_qualification": {
+        const source = data.input?.["source"];
         const conversationId = data.input?.["conversation_id"];
+        const leadId = data.input?.["lead_id"];
+        if (source === "website_form") {
+          if (typeof leadId !== "string") {
+            throw new Error(
+              "lead_qualification (website_form) job missing input.lead_id",
+            );
+          }
+          return runner.run(
+            new LeadQualificationAgent({ source: "website_form", leadId }),
+            { workspaceId: data.workspace_id },
+          );
+        }
+        // Legacy + explicit `source: "website_chat"` path.
         if (typeof conversationId !== "string") {
           throw new Error(
-            "lead_qualification job missing input.conversation_id",
+            "lead_qualification (website_chat) job missing input.conversation_id",
           );
         }
         return runner.run(
-          new LeadQualificationAgent({ conversationId }),
+          new LeadQualificationAgent({
+            source: "website_chat",
+            conversationId,
+          }),
           { workspaceId: data.workspace_id },
         );
       }

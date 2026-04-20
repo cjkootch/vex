@@ -161,7 +161,7 @@ export class WebsiteChatNormalizer {
       },
     );
 
-    return { status: "ok", eventId: event.id, isNewEvent: isNew };
+    return { status: "ok", eventId: event.id, isNewEvent: isNew, leadId: lead.id };
   }
 
   private async handleEnded(
@@ -250,7 +250,7 @@ export class WebsiteChatNormalizer {
       },
     );
 
-    return { status: "ok", eventId: event.id, isNewEvent: isNew };
+    return { status: "ok", eventId: event.id, isNewEvent: isNew, leadId: lead.id };
   }
 
   private async resolveOrgAndContact(

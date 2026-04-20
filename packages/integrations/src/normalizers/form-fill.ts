@@ -190,7 +190,7 @@ export class FormFillNormalizer {
       },
     );
 
-    return { status: "ok", eventId: event.id, isNewEvent: isNew };
+    return { status: "ok", eventId: event.id, isNewEvent: isNew, leadId: lead.id };
   }
 
   private async resolveOrgAndContact(

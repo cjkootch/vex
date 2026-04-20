@@ -35,7 +35,18 @@ export interface NormalizerDeps {
 
 /** Outcome of a single normalization run. */
 export type NormalizerOutcome =
-  | { status: "ok"; eventId: string; isNewEvent: boolean }
+  | {
+      status: "ok";
+      eventId: string;
+      isNewEvent: boolean;
+      /**
+       * Lead the normalizer created or re-used. Present on outcomes
+       * where a lead landed (website-chat, website-form). The downstream
+       * BullMQ processor uses this to fan out follow-up agent work
+       * (e.g. lead_qualification) without re-querying.
+       */
+      leadId?: string;
+    }
   | { status: "skipped"; reason: string };
 
 export interface RawEventInput {

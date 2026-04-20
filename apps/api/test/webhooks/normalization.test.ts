@@ -244,6 +244,10 @@ describe("FormFillNormalizer.normalize", () => {
       `website_form.captured:lead-form:jm@acmeimports.ht:${bucket}`,
     );
     expect(event.metadata["source"]).toBe("website_form");
+
+    // Outcome carries the lead id so the processor can fan out a
+    // lead_qualification job without re-querying.
+    expect(outcome).toMatchObject({ status: "ok", leadId: "lead-new" });
   });
 
   it("short-circuits to a bot.form_rejected audit when _gotcha is non-empty", async () => {
@@ -359,5 +363,251 @@ describe("buildNormalizationProcessor — DLQ path", () => {
     });
     const job = { id: "job-1", data: { raw_event_id: "raw1", tenant_id: "" } } as never;
     await expect(processor(job)).rejects.toThrow(/missing tenant_id/);
+  });
+});
+
+describe("buildNormalizationProcessor — lead_qualification fan-out", () => {
+  function buildLeadCaptureDeps() {
+    const inserts: RecordedInsert[] = [];
+    const events = {
+      insertIfNotExists: vi.fn(async (_tx: Tx, _t: string, data: unknown) => {
+        inserts.push({ table: "events", args: data });
+        return {
+          event: { id: createId(), verb: (data as { verb: string }).verb },
+          isNew: true,
+        };
+      }),
+    };
+    const touchpoints = {
+      insert: vi.fn(async () => ({ id: createId() })),
+    };
+    const activities = { insert: vi.fn() };
+    const contacts = {
+      findByEmail: vi.fn(async () => ({ id: "contact-existing", orgId: "org-existing" })),
+      findById: vi.fn(),
+    };
+    const organizations = {
+      findByNormalizedIdentity: vi.fn(async () => ({ id: "org-existing" })),
+      create: vi.fn(),
+    };
+    const memberships = { create: vi.fn() };
+    const leads = {
+      findByExternalKey: vi.fn(async () => null),
+      create: vi.fn(async (_tx: Tx, _t: string, _input: unknown) => ({
+        id: "lead-fresh",
+        contactId: "contact-existing",
+        orgId: "org-existing",
+      })),
+    };
+    const documents = {
+      insert: vi.fn(async () => ({ id: createId() })),
+    };
+    return { inserts, events, touchpoints, activities, contacts, organizations, memberships, leads, documents };
+  }
+
+  function buildFakeAgentsQueue() {
+    const calls: Array<{ name: string; data: unknown; opts: unknown }> = [];
+    return {
+      queue: {
+        async add(name: string, data: unknown, opts: unknown) {
+          calls.push({ name, data, opts });
+          return { id: "agent-job" } as never;
+        },
+      } as never,
+      calls,
+    };
+  }
+
+  it("fires lead_qualification with source=website_form and the lead id on a form.submitted raw_event", async () => {
+    const deps = buildLeadCaptureDeps();
+    const tx = makeFakeTx();
+    const fakeDb = {
+      transaction: async <T>(cb: (t: Tx) => Promise<T>) => cb(tx),
+    } as unknown as Db;
+    const agents = buildFakeAgentsQueue();
+
+    const processor = buildNormalizationProcessor({
+      db: fakeDb,
+      contacts: deps.contacts as never,
+      touchpoints: deps.touchpoints as never,
+      activities: deps.activities as never,
+      events: deps.events as never,
+      organizations: deps.organizations as never,
+      memberships: deps.memberships as never,
+      leads: deps.leads as never,
+      documents: deps.documents as never,
+      agentsQueue: agents.queue,
+      rawEvents: {
+        findById: vi.fn(async () => ({
+          id: "raw-form-1",
+          tenantId: "01HSEEDWRK0000000000000001",
+          provider: "website_form",
+          providerEventId:
+            "lead-form:cole@vectortradecapital.com:2026-04-20T04:06:39.694Z",
+          headers: {},
+          payload: {
+            event: "form.submitted",
+            form_id: "lead-form",
+            form_name: "Request a Quote",
+            timestamp: "2026-04-20T04:06:39.694Z",
+            lead: {
+              name: "Cole K",
+              email: "cole@vectortradecapital.com",
+              phone: "+1-555-0100",
+              sms_consent: true,
+            },
+            fields: {
+              country: "Haiti",
+              product_interest: "food",
+              message: "500 MT parboiled rice",
+            },
+            page: { url: "https://vectortradecapital.com/", referrer: null, utm: null },
+          },
+          receivedAt: new Date("2026-04-20T04:06:39.694Z"),
+          checksum: null,
+          status: "pending" as const,
+        })),
+        updateStatus: vi.fn(async () => undefined),
+        insertIfNotExists: vi.fn(),
+        listFailed: vi.fn(),
+      } as never,
+    });
+
+    const job = {
+      data: {
+        raw_event_id: "raw-form-1",
+        tenant_id: "01HSEEDWRK0000000000000001",
+      },
+    } as never;
+    const outcome = await processor(job);
+    expect(outcome).toMatchObject({ status: "ok", leadId: "lead-fresh" });
+
+    expect(agents.calls).toHaveLength(1);
+    const call = agents.calls[0]!;
+    expect(call.data).toMatchObject({
+      kind: "lead_qualification",
+      workspace_id: "01HSEEDWRK0000000000000001",
+      input: { source: "website_form", lead_id: "lead-fresh" },
+    });
+  });
+
+  it("does not fire lead_qualification on a honeypot-skipped form submission", async () => {
+    const deps = buildLeadCaptureDeps();
+    const tx = makeFakeTx();
+    const fakeDb = {
+      transaction: async <T>(cb: (t: Tx) => Promise<T>) => cb(tx),
+    } as unknown as Db;
+    const agents = buildFakeAgentsQueue();
+
+    const processor = buildNormalizationProcessor({
+      db: fakeDb,
+      contacts: deps.contacts as never,
+      touchpoints: deps.touchpoints as never,
+      activities: deps.activities as never,
+      events: deps.events as never,
+      organizations: deps.organizations as never,
+      memberships: deps.memberships as never,
+      leads: deps.leads as never,
+      documents: deps.documents as never,
+      agentsQueue: agents.queue,
+      rawEvents: {
+        findById: vi.fn(async () => ({
+          id: "raw-bot-1",
+          tenantId: "01HSEEDWRK0000000000000001",
+          provider: "website_form",
+          providerEventId:
+            "lead-form:bot@spam.example:2026-04-20T04:06:39.694Z",
+          headers: {},
+          payload: {
+            event: "form.submitted",
+            form_id: "lead-form",
+            timestamp: "2026-04-20T04:06:39.694Z",
+            lead: { name: "Bot", email: "bot@spam.example" },
+            fields: { _gotcha: "http://evil.example/" },
+            page: { url: "https://vectortradecapital.com/" },
+          },
+          receivedAt: new Date("2026-04-20T04:06:39.694Z"),
+          checksum: null,
+          status: "pending" as const,
+        })),
+        updateStatus: vi.fn(async () => undefined),
+        insertIfNotExists: vi.fn(),
+        listFailed: vi.fn(),
+      } as never,
+    });
+
+    const job = {
+      data: {
+        raw_event_id: "raw-bot-1",
+        tenant_id: "01HSEEDWRK0000000000000001",
+      },
+    } as never;
+    const outcome = await processor(job);
+    expect(outcome.status).toBe("skipped");
+    expect(agents.calls).toHaveLength(0);
+  });
+
+  it("fires lead_qualification with source=website_chat on a conversation.ended raw_event", async () => {
+    const deps = buildLeadCaptureDeps();
+    const tx = makeFakeTx();
+    const fakeDb = {
+      transaction: async <T>(cb: (t: Tx) => Promise<T>) => cb(tx),
+    } as unknown as Db;
+    const agents = buildFakeAgentsQueue();
+
+    const processor = buildNormalizationProcessor({
+      db: fakeDb,
+      contacts: deps.contacts as never,
+      touchpoints: deps.touchpoints as never,
+      activities: deps.activities as never,
+      events: deps.events as never,
+      organizations: deps.organizations as never,
+      memberships: deps.memberships as never,
+      leads: deps.leads as never,
+      documents: deps.documents as never,
+      agentsQueue: agents.queue,
+      rawEvents: {
+        findById: vi.fn(async () => ({
+          id: "raw-chat-1",
+          tenantId: "01HSEEDWRK0000000000000001",
+          provider: "website_chat",
+          providerEventId: "vtc-123:conversation.ended",
+          headers: {},
+          payload: {
+            event: "conversation.ended",
+            conversation_id: "vtc-123",
+            timestamp: "2026-04-20T04:06:39.694Z",
+            lead: { name: "Jane", email: "jane@acme.example" },
+            page: { url: "https://vectortradecapital.com/" },
+            messages: [
+              { role: "user", text: "need rice" },
+              { role: "assistant", text: "what volume" },
+            ],
+          },
+          receivedAt: new Date(),
+          checksum: null,
+          status: "pending" as const,
+        })),
+        updateStatus: vi.fn(async () => undefined),
+        insertIfNotExists: vi.fn(),
+        listFailed: vi.fn(),
+      } as never,
+    });
+
+    const job = {
+      data: {
+        raw_event_id: "raw-chat-1",
+        tenant_id: "01HSEEDWRK0000000000000001",
+      },
+    } as never;
+    await processor(job);
+
+    expect(agents.calls).toHaveLength(1);
+    const call = agents.calls[0]!;
+    expect(call.data).toMatchObject({
+      kind: "lead_qualification",
+      workspace_id: "01HSEEDWRK0000000000000001",
+      input: { source: "website_chat", conversation_id: "vtc-123" },
+    });
   });
 });

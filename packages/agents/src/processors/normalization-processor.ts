@@ -123,27 +123,53 @@ export function buildNormalizationProcessor(deps: NormalizationProcessorDeps) {
 
       await deps.rawEvents.updateStatus(tx, raw.id, "processed");
 
-      // Fan-out hook: a successful website_chat conversation.ended
-      // normalization queues the LeadQualificationAgent so Claude
-      // extracts {product, volume, destination, timeline, urgency,
-      // intent} from the transcript. Runs outside the tx so an
-      // agents-queue hiccup can't roll back the normalization.
-      if (
-        deps.agentsQueue &&
-        raw.provider === "website_chat" &&
-        (raw.payload as { event?: unknown }).event === "conversation.ended"
-      ) {
-        const conversationId = (raw.payload as { conversation_id?: unknown })
-          .conversation_id;
-        if (typeof conversationId === "string") {
+      // Fan-out hook: a successful lead-capture normalization queues
+      // the LeadQualificationAgent so Claude extracts {product, volume,
+      // destination, timeline, urgency, intent} from whatever the
+      // caller provided. Runs outside the tx so an agents-queue hiccup
+      // can't roll back the normalization.
+      //
+      // Two triggers:
+      //   - website_chat + `conversation.ended`   → by conversation_id
+      //   - website_form + fresh lead on outcome  → by lead_id (form
+      //     submissions have no "ended" moment — the single HTTP POST
+      //     is the whole signal)
+      if (deps.agentsQueue && outcome.status === "ok") {
+        if (
+          raw.provider === "website_chat" &&
+          (raw.payload as { event?: unknown }).event === "conversation.ended"
+        ) {
+          const conversationId = (raw.payload as { conversation_id?: unknown })
+            .conversation_id;
+          if (typeof conversationId === "string") {
+            await addAgentJob(
+              deps.agentsQueue,
+              {
+                kind: "lead_qualification",
+                workspace_id: tenantId,
+                input: {
+                  source: "website_chat",
+                  conversation_id: conversationId,
+                },
+              },
+              `chat:${conversationId}`,
+            );
+          }
+        } else if (raw.provider === "website_form" && outcome.leadId) {
           await addAgentJob(
             deps.agentsQueue,
             {
               kind: "lead_qualification",
               workspace_id: tenantId,
-              input: { conversation_id: conversationId },
+              input: {
+                source: "website_form",
+                lead_id: outcome.leadId,
+              },
             },
-            conversationId,
+            // Include raw_event id in the dedup key so a repeat submission
+            // from the same lead (different raw_event) still re-qualifies
+            // against the newer touchpoint metadata.
+            `form:${outcome.leadId}:${raw.id}`,
           );
         }
       }

@@ -1,23 +1,35 @@
 import { TenantId } from "@vex/domain";
 import type { AgentContext, AgentOutput, IAgent } from "./types.js";
 
-export interface LeadQualificationInput {
-  /** Website-chat conversation id the normalizer stored in leads.externalKeys. */
-  conversationId: string;
-}
+/**
+ * Either source the qualification pulls from. Chat reads the transcript
+ * Document the website-chat normalizer stored on the contact. Form-fill
+ * reads the most recent `web_form` touchpoint on the lead's contact —
+ * the FormFillNormalizer writes `{country, product_interest, message,
+ * sms_consent, phone, form_name}` into that touchpoint's metadata.
+ */
+export type LeadQualificationInput =
+  | { source: "website_chat"; conversationId: string }
+  | { source: "website_form"; leadId: string };
 
 /**
- * Reads the transcript Document the website-chat normalizer stored on
- * the contact and asks Claude Haiku for a compact qualification JSON:
- * `{product, volume, destination, timeline, urgency, buying_intent,
- * summary}`. Writes the result to `leads.qualification_summary` as a
- * stringified JSON blob so downstream workflows (follow-up queueing,
- * deal creation) can read structured fields without re-running the
- * LLM.
+ * Pulls a compact qualification JSON from a newly-landed lead:
+ *   `{product, volume, destination, timeline, urgency, buying_intent,
+ *   summary}`.
+ *
+ * Writes the result to `leads.qualification_summary` as a stringified
+ * JSON blob so downstream workflows (follow-up queueing, deal creation)
+ * can read structured fields without re-running the LLM.
  *
  * T1 internal-write only — no proposed actions. The deal-creation
  * nibble that comes later will propose `crm.create_deal` as a T2
  * approval when buying_intent >= "intent_to_buy".
+ *
+ * Two flavours of input:
+ *   - `website_chat` — reads the transcript document. Rich signal.
+ *   - `website_form` — reads the form touchpoint metadata. Thinner
+ *     signal (one message + product_interest + country) but still
+ *     structured enough to produce a useful qualification.
  */
 export class LeadQualificationAgent implements IAgent {
   readonly name = "lead_qualification";
@@ -26,47 +38,29 @@ export class LeadQualificationAgent implements IAgent {
   constructor(private readonly input: LeadQualificationInput) {}
 
   async run(ctx: AgentContext): Promise<AgentOutput> {
-    const lead = await ctx.leads.findByExternalKey(
-      ctx.tx,
-      "website_chat.conversation_id",
-      this.input.conversationId,
-    );
+    const lead = await this.resolveLead(ctx);
     if (!lead) {
-      return {
-        costUsd: 0,
-        outputRefs: { skipped: "lead_not_found" },
-        proposedActions: [],
-        internalWrites: 0,
-        rationale: `no lead for conversation ${this.input.conversationId}`,
-      };
+      return skip(
+        "lead_not_found",
+        this.input.source === "website_chat"
+          ? `no lead for conversation ${this.input.conversationId}`
+          : `no lead with id ${this.input.leadId}`,
+      );
     }
     if (!lead.contactId) {
-      return {
-        costUsd: 0,
-        outputRefs: { skipped: "lead_missing_contact" },
-        proposedActions: [],
-        internalWrites: 0,
-        rationale: `lead ${lead.id} has no contactId`,
-      };
+      return skip("lead_missing_contact", `lead ${lead.id} has no contactId`);
     }
 
-    const allDocs = await ctx.documents.listBySubject(
-      ctx.tx,
-      "contact",
-      lead.contactId,
-      20,
-    );
-    const transcript = allDocs.find(
-      (d) => d.documentType === "chat_transcript" && d.extractedText,
-    );
-    if (!transcript || !transcript.extractedText) {
-      return {
-        costUsd: 0,
-        outputRefs: { skipped: "no_transcript_document" },
-        proposedActions: [],
-        internalWrites: 0,
-        rationale: `lead ${lead.id} has no chat_transcript document`,
-      };
+    const content = await this.loadContent(ctx, lead.contactId);
+    if (!content) {
+      return skip(
+        this.input.source === "website_chat"
+          ? "no_transcript_document"
+          : "no_form_touchpoint",
+        this.input.source === "website_chat"
+          ? `lead ${lead.id} has no chat_transcript document`
+          : `lead ${lead.id} has no web_form touchpoint`,
+      );
     }
 
     const result = await ctx.anthropic.complete({
@@ -74,9 +68,7 @@ export class LeadQualificationAgent implements IAgent {
       idempotencyKey: `lead_qualification:${ctx.agentRunId}`,
       system: SYSTEM_PROMPT,
       maxTokens: 600,
-      messages: [
-        { role: "user", content: buildUserMessage(transcript.extractedText) },
-      ],
+      messages: [{ role: "user", content: content.userMessage }],
     });
 
     const raw = result.content
@@ -102,17 +94,95 @@ export class LeadQualificationAgent implements IAgent {
       costUsd: 0,
       outputRefs: {
         lead_id: lead.id,
-        document_id: transcript.id,
+        source: this.input.source,
+        ...(content.sourceObjectId ? { source_object_id: content.sourceObjectId } : {}),
         qualification: parsed,
       },
       proposedActions: [],
       internalWrites: 1,
-      rationale: `qualified lead ${lead.id} from conversation ${this.input.conversationId}`,
+      rationale: `qualified lead ${lead.id} from ${this.input.source}`,
+    };
+  }
+
+  private async resolveLead(ctx: AgentContext) {
+    if (this.input.source === "website_chat") {
+      return ctx.leads.findByExternalKey(
+        ctx.tx,
+        "website_chat.conversation_id",
+        this.input.conversationId,
+      );
+    }
+    return ctx.leads.findById(ctx.tx, this.input.leadId);
+  }
+
+  private async loadContent(
+    ctx: AgentContext,
+    contactId: string,
+  ): Promise<{ userMessage: string; sourceObjectId?: string } | null> {
+    if (this.input.source === "website_chat") {
+      const docs = await ctx.documents.listBySubject(ctx.tx, "contact", contactId, 20);
+      const transcript = docs.find(
+        (d) => d.documentType === "chat_transcript" && d.extractedText,
+      );
+      if (!transcript || !transcript.extractedText) return null;
+      return {
+        userMessage: `Website-chat transcript:\n\n${transcript.extractedText.slice(0, 8000)}`,
+        sourceObjectId: transcript.id,
+      };
+    }
+    // website_form: scan the last year of touchpoints on the contact,
+    // take the newest web_form hit. A contact with many form submissions
+    // gets qualified against the most recent one.
+    const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    const rows = await ctx.touchpoints.listForContactSince(
+      ctx.tx,
+      contactId,
+      oneYearAgo,
+      200,
+    );
+    const latest = rows.find((t) => t.channel === "web_form");
+    if (!latest) return null;
+    return {
+      userMessage: renderFormSubmission(latest.metadata),
+      sourceObjectId: latest.id,
     };
   }
 }
 
-const SYSTEM_PROMPT = `You extract lead-qualification fields from a website-chat transcript for Vector Trade Capital, a commodity trader (fuel + food).
+function skip(reason: string, rationale: string): AgentOutput {
+  return {
+    costUsd: 0,
+    outputRefs: { skipped: reason },
+    proposedActions: [],
+    internalWrites: 0,
+    rationale,
+  };
+}
+
+/**
+ * Build the user-message body from a `web_form` touchpoint's metadata.
+ * The shape matches what `FormFillNormalizer` writes:
+ *   form_id, form_name, country, product_interest, message, sms_consent,
+ *   phone, page_url, referrer, utm
+ */
+function renderFormSubmission(metadata: Record<string, unknown> | null): string {
+  const md = (metadata ?? {}) as Record<string, unknown>;
+  const rows: string[] = ["Lead form submission:"];
+  const push = (label: string, key: string) => {
+    const v = md[key];
+    if (v === undefined || v === null || v === "") return;
+    rows.push(`${label}: ${typeof v === "string" ? v : JSON.stringify(v)}`);
+  };
+  push("Form", "form_name");
+  push("Country", "country");
+  push("Product interest", "product_interest");
+  push("Phone", "phone");
+  push("SMS opt-in", "sms_consent");
+  push("Message", "message");
+  return rows.join("\n");
+}
+
+const SYSTEM_PROMPT = `You extract lead-qualification fields from an inbound website lead for Vector Trade Capital, a commodity trader (fuel + food). The lead arrives as either a website-chat transcript or a "Request a Quote" form submission. Apply the same schema to both.
 
 Return ONLY a JSON object of this exact shape — no prose:
 
@@ -127,14 +197,11 @@ Return ONLY a JSON object of this exact shape — no prose:
 }
 
 Rules:
-- Null out fields you can't support from the transcript. Never guess.
+- Null out fields you can't support from the content. Never guess.
+- For form submissions the "Product interest" field maps roughly to product: food → null (ambiguous, needs the message), fuel → null (same), vehicles/multiple → null. Only fill "product" if the message names a specific SKU.
 - "immediate" means the visitor wants a quote now; "near_term" = weeks; "exploratory" = months/unclear.
 - "intent_to_buy" requires explicit buying language ("need", "want to order", "what's your price on"). "qualifying" = asking specifics about delivery/terms. "exploring" = general info questions.
 - summary MUST be one sentence, ≤140 chars, written for a busy trade-desk operator.`;
-
-function buildUserMessage(transcript: string): string {
-  return `Transcript:\n\n${transcript.slice(0, 8000)}`;
-}
 
 function parseQualificationJson(raw: string): Record<string, unknown> | null {
   const start = raw.indexOf("{");
