@@ -63,6 +63,7 @@ import { CallsService } from "./calls/calls.service.js";
 import { VoiceStreamServer } from "./calls/voice-stream-server.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
+import { LeadsModule } from "./leads/leads.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { MarketingModule } from "./marketing/marketing.module.js";
 import { OrganizationsModule } from "./organizations/organizations.module.js";
@@ -267,6 +268,7 @@ async function bootstrap(): Promise<void> {
         approvals: approvalRepository,
         organizations: organizationRepository,
       }),
+      leads: LeadsModule.register({ db }),
       events: EventsModule.register({ db }),
       marketing: MarketingModule.register({
         db,

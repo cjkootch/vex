@@ -15,6 +15,7 @@ import { CommunicationsModule } from "./communications/communications.module.js"
 import { FollowUpsModule } from "./follow-ups/follow-ups.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
+import { LeadsModule } from "./leads/leads.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { MarketingModule } from "./marketing/marketing.module.js";
 import { SearchModule } from "./search/search.module.js";
@@ -35,6 +36,7 @@ export interface AppModuleConfig {
   signals?: DynamicModule;
   contacts?: DynamicModule;
   deals?: DynamicModule;
+  leads?: DynamicModule;
   events?: DynamicModule;
   marketing?: DynamicModule;
   organizations?: DynamicModule;
@@ -87,6 +89,7 @@ export class AppModule {
     if (config.signals) imports.push(config.signals);
     if (config.contacts) imports.push(config.contacts);
     if (config.deals) imports.push(config.deals);
+    if (config.leads) imports.push(config.leads);
     if (config.events) imports.push(config.events);
     if (config.marketing) imports.push(config.marketing);
     if (config.organizations) imports.push(config.organizations);
@@ -119,6 +122,7 @@ export {
   FollowUpsModule,
   ContactsModule,
   DealsModule,
+  LeadsModule,
   EventsModule,
   MarketingModule,
   OrganizationsModule,

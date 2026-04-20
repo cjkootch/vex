@@ -90,6 +90,38 @@ export class LeadQualificationAgent implements IAgent {
 
     await ctx.leads.updateQualification(ctx.tx, lead.id, JSON.stringify(parsed));
 
+    // Sprint S.2 — when the qualification surfaces buying intent or
+    // time urgency, emit a distinct `lead.hot` event so the Brief
+    // page + signals feed can surface it loudly. We don't use the
+    // same idempotency key space as the qualification write — an
+    // operator re-running the agent after the first hot signal
+    // already fired shouldn't double-count, but a genuinely fresh
+    // agent_run should land its own event (so trends stay visible).
+    const isHot = isHotSignal(parsed);
+    if (isHot) {
+      await ctx.events.insertIfNotExists(ctx.tx, ctx.tenantId, {
+        verb: "lead.hot",
+        subjectType: "lead",
+        subjectId: lead.id,
+        actorType: "system",
+        actorId: "lead_qualification",
+        objectType: "contact",
+        objectId: lead.contactId,
+        occurredAt: new Date(),
+        idempotencyKey: `lead.hot:${lead.id}:${ctx.agentRunId}`,
+        metadata: {
+          source: this.input.source,
+          buying_intent: parsed["buying_intent"] ?? null,
+          urgency: parsed["urgency"] ?? null,
+          product: parsed["product"] ?? null,
+          volume: parsed["volume"] ?? null,
+          destination: parsed["destination"] ?? null,
+          timeline: parsed["timeline"] ?? null,
+          summary: parsed["summary"] ?? null,
+        },
+      });
+    }
+
     return {
       costUsd: 0,
       outputRefs: {
@@ -97,10 +129,11 @@ export class LeadQualificationAgent implements IAgent {
         source: this.input.source,
         ...(content.sourceObjectId ? { source_object_id: content.sourceObjectId } : {}),
         qualification: parsed,
+        hot: isHot,
       },
       proposedActions: [],
-      internalWrites: 1,
-      rationale: `qualified lead ${lead.id} from ${this.input.source}`,
+      internalWrites: isHot ? 2 : 1,
+      rationale: `qualified lead ${lead.id} from ${this.input.source}${isHot ? " (hot)" : ""}`,
     };
   }
 
@@ -202,6 +235,20 @@ Rules:
 - "immediate" means the visitor wants a quote now; "near_term" = weeks; "exploratory" = months/unclear.
 - "intent_to_buy" requires explicit buying language ("need", "want to order", "what's your price on"). "qualifying" = asking specifics about delivery/terms. "exploring" = general info questions.
 - summary MUST be one sentence, ≤140 chars, written for a busy trade-desk operator.`;
+
+/**
+ * A qualification is "hot" when either signal trips: explicit buying
+ * language ("intent_to_buy") OR near-term timeline ("immediate").
+ * Everything else — qualifying, exploring, near_term, exploratory —
+ * stays warm and lands in the regular qualification feed without
+ * firing a loud signal.
+ */
+export function isHotSignal(parsed: Record<string, unknown>): boolean {
+  return (
+    parsed["buying_intent"] === "intent_to_buy" ||
+    parsed["urgency"] === "immediate"
+  );
+}
 
 function parseQualificationJson(raw: string): Record<string, unknown> | null {
   const start = raw.indexOf("{");
