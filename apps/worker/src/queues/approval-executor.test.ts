@@ -560,3 +560,153 @@ describe("approval executor — campaign.enroll_batch", () => {
     expect(event.metadata.action_type).toBe("campaign.enroll_batch");
   });
 });
+
+describe("approval executor — touchpoint.log", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function buildTouchpointDeps(
+    approval: Parameters<typeof buildDeps>[0],
+  ): ReturnType<typeof buildDeps> & {
+    touchpoints: { insert: ReturnType<typeof vi.fn> };
+  } {
+    const deps = buildDeps(approval);
+    return {
+      ...deps,
+      touchpoints: {
+        insert: vi.fn().mockResolvedValue({ id: "tp-new" }),
+      },
+    };
+  }
+
+  it("inserts a touchpoint, marks applied, and emits touchpoint.logged", async () => {
+    const deps = buildTouchpointDeps({
+      actionType: "touchpoint.log",
+      decision: "approved",
+      proposedPayload: {
+        contactId: "01HSEEDCNT0000000000000001",
+        orgId: "01HSEEDCRP0000000000000001",
+        channel: "voice.manual",
+        direction: "outbound",
+        note: "Called John about Trinidad fuel, sending terms Thursday",
+      },
+    });
+    await runJob(deps);
+
+    expect(deps.touchpoints.insert).toHaveBeenCalledTimes(1);
+    const args = deps.touchpoints.insert.mock.calls[0]!;
+    const tpInput = args[2]!;
+    expect(tpInput.channel).toBe("voice.manual");
+    expect(tpInput.contactId).toBe("01HSEEDCNT0000000000000001");
+    expect(tpInput.orgId).toBe("01HSEEDCRP0000000000000001");
+    expect(tpInput.metadata).toMatchObject({
+      direction: "outbound",
+      manual: true,
+      note: "Called John about Trinidad fuel, sending terms Thursday",
+    });
+
+    expect(deps.approvals.markApplied).toHaveBeenCalledWith(
+      expect.anything(),
+      APPROVAL_ID,
+      "tp-new",
+    );
+    const event = (deps.events.insertIfNotExists as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2];
+    expect(event.verb).toBe("touchpoint.logged");
+    expect(event.metadata.channel).toBe("voice.manual");
+  });
+
+  it("attaches dealId to touchpoint metadata when present", async () => {
+    const deps = buildTouchpointDeps({
+      actionType: "touchpoint.log",
+      decision: "approved",
+      proposedPayload: {
+        orgId: "01HSEEDCRP0000000000000001",
+        dealId: "01HSEEDDEA0000000000000001",
+        channel: "meeting",
+        note: "Kickoff with Cibao ops for Q3 rice program",
+      },
+    });
+    await runJob(deps);
+    const tpInput = deps.touchpoints.insert.mock.calls[0]![2]!;
+    expect(tpInput.metadata.deal_id).toBe("01HSEEDDEA0000000000000001");
+  });
+
+  it("defaults direction to outbound when omitted", async () => {
+    const deps = buildTouchpointDeps({
+      actionType: "touchpoint.log",
+      decision: "approved",
+      proposedPayload: {
+        contactId: "01HSEEDCNT0000000000000001",
+        channel: "voice.manual",
+        note: "left voicemail",
+      },
+    });
+    await runJob(deps);
+    const tpInput = deps.touchpoints.insert.mock.calls[0]![2]!;
+    expect(tpInput.metadata.direction).toBe("outbound");
+  });
+
+  it("fails closed when no subject is provided", async () => {
+    const deps = buildTouchpointDeps({
+      actionType: "touchpoint.log",
+      decision: "approved",
+      proposedPayload: { channel: "voice.manual", note: "orphan" },
+    });
+    await runJob(deps);
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    const event = (deps.events.insertIfNotExists as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toMatch(
+      /missing contactId \/ orgId \/ dealId/,
+    );
+  });
+
+  it("fails closed when channel or note is missing", async () => {
+    const deps = buildTouchpointDeps({
+      actionType: "touchpoint.log",
+      decision: "approved",
+      proposedPayload: { contactId: "01HSEEDCNT0000000000000001" },
+    });
+    await runJob(deps);
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    const event = (deps.events.insertIfNotExists as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.failed");
+    expect(event.metadata.reason).toMatch(/missing channel \/ note/);
+  });
+
+  it("short-circuits to a replay event when appliedObjectId is set", async () => {
+    const deps = buildTouchpointDeps({
+      actionType: "touchpoint.log",
+      decision: "approved",
+      proposedPayload: {
+        contactId: "01HSEEDCNT0000000000000001",
+        channel: "voice.manual",
+        note: "already logged",
+      },
+    });
+    deps.approvals.findById.mockResolvedValueOnce({
+      id: APPROVAL_ID,
+      reviewerId: "01HSEEDPRS0000000000000001",
+      actionType: "touchpoint.log",
+      decision: "approved",
+      proposedPayload: {
+        contactId: "01HSEEDCNT0000000000000001",
+        channel: "voice.manual",
+        note: "already logged",
+      },
+      appliedObjectId: "tp-prior",
+    });
+    await runJob(deps);
+
+    expect(deps.touchpoints.insert).not.toHaveBeenCalled();
+    expect(deps.approvals.markApplied).not.toHaveBeenCalled();
+    const event = (deps.events.insertIfNotExists as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![2];
+    expect(event.verb).toBe("approval.executor.replayed");
+    expect(event.metadata.action_type).toBe("touchpoint.log");
+  });
+});
