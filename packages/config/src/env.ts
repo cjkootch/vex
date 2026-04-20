@@ -150,6 +150,16 @@ export const EnvSchema = z.object({
    */
   APP_BASE_URL: z.string().url().optional(),
   /**
+   * Public URL of the VEX WEB app (Next.js on Vercel). Used by the
+   * Slack notifier's "Open in Vex" deep-link so operators click
+   * through to the app UI, not the API. `APP_BASE_URL` (above) is
+   * the API hostname Twilio POSTs into — kept as a separate env so
+   * neither can break the other. Worker falls back to APP_BASE_URL
+   * if WEB_BASE_URL is unset; when both are unset the deep-link
+   * button is omitted.
+   */
+  WEB_BASE_URL: z.string().url().optional(),
+  /**
    * Tavily Search API key for the chat agent's `research_contact`
    * tool. Optional — when unset, the tool is not registered and the
    * agent tells the user research is unavailable instead of
