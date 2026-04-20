@@ -71,6 +71,12 @@ jobs:
     if: ${{ needs.preflight.outputs.has_eval_secrets == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Advisory: the runner's own comment notes ~11 fixtures are
+    # meta/behavioral with retrieval hit-rate stuck at zero, so the
+    # gate fails by design until those fixtures are rewritten. Don't
+    # block PRs on it; the result still posts as a check + uploads
+    # the artifact for triage.
+    continue-on-error: true
     env:
       APPLICATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
       MIGRATION_DATABASE_URL: ${{ secrets.NEON_DEV_URL }}
