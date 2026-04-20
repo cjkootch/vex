@@ -138,7 +138,7 @@ const RULES: Rule[] = [
         .where(
           and(
             eq(schema.fuelDeals.bisLicenseRequired, true),
-            sql`${schema.fuelDeals.status} NOT IN ('closed_won', 'closed_lost', 'cancelled')`,
+            sql`${schema.fuelDeals.status} NOT IN ('settled', 'cancelled', 'failed')`,
           ),
         );
 
@@ -324,7 +324,7 @@ const RULES: Rule[] = [
           and(
             eq(schema.fuelDeals.lineOfBusiness, "food"),
             sql`${schema.fuelDeals.productionLeadTimeWeeks} IS NOT NULL`,
-            sql`${schema.fuelDeals.status} NOT IN ('closed_won', 'closed_lost', 'cancelled', 'settled', 'delivered')`,
+            sql`${schema.fuelDeals.status} NOT IN ('settled', 'cancelled', 'failed', 'delivered')`,
           ),
         );
 
