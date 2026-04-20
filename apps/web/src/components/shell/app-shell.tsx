@@ -10,6 +10,7 @@ import {
 } from "@/lib/workspace-mode-context";
 import { ContextChip, type ContextChipType } from "./context-chip";
 import { CommandPalette } from "./command-palette";
+import { NotificationsBell } from "./notifications-bell";
 import { VexLogo } from "@/components/brand/vex-logo";
 
 /**
@@ -335,6 +336,7 @@ function TopBar({
       </div>
       <div className="flex flex-shrink-0 items-center gap-2 md:gap-3">
         <SearchHint />
+        <NotificationsBell />
         <ApprovalBadge count={pending} />
         <div
           aria-label={vexCopy.navigation.exit_workspace}
