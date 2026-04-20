@@ -8,6 +8,12 @@ export interface CreatedApproval {
   tier: string;
 }
 
+export interface RejectedProposal {
+  actionType: string;
+  tier: string;
+  reason: string;
+}
+
 export interface ManifestEvent {
   manifest: unknown;
   proposed_actions?: unknown[];
@@ -17,6 +23,13 @@ export interface ManifestEvent {
    * them without leaving the conversation.
    */
   created_approvals?: CreatedApproval[];
+  /**
+   * T2+ proposals Claude emitted that failed ActionDescriptor
+   * validation (e.g. contactId wasn't a ULID, toNumber wasn't E.164).
+   * Rendered as muted chips so the operator sees the real reason
+   * their request "silently" didn't land.
+   */
+  rejected_proposals?: RejectedProposal[];
   evidence_refs?: string[];
   cost_usd?: number;
   cache_hit?: boolean;
