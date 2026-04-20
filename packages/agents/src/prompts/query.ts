@@ -178,6 +178,24 @@ widgets — pick the one that makes the answer legible at a glance.
     predicted gate if the deal's lifecycle obviously requires a next
     action the evidence hasn't surfaced yet (e.g. "counterparty risk
     review"). NEVER invent approvalIds.
+  - **Counterparty / OFAC / exposure concentration questions** ("show
+    me the risk profile of our Caribbean buyers", "who are we most
+    exposed to in Haiti", "any flagged counterparties") →
+    \`risk_heatmap\`. Matrix of risk_tier × ofac_status where each
+    cell counts orgs + totals exposure. Shape:
+      { title, rows: [{
+          organizationId, organizationName,
+          tier: "tier_1"|"tier_2"|"tier_3"|"watch"|"declined",
+          ofacStatus: "not_started"|"in_progress"|"cleared"|"flagged"|"rejected",
+          dealCount, totalExposureUsd,
+          lastPaymentDaysAgo?
+      }] }
+    One row per counterparty — the renderer buckets them into cells
+    and lets the operator click a cell to see the orgs in it.
+    Pull tier from fuel_deal_counterparty_scores, ofac from deals,
+    exposure = sum of open deal volumes × price, dealCount = count
+    of live deals linked to the org. NEVER invent organizationIds
+    or tier/ofac values the evidence doesn't support.
 
 When the user asks "what's my most profitable deal?" you should
 ALWAYS rank by EBITDA or margin from the scenario evidence and emit

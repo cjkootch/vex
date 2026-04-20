@@ -203,6 +203,94 @@ describe("validateManifest", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts a risk_heatmap with mixed tiers and OFAC statuses", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "risk_heatmap",
+          title: "Caribbean buyer exposure",
+          rows: [
+            {
+              organizationId: "01HORG_A",
+              organizationName: "Port-au-Prince Trading",
+              tier: "tier_2",
+              ofacStatus: "cleared",
+              dealCount: 3,
+              totalExposureUsd: 1_250_000,
+              lastPaymentDaysAgo: 14,
+            },
+            {
+              organizationId: "01HORG_B",
+              organizationName: "Santo Domingo Fuels",
+              tier: "watch",
+              ofacStatus: "in_progress",
+              dealCount: 1,
+              totalExposureUsd: 450_000,
+            },
+            {
+              organizationId: "01HORG_C",
+              organizationName: "Kingston Commodities",
+              tier: "declined",
+              ofacStatus: "rejected",
+              dealCount: 0,
+              totalExposureUsd: 0,
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const p = result.manifest.panels[0];
+      if (p?.type === "risk_heatmap") expect(p.rows).toHaveLength(3);
+      else throw new Error("expected risk_heatmap");
+    }
+  });
+
+  it("rejects risk_heatmap with unknown tier", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "risk_heatmap",
+          title: "x",
+          rows: [
+            {
+              organizationId: "x",
+              organizationName: "X",
+              tier: "tier_4",
+              ofacStatus: "cleared",
+              dealCount: 0,
+              totalExposureUsd: 0,
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects risk_heatmap with negative exposure", () => {
+    const result = validateManifest({
+      panels: [
+        {
+          type: "risk_heatmap",
+          title: "x",
+          rows: [
+            {
+              organizationId: "x",
+              organizationName: "X",
+              tier: "tier_1",
+              ofacStatus: "cleared",
+              dealCount: 0,
+              totalExposureUsd: -5,
+            },
+          ],
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects approval_flow with zero steps", () => {
     const result = validateManifest({
       panels: [{ type: "approval_flow", title: "x", steps: [] }],
