@@ -257,6 +257,45 @@ const ApprovalFlowPanel = z.object({
   steps: z.array(ApprovalFlowStep).min(1).max(30),
 });
 
+/**
+ * Counterparty-risk heatmap. 2D matrix of risk_tier × ofac_status with
+ * cells summarising org count + total exposure so the operator can spot
+ * concentration at a glance.
+ *
+ * Enum values map 1:1 to the fuel_deal_counterparty_scores.risk_tier
+ * and fuel_deals.ofac_screening_status columns — the agent pulls rows
+ * from the counterparty + deal evidence and emits one entry per org.
+ * The renderer buckets them into the matrix, colours by exposure
+ * intensity, and lets the operator click a cell to drill into orgs
+ * in that bucket.
+ */
+const RiskTier = z.enum(["tier_1", "tier_2", "tier_3", "watch", "declined"]);
+const OfacStatus = z.enum([
+  "not_started",
+  "in_progress",
+  "cleared",
+  "flagged",
+  "rejected",
+]);
+
+const RiskHeatmapRow = z.object({
+  organizationId: z.string().min(1),
+  organizationName: z.string().min(1).max(200),
+  tier: RiskTier,
+  ofacStatus: OfacStatus,
+  dealCount: z.number().int().min(0),
+  /** Open + in-flight exposure in USD; used for cell heat intensity. */
+  totalExposureUsd: z.number().min(0),
+  /** Optional freshness signal — "paid 14d ago". */
+  lastPaymentDaysAgo: z.number().int().min(0).optional(),
+});
+
+const RiskHeatmapPanel = z.object({
+  type: z.literal("risk_heatmap"),
+  title: z.string().min(1),
+  rows: z.array(RiskHeatmapRow).min(1).max(200),
+});
+
 export const ManifestPanel = z.discriminatedUnion("type", [
   ProfilePanel,
   TablePanel,
@@ -272,6 +311,7 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   RouteMapPanel,
   DealScorecardPanel,
   ApprovalFlowPanel,
+  RiskHeatmapPanel,
   // Signal-only panel: ManifestCanvas intercepts it to switch workspace
   // mode and show a toast, never renders a concrete component.
   WorkspaceModeSwitchPanel,
