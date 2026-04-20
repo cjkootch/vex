@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 /** Tiny relative-time formatter so this file stays dep-free. */
 function relativeTime(date: Date): string {
@@ -265,30 +266,47 @@ function ApprovalCard({
   const tier = stringField(item.proposedPayload, "tier") ?? "T?";
   const created = new Date(item.createdAt);
 
-  // Per-actionType body renderer. Defaults to the Sprint-6 suggestion
-  // shape (subject / opening) so existing follow_up.suggestion rows
-  // keep working. New campaign.enroll_batch shape from Sprint F gets
-  // a dedicated summary panel — plan steps + recipient count beat
-  // raw JSON for reviewer comprehension.
+  // Per-actionType body renderer. Each action that ships through chat
+  // or an autonomous agent has its own renderer so the operator sees
+  // the actual fields they're approving — not "(no subject)" + opaque
+  // ULIDs. The generic GenericPayloadBody at the bottom catches new
+  // action kinds we haven't built a dedicated renderer for yet.
   let body: JSX.Element;
-  if (item.actionType === "campaign.enroll_batch") {
-    body = <EnrollBatchBody payload={item.proposedPayload} />;
-  } else if (item.actionType === "call.request_backup") {
-    body = <CallBackupBody payload={item.proposedPayload} />;
-  } else {
-    const subject =
-      stringField(item.proposedPayload, "subject_line") ?? "(no subject)";
-    const opening = stringField(item.proposedPayload, "opening_line") ?? "";
-    const subjectId = stringField(item.proposedPayload, "subject_id");
-    body = (
-      <>
-        <div className="mt-2 text-sm font-semibold text-white">{subject}</div>
-        {opening && <p className="text-sm text-white/70">{opening}</p>}
-        {subjectId && (
-          <p className="mt-1 text-xs text-white/40">subject: {subjectId}</p>
-        )}
-      </>
-    );
+  switch (item.actionType) {
+    case "campaign.enroll_batch":
+      body = <EnrollBatchBody payload={item.proposedPayload} />;
+      break;
+    case "call.request_backup":
+      body = <CallBackupBody payload={item.proposedPayload} />;
+      break;
+    case "outbound_call":
+      body = <OutboundCallBody payload={item.proposedPayload} />;
+      break;
+    case "email.send":
+      body = <EmailSendBody payload={item.proposedPayload} />;
+      break;
+    case "crm.create_deal":
+      body = <CreateDealBody payload={item.proposedPayload} />;
+      break;
+    case "crm.create_contact":
+      body = <CreateContactBody payload={item.proposedPayload} />;
+      break;
+    case "crm.create_company":
+      body = <CreateCompanyBody payload={item.proposedPayload} />;
+      break;
+    case "campaign.create":
+      body = <CreateCampaignBody payload={item.proposedPayload} />;
+      break;
+    case "sms.send":
+    case "whatsapp.send":
+      body = <MessageSendBody payload={item.proposedPayload} kind={item.actionType} />;
+      break;
+    case "follow_up.suggestion":
+      // Original Sprint-6 shape — subject_line + opening_line + subject_id.
+      body = <FollowUpSuggestionBody payload={item.proposedPayload} />;
+      break;
+    default:
+      body = <GenericPayloadBody payload={item.proposedPayload} />;
   }
 
   return (
@@ -478,6 +496,443 @@ function CallBackupBody({
           Join call →
         </a>
       )}
+    </div>
+  );
+}
+
+/**
+ * outbound_call payload renderer. The user is approving a real PSTN
+ * dial — they need to see exactly what number, who's getting called,
+ * whether it's AI-driven or operator-joined, and any custom AI
+ * instructions.
+ */
+function OutboundCallBody({
+  payload,
+}: {
+  payload: Record<string, unknown>;
+}) {
+  const toNumber =
+    stringField(payload, "toNumber") ?? stringField(payload, "to_number");
+  const contactId =
+    stringField(payload, "contactId") ?? stringField(payload, "contact_id");
+  const orgId = stringField(payload, "orgId") ?? stringField(payload, "org_id");
+  const aiMode =
+    payload["aiMode"] === true || payload["ai_mode"] === true;
+  const aiInstructions =
+    stringField(payload, "aiInstructions") ??
+    stringField(payload, "ai_instructions");
+  const rationale = stringField(payload, "rationale");
+  const missing: string[] = [];
+  if (!toNumber) missing.push("toNumber");
+  if (!contactId) missing.push("contactId");
+  if (!orgId) missing.push("orgId");
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-semibold text-white">
+          {aiMode ? "Vex calls" : "Dial out"}
+        </span>
+        <span className="font-mono text-white">{toNumber ?? "<no phone>"}</span>
+        {aiMode ? (
+          <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[10px] text-accent">
+            AI-driven
+          </span>
+        ) : (
+          <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-white/60">
+            operator joins
+          </span>
+        )}
+      </div>
+      {(contactId || orgId) && (
+        <div className="flex flex-wrap gap-3 text-[11px] text-white/50">
+          {contactId && (
+            <div>
+              <span className="opacity-60">contact </span>
+              <Link
+                href={`/app/contacts/${encodeURIComponent(contactId)}`}
+                className="font-mono text-white/70 hover:text-accent"
+              >
+                {contactId.slice(-8)}
+              </Link>
+            </div>
+          )}
+          {orgId && (
+            <div>
+              <span className="opacity-60">org </span>
+              <Link
+                href={`/app/companies/${encodeURIComponent(orgId)}`}
+                className="font-mono text-white/70 hover:text-accent"
+              >
+                {orgId.slice(-8)}
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+      {aiInstructions && (
+        <div className="rounded border border-accent/30 bg-accent/5 p-2 text-xs">
+          <div className="mb-1 text-[10px] uppercase tracking-wider text-accent/70">
+            AI instructions
+          </div>
+          <p className="whitespace-pre-wrap text-white/80">{aiInstructions}</p>
+        </div>
+      )}
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+      {missing.length > 0 && (
+        <p className="text-xs text-bad">
+          ⚠ Missing required field{missing.length === 1 ? "" : "s"}:{" "}
+          {missing.join(", ")}. Approving this will fail at the executor.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * email.send payload renderer. The reviewer needs to see who, what
+ * subject, and a preview of the body — not just "(no subject)".
+ */
+function EmailSendBody({ payload }: { payload: Record<string, unknown> }) {
+  const subject = stringField(payload, "subject");
+  const body = stringField(payload, "body");
+  const tos = Array.isArray(payload["to"])
+    ? (payload["to"] as unknown[]).filter((v): v is string => typeof v === "string")
+    : [];
+  const supplier = stringField(payload, "supplier_org_id");
+  const leadId = stringField(payload, "lead_id");
+  const drafted = stringField(payload, "auto_drafted_from");
+  const rationale = stringField(payload, "rationale");
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-white/40">to</span>
+        <span className="font-mono text-sm text-white">
+          {tos.length > 0 ? tos.join(", ") : "<no recipient>"}
+        </span>
+      </div>
+      <div className="text-sm font-semibold text-white">
+        {subject ?? "(no subject)"}
+      </div>
+      {body && (
+        <div className="rounded border border-line/40 bg-canvas/40 p-2 text-xs leading-relaxed text-white/80">
+          <div className="line-clamp-6 whitespace-pre-wrap">{body}</div>
+        </div>
+      )}
+      {(drafted || supplier || leadId) && (
+        <div className="flex flex-wrap gap-3 text-[10px] text-white/50">
+          {drafted && (
+            <span>
+              <span className="opacity-60">via </span>
+              <span className="font-mono">{drafted}</span>
+            </span>
+          )}
+          {supplier && (
+            <span>
+              <span className="opacity-60">supplier </span>
+              <Link
+                href={`/app/companies/${encodeURIComponent(supplier)}`}
+                className="font-mono hover:text-accent"
+              >
+                {supplier.slice(-8)}
+              </Link>
+            </span>
+          )}
+          {leadId && (
+            <span>
+              <span className="opacity-60">lead </span>
+              <span className="font-mono">{leadId.slice(-8)}</span>
+            </span>
+          )}
+        </div>
+      )}
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * sms.send / whatsapp.send — single line, single body. Same payload
+ * shape per the action descriptor (to E.164 + body).
+ */
+function MessageSendBody({
+  payload,
+  kind,
+}: {
+  payload: Record<string, unknown>;
+  kind: "sms.send" | "whatsapp.send";
+}) {
+  const to = stringField(payload, "to");
+  const body = stringField(payload, "body");
+  const rationale = stringField(payload, "rationale");
+  const channel = kind === "sms.send" ? "SMS" : "WhatsApp";
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-baseline gap-2 text-sm">
+        <span className="text-white/60">{channel} →</span>
+        <span className="font-mono text-white">{to ?? "<no number>"}</span>
+      </div>
+      {body && (
+        <div className="rounded border border-line/40 bg-canvas/40 p-2 text-sm text-white/85">
+          <p className="whitespace-pre-wrap">{body}</p>
+        </div>
+      )}
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * crm.create_deal payload renderer. Surfaces the deal's identity +
+ * commercial terms so the reviewer can sanity-check defaults
+ * (incoterm, paymentTerms, pricingBasis) before the row lands.
+ */
+function CreateDealBody({ payload }: { payload: Record<string, unknown> }) {
+  const dealRef = stringField(payload, "dealRef");
+  const product = stringField(payload, "product");
+  const lineOfBusiness = stringField(payload, "lineOfBusiness");
+  const volume = numberField(payload, "volumeUsg");
+  const volumeUnit = stringField(payload, "volumeUnit");
+  const buyerOrgId = stringField(payload, "buyerOrgId");
+  const destination = stringField(payload, "destinationPort");
+  const incoterm = stringField(payload, "incoterm");
+  const pricingBasis = stringField(payload, "pricingBasis");
+  const paymentTerms = stringField(payload, "paymentTerms");
+  const notes = stringField(payload, "notes");
+  const rationale = stringField(payload, "rationale");
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex flex-wrap items-baseline gap-2 text-sm">
+        <span className="font-mono font-semibold text-white">{dealRef ?? "<no ref>"}</span>
+        <span className="text-white">{product ?? "<no product>"}</span>
+        {lineOfBusiness && (
+          <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase text-white/60">
+            {lineOfBusiness}
+          </span>
+        )}
+      </div>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
+        {typeof volume === "number" && (
+          <KV label="Volume">
+            {volume.toLocaleString()} {(volumeUnit ?? "").toUpperCase()}
+          </KV>
+        )}
+        {destination && <KV label="Destination">{destination}</KV>}
+        {incoterm && <KV label="Incoterm">{incoterm.toUpperCase()}</KV>}
+        {pricingBasis && <KV label="Pricing">{pricingBasis}</KV>}
+        {paymentTerms && <KV label="Payment">{paymentTerms.toUpperCase()}</KV>}
+        {buyerOrgId && (
+          <KV label="Buyer">
+            <Link
+              href={`/app/companies/${encodeURIComponent(buyerOrgId)}`}
+              className="font-mono hover:text-accent"
+            >
+              {buyerOrgId.slice(-8)}
+            </Link>
+          </KV>
+        )}
+      </dl>
+      {notes && (
+        <p className="rounded border border-line/40 bg-canvas/40 p-2 text-xs text-white/70">
+          {notes}
+        </p>
+      )}
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CreateContactBody({ payload }: { payload: Record<string, unknown> }) {
+  const name = stringField(payload, "name");
+  const email = stringField(payload, "email");
+  const phone = stringField(payload, "phone");
+  const title = stringField(payload, "title");
+  const orgId = stringField(payload, "organizationId") ?? stringField(payload, "orgId");
+  const rationale = stringField(payload, "rationale");
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="text-sm font-semibold text-white">{name ?? "<no name>"}</div>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        {title && <KV label="Title">{title}</KV>}
+        {email && <KV label="Email">{email}</KV>}
+        {phone && <KV label="Phone">{phone}</KV>}
+        {orgId && (
+          <KV label="Org">
+            <Link
+              href={`/app/companies/${encodeURIComponent(orgId)}`}
+              className="font-mono hover:text-accent"
+            >
+              {orgId.slice(-8)}
+            </Link>
+          </KV>
+        )}
+      </dl>
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CreateCompanyBody({ payload }: { payload: Record<string, unknown> }) {
+  const name = stringField(payload, "legalName") ?? stringField(payload, "name");
+  const domain = stringField(payload, "domain");
+  const industry = stringField(payload, "industry");
+  const rationale = stringField(payload, "rationale");
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="text-sm font-semibold text-white">{name ?? "<no name>"}</div>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+        {domain && <KV label="Domain">{domain}</KV>}
+        {industry && <KV label="Industry">{industry}</KV>}
+      </dl>
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CreateCampaignBody({ payload }: { payload: Record<string, unknown> }) {
+  const name = stringField(payload, "name");
+  const channel = stringField(payload, "channel");
+  const objective = stringField(payload, "objective");
+  const steps = Array.isArray(payload["steps"]) ? (payload["steps"] as unknown[]) : [];
+  const rationale = stringField(payload, "rationale");
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex items-baseline gap-2 text-sm">
+        <span className="font-semibold text-white">{name ?? "<no name>"}</span>
+        {channel && (
+          <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase text-white/60">
+            {channel}
+          </span>
+        )}
+        <span className="text-xs text-white/50">{steps.length} step{steps.length === 1 ? "" : "s"}</span>
+      </div>
+      {objective && <p className="text-xs text-white/70">{objective}</p>}
+      {steps.length > 0 && (
+        <ol className="flex flex-col gap-0.5 border-l-2 border-line/60 pl-3">
+          {steps.map((s, i) => {
+            if (typeof s !== "object" || s === null) return null;
+            const obj = s as Record<string, unknown>;
+            const ch = stringField(obj, "channel") ?? "?";
+            const tier = stringField(obj, "tier") ?? "?";
+            const delay = numberField(obj, "delayAfterPriorMs");
+            return (
+              <li key={i} className="flex items-baseline gap-2 text-[11px] text-white/70">
+                <span className="font-mono text-accent">#{i}</span>
+                <span>{ch}</span>
+                <span className="rounded bg-muted/60 px-1 py-0.5 font-mono text-[10px] text-white/60">
+                  {tier}
+                </span>
+                {typeof delay === "number" && delay > 0 && (
+                  <span className="text-white/40">wait {formatDelay(delay)}</span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function FollowUpSuggestionBody({ payload }: { payload: Record<string, unknown> }) {
+  const subject = stringField(payload, "subject_line") ?? "(no subject)";
+  const opening = stringField(payload, "opening_line") ?? "";
+  const subjectId = stringField(payload, "subject_id");
+  return (
+    <>
+      <div className="mt-2 text-sm font-semibold text-white">{subject}</div>
+      {opening && <p className="text-sm text-white/70">{opening}</p>}
+      {subjectId && (
+        <p className="mt-1 text-xs text-white/40">subject: {subjectId}</p>
+      )}
+    </>
+  );
+}
+
+/**
+ * Final fallback when no per-type renderer matches. Renders payload
+ * key/values minus internal noise (`tier`, `audit_event_id`,
+ * `auto_drafted_from`, anything starting with `_`). Beats a blank
+ * card or "(no subject)" for newly-introduced action types.
+ */
+const HIDDEN_PAYLOAD_KEYS = new Set([
+  "tier",
+  "audit_event_id",
+  "auto_drafted_from",
+  "rationale",
+]);
+function GenericPayloadBody({ payload }: { payload: Record<string, unknown> }) {
+  const entries = Object.entries(payload).filter(
+    ([k, v]) =>
+      !HIDDEN_PAYLOAD_KEYS.has(k) &&
+      !k.startsWith("_") &&
+      v !== null &&
+      v !== undefined &&
+      v !== "",
+  );
+  const rationale = stringField(payload, "rationale");
+  return (
+    <div className="mt-2 space-y-1.5">
+      {entries.length === 0 ? (
+        <p className="text-xs text-white/40">No additional details on this proposal.</p>
+      ) : (
+        <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+          {entries.map(([k, v]) => (
+            <KV key={k} label={k}>{renderPayloadValue(v)}</KV>
+          ))}
+        </dl>
+      )}
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function renderPayloadValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.length === 0 ? "[]" : `[${v.length} item${v.length === 1 ? "" : "s"}]`;
+  if (typeof v === "object") return JSON.stringify(v).slice(0, 200);
+  return String(v);
+}
+
+function KV({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col">
+      <dt className="text-[10px] uppercase tracking-wider text-white/40">{label}</dt>
+      <dd className="text-white/90">{children}</dd>
     </div>
   );
 }
