@@ -15,7 +15,7 @@ import type {
   ToolDefinition,
   ToolRunner,
 } from "@vex/integrations";
-import { QUERY_SYSTEM_PROMPT, renderStrategyPreamble } from "@vex/agents";
+import { QUERY_SYSTEM_PROMPT, renderStrategyPreamble, ActionDescriptor } from "@vex/agents";
 import { createId, TenantId, type AgentRunId } from "@vex/domain";
 import { manifestFallback, validateManifest, type ViewManifest } from "@vex/ui";
 import {
@@ -289,7 +289,34 @@ export class QueryService {
     agentRunId: AgentRunId | undefined,
     actions: ProposedAction[],
   ): Promise<CreatedApproval[]> {
-    const pending = actions.filter((a) => APPROVAL_TIERS.has(a.tier));
+    const tierCandidates = actions.filter((a) => APPROVAL_TIERS.has(a.tier));
+    // Validate each candidate against the ActionDescriptor zod schema
+    // before persisting. Claude occasionally emits a shape that's
+    // close-but-not-quite (missing toNumber on outbound_call, wrong
+    // enum on crm.create_deal, non-E.164 phone, etc.). Without this
+    // gate those malformed proposals landed as approvals the operator
+    // could click Approve on, only to bounce at the executor with a
+    // cryptic "missing contactId / orgId / toNumber" message. Validate
+    // up-front so the approval never exists if it can't possibly fire.
+    const pending: ProposedAction[] = [];
+    for (const a of tierCandidates) {
+      const flattened = {
+        kind: a.kind,
+        tier: a.tier,
+        ...a.payload,
+        ...(a.rationale ? { rationale: a.rationale } : {}),
+      };
+      const parsed = ActionDescriptor.safeParse(flattened);
+      if (parsed.success) {
+        pending.push(a);
+      } else {
+        this.log.warn(
+          `rejecting malformed ${a.kind} proposal from chat: ${parsed.error.issues
+            .map((i) => `${i.path.join(".")}: ${i.message}`)
+            .join("; ")}`,
+        );
+      }
+    }
     if (pending.length === 0) return [];
     const created: CreatedApproval[] = [];
     try {
