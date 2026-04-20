@@ -67,11 +67,15 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       # @vex/config + @vex/db need their dist for the script's
-      # imports to resolve under tsx's strict ESM loader.
+      # imports to resolve under tsx's strict ESM loader. The `...`
+      # suffix builds each package's workspace dependencies first
+      # (e.g. @vex/db depends on @vex/domain, so domain builds before
+      # db). Without it, tsc fails to resolve @vex/domain imports
+      # from db's source.
       - name: Build prerequisites
         run: |
-          pnpm --filter=@vex/config run build
-          pnpm --filter=@vex/db run build
+          pnpm --filter=@vex/config... run build
+          pnpm --filter=@vex/db... run build
 
       - name: Run RLS audit
         run: pnpm --filter=@vex/db exec tsx ../../scripts/audit-rls.ts
