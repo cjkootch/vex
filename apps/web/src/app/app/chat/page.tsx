@@ -16,7 +16,6 @@ import {
   ConversationThread,
   type ChatTurn,
 } from "@/components/chat/conversation-thread";
-import { EvidenceDetail } from "@/components/chat/evidence-detail";
 import { PinnedPane } from "@/components/canvas/pinned-pane";
 import { PinnedPanelsProvider } from "@/lib/pinned-panels";
 
@@ -188,11 +187,6 @@ function ChatPageInner() {
     .map((c) => ({ id: c.id, title: c.title, updatedAt: c.updatedAt }))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 
-  const lastAssistantTurn = [...active.turns]
-    .reverse()
-    .find((t) => t.role === "assistant");
-  const evidenceRefs = lastAssistantTurn?.manifest?.evidence_refs ?? [];
-
   const isDealWarRoom = mode === WorkspaceMode.DealWarRoom;
   const showBreadcrumb = mode !== WorkspaceMode.Global;
 
@@ -337,16 +331,6 @@ function ChatPageInner() {
       </main>
 
       <PinnedPane />
-
-      <EvidenceDetail
-        evidenceRefs={evidenceRefs}
-        {...(typeof lastAssistantTurn?.manifest?.cost_usd === "number"
-          ? { costUsd: lastAssistantTurn.manifest.cost_usd }
-          : {})}
-        {...(typeof lastAssistantTurn?.manifest?.cache_hit === "boolean"
-          ? { cacheHit: lastAssistantTurn.manifest.cache_hit }
-          : {})}
-      />
     </div>
   );
 }

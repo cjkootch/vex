@@ -140,7 +140,10 @@ export function ManifestCanvas({ manifest, rawAnswer }: Props) {
             mass: 0.7,
             delay: i * 0.07,
           }}
-          className="relative origin-top"
+          // Reserve 28px of top room for the pin button so it floats
+          // above the panel header instead of landing on the subject-
+          // type badge or right-side totals text.
+          className="relative origin-top pt-7"
         >
           <PinButton panel={panel} />
           <PanelErrorBoundary panelType={panel.type}>
@@ -186,7 +189,7 @@ function PinButton({ panel }: { panel: ManifestPanel }) {
       }}
       title={pinned ? "Unpin" : "Pin to dashboard"}
       aria-label={pinned ? "Unpin panel" : "Pin panel"}
-      className={`absolute right-2 top-2 z-10 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
+      className={`absolute right-2 top-0 z-10 rounded border px-1.5 py-0.5 font-mono text-[10px] transition-colors ${
         pinned
           ? "border-accent/60 bg-accent/20 text-accent"
           : "border-line bg-canvas/60 text-white/50 hover:border-accent hover:text-accent"
