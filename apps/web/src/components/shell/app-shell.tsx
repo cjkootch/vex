@@ -10,6 +10,7 @@ import {
 } from "@/lib/workspace-mode-context";
 import { ContextChip, type ContextChipType } from "./context-chip";
 import { CommandPalette } from "./command-palette";
+import { FloatingVexWidget } from "./floating-vex-widget";
 import { NotificationsBell } from "./notifications-bell";
 import { VexLogo } from "@/components/brand/vex-logo";
 
@@ -271,6 +272,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
         onOpenMobileNav={() => setMobileNavOpen(true)}
       />
       <CommandPalette />
+      <FloatingVexWidget />
       <MobileNav
         open={mobileNavOpen}
         onClose={() => setMobileNavOpen(false)}
