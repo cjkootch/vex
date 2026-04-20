@@ -65,6 +65,14 @@ export interface CreatedApproval {
   tier: string;
 }
 
+export interface RejectedProposal {
+  /** e.g. "outbound_call", "crm.create_deal". */
+  actionType: string;
+  tier: string;
+  /** Human-readable zod failure(s), joined with "; ". */
+  reason: string;
+}
+
 export interface RunQueryOutput {
   answer: string;
   manifest: ViewManifest;
@@ -75,6 +83,15 @@ export interface RunQueryOutput {
    * chips inline instead of forcing the operator to /app/approvals.
    */
   createdApprovals: CreatedApproval[];
+  /**
+   * T2+ proposals Claude emitted that failed ActionDescriptor
+   * validation (e.g. contactId isn't a ULID, toNumber isn't E.164).
+   * Surfaced to the UI so the operator sees a muted "Claude tried
+   * to propose X but the shape was invalid: …" chip instead of
+   * silent nothing, which used to read like Vex ignored the
+   * request.
+   */
+  rejectedProposals: RejectedProposal[];
   evidenceRefs: string[];
   costUsd: number;
   cacheHit: boolean;
@@ -255,17 +272,19 @@ export class QueryService {
     // and fire them. Until this existed, Claude would prose-say
     // "I'll set up the call" without any row ever reaching the DB
     // and the approval-executor worker had nothing to act on.
-    const createdApprovals = await this.persistProposedActions(
-      tenantId,
-      input.agentRunId,
-      queryResult.proposedActions,
-    );
+    const { created: createdApprovals, rejected: rejectedProposals } =
+      await this.persistProposedActions(
+        tenantId,
+        input.agentRunId,
+        queryResult.proposedActions,
+      );
 
     return {
       answer,
       manifest,
       proposedActions: queryResult.proposedActions,
       createdApprovals,
+      rejectedProposals,
       evidenceRefs,
       costUsd: queryResult.costUsd,
       cacheHit: queryResult.cacheReadTokens > 0,
@@ -288,17 +307,18 @@ export class QueryService {
     tenantId: string,
     agentRunId: AgentRunId | undefined,
     actions: ProposedAction[],
-  ): Promise<CreatedApproval[]> {
+  ): Promise<{ created: CreatedApproval[]; rejected: RejectedProposal[] }> {
     const tierCandidates = actions.filter((a) => APPROVAL_TIERS.has(a.tier));
     // Validate each candidate against the ActionDescriptor zod schema
     // before persisting. Claude occasionally emits a shape that's
     // close-but-not-quite (missing toNumber on outbound_call, wrong
-    // enum on crm.create_deal, non-E.164 phone, etc.). Without this
-    // gate those malformed proposals landed as approvals the operator
-    // could click Approve on, only to bounce at the executor with a
-    // cryptic "missing contactId / orgId / toNumber" message. Validate
+    // enum on crm.create_deal, non-E.164 phone, etc.). Validate
     // up-front so the approval never exists if it can't possibly fire.
+    // Rejected shapes ride back to the UI via `rejected` — so the
+    // operator sees a muted chip telling them WHY their request
+    // silently didn't land instead of wondering why chat ignored it.
     const pending: ProposedAction[] = [];
+    const rejected: RejectedProposal[] = [];
     for (const a of tierCandidates) {
       const flattened = {
         kind: a.kind,
@@ -310,14 +330,16 @@ export class QueryService {
       if (parsed.success) {
         pending.push(a);
       } else {
+        const reason = parsed.error.issues
+          .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
+          .join("; ");
         this.log.warn(
-          `rejecting malformed ${a.kind} proposal from chat: ${parsed.error.issues
-            .map((i) => `${i.path.join(".")}: ${i.message}`)
-            .join("; ")}`,
+          `rejecting malformed ${a.kind} proposal from chat: ${reason}`,
         );
+        rejected.push({ actionType: a.kind, tier: a.tier, reason });
       }
     }
-    if (pending.length === 0) return [];
+    if (pending.length === 0) return { created: [], rejected };
     const created: CreatedApproval[] = [];
     try {
       await withTenant(this.db, tenantId, async (tx) => {
@@ -360,7 +382,7 @@ export class QueryService {
         `failed to persist ${pending.length} chat-proposed action(s): ${(err as Error).message}`,
       );
     }
-    return created;
+    return { created, rejected };
   }
 }
 
@@ -414,6 +436,7 @@ function emptyWorkspaceResponse(): RunQueryOutput {
     manifest: { panels: [] },
     proposedActions: [],
     createdApprovals: [],
+    rejectedProposals: [],
     evidenceRefs: [],
     costUsd: 0,
     cacheHit: false,

@@ -230,6 +230,7 @@ function Turn({ turn }: { turn: ChatTurn }) {
     );
   }
   const createdApprovals = turn.manifest?.created_approvals ?? [];
+  const rejectedProposals = turn.manifest?.rejected_proposals ?? [];
   return (
     <motion.div
       {...common}
@@ -241,6 +242,9 @@ function Turn({ turn }: { turn: ChatTurn }) {
       </div>
       {createdApprovals.length > 0 ? (
         <InlineApprovalChips approvals={createdApprovals} />
+      ) : null}
+      {rejectedProposals.length > 0 ? (
+        <RejectedProposalChips rejected={rejectedProposals} />
       ) : null}
       {turn.createdAt && <AgentTrace since={turn.createdAt} />}
       {turn.manifest && (
@@ -502,6 +506,56 @@ function InlineApprovalChip({
       {state.error ? (
         <p className="text-[11px] text-bad">⚠ {state.error}</p>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Muted chips for T2+ proposals Claude emitted that failed server-
+ * side ActionDescriptor validation. Without this, a Claude prose
+ * "I'll set up the call" paired with a malformed payload produced
+ * silent nothing — the user sees Claude's intent but no chip and
+ * no explanation. Rendering the reason gives them a path forward
+ * ("ask again with a real contact id", "provide the phone number",
+ * etc).
+ */
+function RejectedProposalChips({
+  rejected,
+}: {
+  rejected: Array<{ actionType: string; tier: string; reason: string }>;
+}) {
+  return (
+    <div className="mt-2 flex flex-col gap-1.5">
+      {rejected.map((r, i) => (
+        <div
+          key={`${r.actionType}-${i}`}
+          data-testid="rejected-proposal-chip"
+          className="flex flex-col gap-1 rounded-lg border border-line bg-muted/40 px-3 py-2 text-xs"
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 rounded-full bg-white/30"
+            />
+            <span className="font-mono text-white/60">{r.actionType}</span>
+            <span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] font-mono text-white/50">
+              {r.tier}
+            </span>
+            <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/60">
+              rejected — shape invalid
+            </span>
+          </div>
+          <p className="text-[11px] leading-relaxed text-white/60">
+            Claude proposed this action but the payload didn&rsquo;t match the
+            schema:{" "}
+            <span className="font-mono text-white/70">{r.reason}</span>
+          </p>
+          <p className="text-[11px] italic text-white/40">
+            Ask again with the missing detail (real contact/org, E.164
+            phone, etc.) or disambiguate the subject.
+          </p>
+        </div>
+      ))}
     </div>
   );
 }
