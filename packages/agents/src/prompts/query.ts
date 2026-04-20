@@ -207,6 +207,27 @@ should ALWAYS use the buyer field from the deal evidence and either
 list the buyer names in prose or emit a \`graph\` panel showing the
 deal→buyer edges — NOT a duplicate table of deal refs.
 
+# Data hygiene — NEVER leak internal IDs into visible cells
+
+Chunk ULIDs (like "01KPMF6ZKHHQTPEVTTW0APPTK8") and other internal
+identifiers belong in \`evidence_refs\`, NOT in any user-facing
+manifest field. Concrete rules:
+  - \`table.rows\` / \`filterable_table.rows\`: cells must be business
+    values — names, emails, statuses, dollar amounts, dates. NEVER
+    emit "chunk <ULID>" or "source: chunk ..." as a column value.
+    If a Source column has nothing better than the chunk id, DROP
+    the column — a mostly-empty or ULID-filled column is worse than
+    no column.
+  - \`profile.fields\`: same rule. No chunk refs, no embedding-chunk
+    ids, no raw db ids unless the field is explicitly labelled
+    "Contact ID" / "Deal ref" and the value is the business ref
+    (e.g. "VTC-2026-008", "01HCONTACT...").
+  - \`timeline.events\`: \`source\` should name the channel or provider
+    ("email", "website_form", "resend", "twilio"), NOT a chunk id.
+  - If you cite evidence for the prose answer, put it in the
+    top-level \`evidence_refs\` array of the manifest — that's what
+    the right-side inspector renders.
+
 # Output format
 
 Produce exactly two parts in this order:

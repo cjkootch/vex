@@ -7,6 +7,7 @@ import {
   ConversationThread,
   type ChatTurn,
 } from "@/components/chat/conversation-thread";
+import { VexIconMark } from "@/components/brand/vex-icon-mark";
 import { buildAskVexHref } from "@/lib/ask-vex";
 import type { QueryScope } from "@/lib/use-vex-query";
 
@@ -131,7 +132,7 @@ export function FloatingVexWidget() {
         aria-expanded={open}
         className="fixed bottom-6 right-6 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full bg-accent text-white shadow-lg transition hover:scale-105 hover:bg-accent/90 md:h-14 md:w-14"
       >
-        <span className="text-lg font-semibold md:text-xl">V</span>
+        <VexIconMark className="h-7 w-7 md:h-8 md:w-8" title="Ask Vex" />
       </button>
 
       {/* Drawer */}
