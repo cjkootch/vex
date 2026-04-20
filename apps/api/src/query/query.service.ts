@@ -1,5 +1,10 @@
 import { Inject, Injectable } from "@nestjs/common";
-import { withTenant, type Db, type RetrievalService } from "@vex/db";
+import {
+  withTenant,
+  WorkspaceRepository,
+  type Db,
+  type RetrievalService,
+} from "@vex/db";
 import type {
   AnthropicAdapter,
   OpenAIAdapter,
@@ -8,7 +13,7 @@ import type {
   ToolDefinition,
   ToolRunner,
 } from "@vex/integrations";
-import { QUERY_SYSTEM_PROMPT } from "@vex/agents";
+import { QUERY_SYSTEM_PROMPT, renderStrategyPreamble } from "@vex/agents";
 import { TenantId, type AgentRunId } from "@vex/domain";
 import { manifestFallback, validateManifest, type ViewManifest } from "@vex/ui";
 import {
@@ -51,6 +56,8 @@ export interface RunQueryOutput {
 
 @Injectable()
 export class QueryService {
+  private readonly workspaces = new WorkspaceRepository();
+
   constructor(
     @Inject(DB_CLIENT) private readonly db: Db,
     @Inject(RETRIEVAL_SERVICE) private readonly retrieval: RetrievalService,
@@ -160,11 +167,22 @@ export class QueryService {
       };
     };
 
+    // Sprint S — prepend the tenant's operator-authored strategy
+    // so every answer, drafted email, and proposed action is
+    // conditioned on company context (mission, ICP, brand voice,
+    // no-go zones, growth priorities). Empty strategy → empty
+    // preamble → prompt is the vanilla QUERY_SYSTEM_PROMPT.
+    const strategy = await this.workspaces.getStrategy(this.db, tenantId);
+    const preamble = renderStrategyPreamble(strategy);
+    const systemPrompt = preamble
+      ? `${preamble}${QUERY_SYSTEM_PROMPT}`
+      : QUERY_SYSTEM_PROMPT;
+
     const queryResult = await this.anthropic.query({
       tenantId,
       ...(input.agentRunId !== undefined ? { agentRunId: input.agentRunId } : {}),
       idempotencyKey: input.idempotencyKey,
-      systemPrompt: QUERY_SYSTEM_PROMPT,
+      systemPrompt,
       evidencePack: pack,
       userMessage: composeUserMessage(input.message, input.history),
       ...(tools.length > 0 ? { tools, toolRunner } : {}),

@@ -28,6 +28,7 @@ export {
   TRANSCRIPT_ACTION_ITEMS_PROMPT_VERSION,
   INTENT_CLASSIFIER_SYSTEM_PROMPT,
   INTENT_CLASSIFIER_PROMPT_VERSION,
+  renderStrategyPreamble,
 } from "./prompts/index.js";
 export {
   QueueName,

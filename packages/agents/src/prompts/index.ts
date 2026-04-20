@@ -14,6 +14,7 @@ export {
   INTENT_CLASSIFIER_SYSTEM_PROMPT,
   INTENT_CLASSIFIER_PROMPT_VERSION,
 } from "./intent-classifier.js";
+export { renderStrategyPreamble } from "./strategy.js";
 
 /** Symbolic prompt registry — convenient for telemetry tagging. */
 export const QueryName = {

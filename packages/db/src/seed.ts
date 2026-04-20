@@ -146,6 +146,35 @@ async function main(): Promise<void> {
         },
         sharing_enabled: false,
       },
+      // Sprint S — demo strategy for the seed tenant so /app/strategy
+      // and the chat system prompt have something to render out of the
+      // box. Reflects the VTC (fuel + food broker, Caribbean focus)
+      // persona the rest of the seed builds.
+      strategy: {
+        mission:
+          "Partner with emerging-market commodity traders to move fuel and food at scale across underserved Caribbean + Central American corridors.",
+        target_markets: ["Caribbean", "Central America", "US Gulf"],
+        icp_buyers:
+          "Mid-size national fuel distributors, government food importers, Caribbean bunkering operations.",
+        icp_suppliers:
+          "Refineries with Caribbean logistics; rice / pork mills with bagged-export capability; mid-tier food wholesalers with cold-chain ops.",
+        brand_voice:
+          "Peer-to-peer operators. Direct, outcome-focused, no marketing-speak. Write like a trader talking to another trader.",
+        pricing_philosophy:
+          "Index-linked with margin floor; LC-backed unless the counterparty is Tier 1. No spec cargoes without production confirmation.",
+        no_go_zones: [
+          "OFAC-sanctioned counterparties",
+          "Cuba",
+          "Venezuela crude",
+        ],
+        growth_priorities: [
+          "Land 3 new Caribbean rice buyers",
+          "Open 2 pork suppliers in US Midwest",
+          "Qualify 5 ULSD buyers in Trinidad + Jamaica",
+        ],
+        updated_at: now.toISOString(),
+        updated_by: null,
+      },
     });
 
     await db.insert(schema.users).values({

@@ -24,11 +24,42 @@ export interface WorkspaceSettings {
   sharing_enabled?: boolean;
 }
 
+/**
+ * Sprint S — operator-authored "company strategy" block. Prepended to the
+ * chat system prompt on every query so Vex reasons inside the tenant's
+ * framing: who they sell to, how they talk, what they won't touch, what
+ * they're trying to win this quarter.
+ *
+ * All fields are optional; unset fields simply omit that line from the
+ * rendered preamble. A freshly-seeded workspace with `strategy = {}`
+ * produces an empty preamble and behaves as if the feature were off.
+ *
+ * Arrays are free-form strings — no enums, because the right vocabulary
+ * is business-specific and operators need flexibility to write in their
+ * own voice.
+ */
+export interface WorkspaceStrategy {
+  mission?: string | undefined;
+  target_markets?: string[] | undefined;
+  icp_buyers?: string | undefined;
+  icp_suppliers?: string | undefined;
+  brand_voice?: string | undefined;
+  pricing_philosophy?: string | undefined;
+  no_go_zones?: string[] | undefined;
+  growth_priorities?: string[] | undefined;
+  additional_guidance?: string | undefined;
+  /** ISO-8601 timestamp of the last save. Set by the writer. */
+  updated_at?: string | undefined;
+  /** User id of the last saver. Null for seed / migration-populated rows. */
+  updated_by?: string | null | undefined;
+}
+
 export const workspaces = pgTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   plan: workspacePlanEnum("plan").notNull().default("free"),
   settings: jsonb("settings").$type<WorkspaceSettings>().notNull(),
+  strategy: jsonb("strategy").$type<WorkspaceStrategy>().notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
