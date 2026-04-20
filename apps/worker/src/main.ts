@@ -159,15 +159,36 @@ async function main(): Promise<void> {
         }
       : {};
 
-  const temporal = await startTemporalWorker({
-    address: env.TEMPORAL_ADDRESS,
-    namespace: env.TEMPORAL_NAMESPACE,
-    taskQueue: env.TEMPORAL_TASK_QUEUE,
-    db,
-    anthropic,
-    costLedger,
-    ...callBundle,
-  });
+  // Temporal worker uses the Rust SDK-core, which eagerly dials the
+  // address via NativeConnection.connect and throws if it can't reach
+  // it. The API gets away with a "localhost:7233" placeholder because
+  // it only uses the Temporal *client* (lazy). The worker does not.
+  // Skip the worker when TEMPORAL_ADDRESS is still the placeholder so
+  // first-boot on Fly doesn't crash-loop. BullMQ keeps running;
+  // Temporal workflows stay dormant until a real address is set.
+  const temporal =
+    env.TEMPORAL_ADDRESS === "localhost:7233"
+      ? null
+      : await startTemporalWorker({
+          address: env.TEMPORAL_ADDRESS,
+          namespace: env.TEMPORAL_NAMESPACE,
+          taskQueue: env.TEMPORAL_TASK_QUEUE,
+          db,
+          anthropic,
+          costLedger,
+          ...callBundle,
+        });
+
+  if (!temporal) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      'worker: TEMPORAL_ADDRESS is "localhost:7233" (placeholder) — ' +
+        "skipping Temporal worker. BullMQ jobs will run; Temporal " +
+        "workflows (follow-ups, research, campaign enrollment, " +
+        "outbound calls) stay dormant until a real Temporal address " +
+        "is set via fly secrets.",
+    );
+  }
 
   const scanner = new AgentScanner({
     db,
@@ -375,7 +396,7 @@ async function main(): Promise<void> {
     if (signalsTimer) clearInterval(signalsTimer);
     if (digestTimer) clearInterval(digestTimer);
     await bull.close();
-    temporal.shutdown();
+    if (temporal) temporal.shutdown();
     if (temporalClient) await temporalClient.close();
     await shutdownOtel();
   };
