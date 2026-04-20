@@ -4,13 +4,27 @@ import {
   Controller,
   Get,
   Inject,
+  InternalServerErrorException,
+  Post,
   Put,
   UseGuards,
 } from "@nestjs/common";
 import { z } from "zod";
-import { UserRole } from "@vex/domain";
+import { createId, UserRole } from "@vex/domain";
 import { JwtAuthGuard, RequireRole, RolesGuard, TenantContext } from "../auth/index.js";
 import { StrategyService } from "./strategy.service.js";
+
+const STRATEGY_SLOTS = [
+  "mission",
+  "target_markets",
+  "icp_buyers",
+  "icp_suppliers",
+  "brand_voice",
+  "pricing_philosophy",
+  "no_go_zones",
+  "growth_priorities",
+  "additional_guidance",
+] as const;
 
 /**
  * Sprint S — operator-authored company strategy.
@@ -64,4 +78,36 @@ export class StrategyController {
     );
     return { strategy };
   }
+
+  /**
+   * Sprint S.1 — "Help me write this" drafter. Accepts a slot name +
+   * optional hints, returns a Claude-generated draft grounded in the
+   * workspace's counterparty + deal evidence. Never persists — the
+   * operator accepts the draft client-side via the existing PUT.
+   */
+  @Post("draft-slot")
+  async draftSlot(@Body() raw: unknown) {
+    const parsed = DraftSlotSchema.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const result = await this.service.draftSlot(
+      this.tenant.workspaceId,
+      parsed.data.slot,
+      parsed.data.hints ?? null,
+      // Idempotency key ties the Claude call to this request so a
+      // double-click doesn't double-charge the ledger. Fresh ULID per
+      // click — reviewer re-generation is an explicit new request.
+      createId(),
+    );
+    if ("error" in result) {
+      throw new InternalServerErrorException(result.error);
+    }
+    return result;
+  }
 }
+
+const DraftSlotSchema = z
+  .object({
+    slot: z.enum(STRATEGY_SLOTS),
+    hints: z.string().max(1000).optional(),
+  })
+  .strict();

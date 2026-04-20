@@ -2,6 +2,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+type StrategySlot =
+  | "mission"
+  | "target_markets"
+  | "icp_buyers"
+  | "icp_suppliers"
+  | "brand_voice"
+  | "pricing_philosophy"
+  | "no_go_zones"
+  | "growth_priorities"
+  | "additional_guidance";
+
 /**
  * Shape mirror of `WorkspaceStrategy` from `@vex/db`. We duplicate
  * the type here so the web bundle doesn't need to pull the DB
@@ -120,6 +131,7 @@ export function StrategyConsole() {
 
       <div className="space-y-4">
         <TextCard
+          slot="mission"
           title="Mission"
           hint="One paragraph. Why this company exists and who it serves."
           value={strategy.mission ?? ""}
@@ -128,6 +140,7 @@ export function StrategyConsole() {
         />
 
         <ListCard
+          slot="target_markets"
           title="Target markets"
           hint="Regions / countries / corridors. Vex biases evidence and proposals toward these."
           values={strategy.target_markets ?? []}
@@ -135,6 +148,7 @@ export function StrategyConsole() {
         />
 
         <TextCard
+          slot="icp_buyers"
           title="ICP buyers"
           hint="Who's the ideal buyer? Size, geography, buying behaviour."
           value={strategy.icp_buyers ?? ""}
@@ -143,6 +157,7 @@ export function StrategyConsole() {
         />
 
         <TextCard
+          slot="icp_suppliers"
           title="ICP suppliers"
           hint="Who's the ideal supplier? Capabilities, logistics, reliability signals."
           value={strategy.icp_suppliers ?? ""}
@@ -151,6 +166,7 @@ export function StrategyConsole() {
         />
 
         <TextCard
+          slot="brand_voice"
           title="Brand voice"
           hint="How should drafts and responses sound? Vex mirrors this on every email."
           value={strategy.brand_voice ?? ""}
@@ -159,6 +175,7 @@ export function StrategyConsole() {
         />
 
         <TextCard
+          slot="pricing_philosophy"
           title="Pricing philosophy"
           hint="Floor margins, payment terms, LC posture, discount rules."
           value={strategy.pricing_philosophy ?? ""}
@@ -167,6 +184,7 @@ export function StrategyConsole() {
         />
 
         <ListCard
+          slot="no_go_zones"
           title="No-go zones"
           hint="Vex will not propose actions that touch these. One entry per line."
           values={strategy.no_go_zones ?? []}
@@ -175,6 +193,7 @@ export function StrategyConsole() {
         />
 
         <ListCard
+          slot="growth_priorities"
           title="Growth priorities this quarter"
           hint="Specific goals. Vex biases proposals toward advancing these."
           values={strategy.growth_priorities ?? []}
@@ -183,6 +202,7 @@ export function StrategyConsole() {
         />
 
         <TextCard
+          slot="additional_guidance"
           title="Additional guidance"
           hint="Anything else Vex should always apply. Free-form."
           value={strategy.additional_guidance ?? ""}
@@ -208,6 +228,7 @@ export function StrategyConsole() {
 }
 
 function TextCard(props: {
+  slot: StrategySlot;
   title: string;
   hint: string;
   value: string;
@@ -216,8 +237,13 @@ function TextCard(props: {
 }) {
   return (
     <section className="rounded-lg border border-line bg-muted/20 p-5">
-      <h2 className="text-sm font-semibold text-white/80">{props.title}</h2>
-      <p className="mt-1 text-xs text-white/50">{props.hint}</p>
+      <CardHeader title={props.title} hint={props.hint} />
+      <HelpMeWriteThis
+        slot={props.slot}
+        onAccept={(draft) => {
+          if (typeof draft === "string") props.onChange(draft);
+        }}
+      />
       <textarea
         className="mt-3 w-full resize-y rounded-md border border-line bg-bg/50 px-3 py-2 text-sm text-white/90 placeholder-white/30 focus:border-white/30 focus:outline-none"
         rows={props.rows ?? 3}
@@ -230,6 +256,7 @@ function TextCard(props: {
 }
 
 function ListCard(props: {
+  slot: StrategySlot;
   title: string;
   hint: string;
   values: string[];
@@ -245,8 +272,13 @@ function ListCard(props: {
         : "border-line bg-muted/40 text-white/80";
   return (
     <section className="rounded-lg border border-line bg-muted/20 p-5">
-      <h2 className="text-sm font-semibold text-white/80">{props.title}</h2>
-      <p className="mt-1 text-xs text-white/50">{props.hint}</p>
+      <CardHeader title={props.title} hint={props.hint} />
+      <HelpMeWriteThis
+        slot={props.slot}
+        onAccept={(draft) => {
+          if (Array.isArray(draft)) props.onChange(draft);
+        }}
+      />
       <textarea
         className="mt-3 w-full resize-y rounded-md border border-line bg-bg/50 px-3 py-2 font-mono text-xs text-white/90 placeholder-white/30 focus:border-white/30 focus:outline-none"
         rows={Math.max(3, props.values.length + 1)}
@@ -274,6 +306,142 @@ function ListCard(props: {
         </div>
       ) : null}
     </section>
+  );
+}
+
+function CardHeader(props: { title: string; hint: string }) {
+  return (
+    <>
+      <h2 className="text-sm font-semibold text-white/80">{props.title}</h2>
+      <p className="mt-1 text-xs text-white/50">{props.hint}</p>
+    </>
+  );
+}
+
+/**
+ * Per-slot collaborative drafter. Click "Help me write this" → inline
+ * hints input + Generate button. Result renders with Use / Discard.
+ * Nothing persists until the parent strategy Save fires.
+ */
+function HelpMeWriteThis(props: {
+  slot: StrategySlot;
+  onAccept: (draft: string | string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hints, setHints] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [draft, setDraft] = useState<string | string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const generate = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setDraft(null);
+    try {
+      const body: Record<string, unknown> = { slot: props.slot };
+      if (hints.trim()) body.hints = hints.trim();
+      const res = await fetch("/api/strategy/draft-slot", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`draft-slot → ${res.status}: ${text.slice(0, 200)}`);
+      }
+      const payload = (await res.json()) as { draft: string | string[] };
+      setDraft(payload.draft);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [hints, props.slot]);
+
+  const accept = useCallback(() => {
+    if (draft === null) return;
+    props.onAccept(draft);
+    setOpen(false);
+    setDraft(null);
+    setHints("");
+  }, [draft, props]);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-3 inline-flex items-center gap-1 rounded-md border border-line bg-muted/40 px-2.5 py-1 text-xs text-white/70 transition hover:border-white/30 hover:text-white"
+      >
+        <span aria-hidden>✨</span> Help me write this
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-line bg-bg/60 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-xs text-white/60">
+          Give Vex a hint (optional) — a theme, a constraint, or what
+          you already know. Vex grounds the draft in your counterparty
+          + deal evidence plus any slots you&apos;ve already written.
+        </p>
+        <button
+          type="button"
+          aria-label="Close drafter"
+          onClick={() => {
+            setOpen(false);
+            setDraft(null);
+            setError(null);
+          }}
+          className="text-white/40 transition hover:text-white/80"
+        >
+          ×
+        </button>
+      </div>
+      <input
+        type="text"
+        value={hints}
+        onChange={(e) => setHints(e.target.value)}
+        placeholder="e.g. focus on Caribbean bunkering"
+        className="mt-2 w-full rounded-md border border-line bg-bg/50 px-3 py-1.5 text-sm text-white/90 placeholder-white/30 focus:border-white/30 focus:outline-none"
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <button
+          type="button"
+          disabled={loading}
+          onClick={generate}
+          className="rounded-md bg-white/90 px-3 py-1 text-xs font-medium text-black transition hover:bg-white disabled:opacity-50"
+        >
+          {loading ? "Drafting…" : draft ? "Regenerate" : "Draft"}
+        </button>
+        {draft !== null ? (
+          <button
+            type="button"
+            onClick={accept}
+            className="rounded-md border border-emerald-500/40 bg-emerald-500/20 px-3 py-1 text-xs font-medium text-emerald-100 transition hover:bg-emerald-500/30"
+          >
+            Use this
+          </button>
+        ) : null}
+      </div>
+      {error ? (
+        <p className="mt-2 text-xs text-red-200">{error}</p>
+      ) : null}
+      {draft !== null ? (
+        <div className="mt-3 rounded-md border border-line bg-muted/40 p-3 text-xs text-white/80">
+          {Array.isArray(draft) ? (
+            <ul className="list-disc space-y-1 pl-4">
+              {draft.map((d) => (
+                <li key={d}>{d}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="whitespace-pre-wrap">{draft}</p>
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
