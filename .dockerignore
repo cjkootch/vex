@@ -9,4 +9,3 @@
 **/.env
 **/.env.local
 apps/web
-apps/worker
