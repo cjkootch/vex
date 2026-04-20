@@ -130,7 +130,13 @@ async function main(): Promise<void> {
     slack: env.SLACK_WEBHOOK_URL
       ? {
           webhookUrl: env.SLACK_WEBHOOK_URL,
-          appBaseUrl: env.APP_BASE_URL ?? null,
+          // WEB_BASE_URL is the public web-app hostname (Vercel).
+          // APP_BASE_URL points at the API hostname that Twilio
+          // POSTs into — following that link 404s the user. Fall
+          // back to APP_BASE_URL only so existing setups don't
+          // silently lose the button; once WEB_BASE_URL is set on
+          // the worker, the deep-link goes to the web app.
+          appBaseUrl: env.WEB_BASE_URL ?? env.APP_BASE_URL ?? null,
         }
       : null,
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
