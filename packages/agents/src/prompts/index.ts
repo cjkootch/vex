@@ -15,6 +15,15 @@ export {
   INTENT_CLASSIFIER_PROMPT_VERSION,
 } from "./intent-classifier.js";
 export { renderStrategyPreamble } from "./strategy.js";
+export {
+  STRATEGY_DRAFT_SYSTEM_PROMPT,
+  STRATEGY_DRAFT_PROMPT_VERSION,
+  buildStrategyDraftUserMessage,
+  parseStrategyDraft,
+  slotKind,
+  type StrategyDraftEvidence,
+  type StrategySlot,
+} from "./strategy-draft.js";
 
 /** Symbolic prompt registry — convenient for telemetry tagging. */
 export const QueryName = {

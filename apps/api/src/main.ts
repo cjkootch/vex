@@ -406,6 +406,8 @@ async function bootstrap(): Promise<void> {
         db,
         workspaces: workspaceRepository,
         events: eventRepository,
+        deals: fuelDealRepository,
+        anthropic,
       }),
       voice: VoiceModule.register({
         db,

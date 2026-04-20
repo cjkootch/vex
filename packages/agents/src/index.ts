@@ -29,6 +29,13 @@ export {
   INTENT_CLASSIFIER_SYSTEM_PROMPT,
   INTENT_CLASSIFIER_PROMPT_VERSION,
   renderStrategyPreamble,
+  STRATEGY_DRAFT_SYSTEM_PROMPT,
+  STRATEGY_DRAFT_PROMPT_VERSION,
+  buildStrategyDraftUserMessage,
+  parseStrategyDraft,
+  slotKind,
+  type StrategyDraftEvidence,
+  type StrategySlot,
 } from "./prompts/index.js";
 export {
   QueueName,
