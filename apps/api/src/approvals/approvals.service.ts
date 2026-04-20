@@ -68,6 +68,101 @@ export class ApprovalsService {
     );
   }
 
+  /**
+   * Fetch a single approval + its executor outcome, if one has landed
+   * yet. The outcome comes from the audit `events` table — the
+   * approval-executor worker writes one of:
+   *   - `approval.executor.failed` on validation / dispatch failure
+   *   - `approval.executor.skipped` on replay (prior apply)
+   * Successful sync applies stamp `applied_object_id` / `applied_at`
+   * on the approval row itself, so we infer that status from the
+   * row. Async paths (outbound_call → Temporal) write their own
+   * workflow-lifecycle events that we ignore here — if the user
+   * wants deeper detail they click the call detail page.
+   */
+  async findByIdWithOutcome(
+    tenantId: string,
+    id: string,
+  ): Promise<{
+    approval: Approval;
+    outcome:
+      | null
+      | {
+          status: "applied" | "failed" | "skipped" | "queued";
+          reason: string | null;
+          actionType: string | null;
+          appliedObjectId: string | null;
+          appliedAt: string | null;
+          occurredAt: string | null;
+        };
+  }> {
+    return withTenant(this.db, tenantId, async (tx) => {
+      const approval = await this.approvals.findById(tx, id);
+      if (!approval) throw new NotFoundException(`approval ${id} not found`);
+      if (approval.decision === "pending") {
+        return { approval, outcome: null };
+      }
+      // Approval was decided — look for executor signals.
+      if (approval.appliedObjectId) {
+        return {
+          approval,
+          outcome: {
+            status: "applied" as const,
+            reason: null,
+            actionType: approval.actionType,
+            appliedObjectId: approval.appliedObjectId,
+            appliedAt: approval.appliedAt ? approval.appliedAt.toISOString() : null,
+            occurredAt: approval.appliedAt ? approval.appliedAt.toISOString() : null,
+          },
+        };
+      }
+      // Scan the audit events for the latest executor verb on this
+      // approval. listBySubject returns newest-first so the first
+      // match wins.
+      const events = await this.events.listBySubject(
+        tx,
+        "approval",
+        approval.id,
+        20,
+      );
+      const executorEvent = events.find(
+        (e) => e.verb === "approval.executor.failed" || e.verb === "approval.executor.skipped",
+      );
+      if (!executorEvent) {
+        return {
+          approval,
+          outcome: {
+            status: "queued" as const,
+            reason: null,
+            actionType: approval.actionType,
+            appliedObjectId: null,
+            appliedAt: null,
+            occurredAt: null,
+          },
+        };
+      }
+      const md = (executorEvent.metadata ?? {}) as Record<string, unknown>;
+      const reason = typeof md["reason"] === "string" ? md["reason"] : null;
+      const actionType =
+        typeof md["action_type"] === "string"
+          ? md["action_type"]
+          : approval.actionType;
+      const status: "failed" | "skipped" =
+        executorEvent.verb === "approval.executor.failed" ? "failed" : "skipped";
+      return {
+        approval,
+        outcome: {
+          status,
+          reason,
+          actionType,
+          appliedObjectId: null,
+          appliedAt: null,
+          occurredAt: executorEvent.occurredAt.toISOString(),
+        },
+      };
+    });
+  }
+
   async findById(tenantId: string, id: string): Promise<Approval> {
     const approval = await withTenant(this.db, tenantId, async (tx) =>
       this.approvals.findById(tx, id),

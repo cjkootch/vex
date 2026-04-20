@@ -47,6 +47,22 @@ export class ApprovalsController {
     return { approval };
   }
 
+  /**
+   * GET /approvals/:id/outcome — executor outcome for a decided
+   * approval. Returns `{ status: "queued"|"applied"|"failed"|"skipped",
+   * reason?, appliedObjectId?, appliedAt?, occurredAt? }`. UI polls
+   * this after a decide to show whether the side effect landed or
+   * the executor bounced (e.g. "missing toNumber" on outbound_call).
+   */
+  @Get(":id/outcome")
+  async outcome(@Param("id") id: string) {
+    const result = await this.service.findByIdWithOutcome(
+      this.tenant.tenantId,
+      id,
+    );
+    return { outcome: result.outcome };
+  }
+
   @Post(":id/approve")
   async approve(@Param("id") id: string) {
     const approval = await this.service.approve({
