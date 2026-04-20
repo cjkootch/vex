@@ -32,6 +32,23 @@ export interface DecisionArgs {
   reason?: string;
 }
 
+export interface BulkDecisionArgs {
+  tenantId: string;
+  workspaceId: string;
+  reviewerId: string;
+  approvalIds: string[];
+  decision: "approved" | "rejected";
+  /** Reviewer's reason — applied uniformly to every audit event. */
+  reason?: string;
+}
+
+export interface BulkDecisionResult {
+  /** Approvals that transitioned from pending → decided. */
+  decided: Approval[];
+  /** Ids that were requested but skipped (already decided / not found). */
+  skipped: string[];
+}
+
 @Injectable()
 export class ApprovalsService {
   private readonly log = new Logger(ApprovalsService.name);
@@ -85,6 +102,76 @@ export class ApprovalsService {
     await this.signalWorkflow(decided, "approved", args);
 
     return decided;
+  }
+
+  /**
+   * Decide N approvals in a single transaction. Already-decided rows
+   * are skipped (not an error) — the response splits `decided` and
+   * `skipped` so the UI can show "N approved, M were already handled".
+   * Executor jobs + Temporal signals fire per decided row after the
+   * transaction commits, matching single-row semantics.
+   */
+  async bulkDecide(args: BulkDecisionArgs): Promise<BulkDecisionResult> {
+    if (args.approvalIds.length === 0) {
+      return { decided: [], skipped: [] };
+    }
+    const verb =
+      args.decision === "approved" ? "approval.approved" : "approval.rejected";
+
+    const decided = await withTenant(this.db, args.tenantId, async (tx) => {
+      const rows = await this.approvals.bulkDecide(
+        tx,
+        args.approvalIds,
+        args.decision,
+        args.reviewerId,
+      );
+      for (const row of rows) {
+        await this.events.insertIfNotExists(tx, args.tenantId, {
+          verb,
+          subjectType: "approval",
+          subjectId: row.id,
+          actorType: "user",
+          actorId: args.reviewerId,
+          objectType: "approval",
+          objectId: row.id,
+          occurredAt: new Date(),
+          idempotencyKey: `${verb}:${row.id}`,
+          metadata: {
+            action_type: row.actionType,
+            bulk: true,
+            ...(args.reason ? { reason: args.reason } : {}),
+          },
+        });
+      }
+      return rows;
+    });
+
+    if (args.decision === "approved") {
+      await Promise.all(
+        decided.map((row) =>
+          addApprovalExecutorJob(this.executorQueue, {
+            approval_id: row.id,
+            workspace_id: args.workspaceId,
+          }),
+        ),
+      );
+    }
+
+    await Promise.all(
+      decided.map((row) =>
+        this.signalWorkflow(row, args.decision, {
+          tenantId: args.tenantId,
+          workspaceId: args.workspaceId,
+          approvalId: row.id,
+          reviewerId: args.reviewerId,
+          ...(args.reason ? { reason: args.reason } : {}),
+        }),
+      ),
+    );
+
+    const decidedIds = new Set(decided.map((r) => r.id));
+    const skipped = args.approvalIds.filter((id) => !decidedIds.has(id));
+    return { decided, skipped };
   }
 
   async reject(args: DecisionArgs): Promise<Approval> {

@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { approvals, type Approval } from "../schema/approvals.js";
@@ -114,5 +114,32 @@ export class ApprovalRepository {
       );
     }
     return row;
+  }
+
+  /**
+   * Batch-decide a set of pending approvals in a single SQL UPDATE.
+   * Only rows still in `pending` are touched; already-decided rows are
+   * silently skipped so a retry is safe. Returns the rows that were
+   * actually decided — caller diffs against the input to know which
+   * ids were skipped.
+   */
+  async bulkDecide(
+    tx: Tx,
+    ids: string[],
+    decision: Exclude<ApprovalDecision, "pending">,
+    reviewerId: string | null,
+  ): Promise<Approval[]> {
+    if (ids.length === 0) return [];
+    return tx
+      .update(approvals)
+      .set({
+        decision,
+        decidedAt: new Date(),
+        reviewerId,
+      })
+      .where(
+        and(inArray(approvals.id, ids), eq(approvals.decision, "pending")),
+      )
+      .returning();
   }
 }
