@@ -52,6 +52,7 @@ import { QueryModule } from "./query/query.module.js";
 import { ApprovalsModule } from "./approvals/approvals.module.js";
 import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
 import { AdminModule } from "./admin/admin.module.js";
+import { StrategyModule } from "./strategy/strategy.module.js";
 import { BriefModule } from "./brief/brief.module.js";
 import { CommunicationsModule } from "./communications/communications.module.js";
 import { FollowUpsModule } from "./follow-ups/follow-ups.module.js";
@@ -401,6 +402,11 @@ async function bootstrap(): Promise<void> {
             }),
           }
         : {}),
+      strategy: StrategyModule.register({
+        db,
+        workspaces: workspaceRepository,
+        events: eventRepository,
+      }),
       voice: VoiceModule.register({
         db,
         openai,

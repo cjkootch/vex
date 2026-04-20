@@ -26,6 +26,7 @@ export type {
   Workspace,
   NewWorkspace,
   WorkspaceSettings,
+  WorkspaceStrategy,
 } from "./schema/workspaces.js";
 export type { Thread, NewThread } from "./schema/threads.js";
 export type { Lead, NewLead } from "./schema/leads.js";

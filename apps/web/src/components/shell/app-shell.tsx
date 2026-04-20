@@ -108,6 +108,16 @@ const NAV_ITEMS: NavItem[] = [
       "M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4",
   },
   {
+    // Sprint-S strategy. Owner-only server-side. The prompt layer
+    // prepends this on every chat call so every response is
+    // conditioned on the operator-authored company context.
+    href: "/app/strategy",
+    label: "Strategy",
+    matchKey: "/app/strategy",
+    iconPath:
+      "M12 2l4 4-4 4M12 22l-4-4 4-4M2 12l4-4 4 4M22 12l-4 4-4-4",
+  },
+  {
     // Sprint-13 admin console. Non-owners get a 403-style denied page
     // rendered server-side, so exposing the link unconditionally is
     // safe and avoids coupling the shell to role state.

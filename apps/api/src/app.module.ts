@@ -18,6 +18,7 @@ import { DealsModule } from "./deals/deals.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { MarketingModule } from "./marketing/marketing.module.js";
 import { SearchModule } from "./search/search.module.js";
+import { StrategyModule } from "./strategy/strategy.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { TenantThrottlerGuard } from "./throttler/tenant-throttler.guard.js";
 
@@ -39,6 +40,7 @@ export interface AppModuleConfig {
   organizations?: DynamicModule;
   search?: DynamicModule;
   admin?: DynamicModule;
+  strategy?: DynamicModule;
   voice?: DynamicModule;
   health?: DynamicModule;
   nextAuthSecret: string;
@@ -91,6 +93,7 @@ export class AppModule {
     if (config.search) imports.push(config.search);
     if (config.calls) imports.push(config.calls);
     if (config.admin) imports.push(config.admin);
+    if (config.strategy) imports.push(config.strategy);
     if (config.voice) imports.push(config.voice);
     if (config.health) imports.push(config.health);
     return {
@@ -120,6 +123,7 @@ export {
   MarketingModule,
   OrganizationsModule,
   SearchModule,
+  StrategyModule,
   VoiceModule,
   HealthModule,
 };
