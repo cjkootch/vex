@@ -85,12 +85,78 @@ async function runFixture(
   });
 }
 
-async function reEnqueueOne(rawEventId: string, tenantId: string): Promise<void> {
+/**
+ * Outcome shape for a replay enqueue. `added` is the fresh-enqueue path
+ * (no prior job); `retried` is a failed job moved from the failed set
+ * back into waiting via BullMQ's `.retry()`; `replaced` is a completed
+ * job removed and re-added so the normalizer runs fresh; `skipped` is
+ * when a job with the same id is already in-flight or queued.
+ */
+export type ReplayAction = "added" | "retried" | "replaced" | "skipped";
+export interface ReplayResult {
+  raw_event_id: string;
+  action: ReplayAction;
+  prior_state?: string;
+}
+
+/**
+ * Resolve the dedup collision between {@link addNormalizationJob}
+ * (which uses `raw_event_id` as BullMQ `jobId` for webhook-retry
+ * dedup) and ops replays. A plain `.add()` is a silent no-op when the
+ * jobId already exists, so:
+ *
+ *   - existing `failed`           → `retry()` (cheap, keeps history)
+ *   - existing `completed`        → `remove()` + fresh `add()` so the
+ *                                    normalizer actually runs again
+ *   - existing `active`/`waiting`/`delayed` → skip; the job is already
+ *                                    in the pipeline
+ *   - no existing job             → fresh `add()`
+ */
+export async function replayOneJob(
+  queue: Parameters<typeof addNormalizationJob>[0],
+  data: { raw_event_id: string; tenant_id: string },
+): Promise<ReplayResult> {
+  const existing = await queue.getJob(data.raw_event_id);
+  if (!existing) {
+    await addNormalizationJob(queue, data);
+    return { raw_event_id: data.raw_event_id, action: "added" };
+  }
+
+  const state = await existing.getState();
+  if (state === "failed") {
+    await existing.retry();
+    return {
+      raw_event_id: data.raw_event_id,
+      action: "retried",
+      prior_state: state,
+    };
+  }
+  if (state === "completed") {
+    await existing.remove();
+    await addNormalizationJob(queue, data);
+    return {
+      raw_event_id: data.raw_event_id,
+      action: "replaced",
+      prior_state: state,
+    };
+  }
+  // active / waiting / delayed / waiting-children / prioritized etc.
+  return {
+    raw_event_id: data.raw_event_id,
+    action: "skipped",
+    prior_state: state,
+  };
+}
+
+async function reEnqueueOne(
+  rawEventId: string,
+  tenantId: string,
+): Promise<ReplayResult> {
   const env = loadEnv();
   const conn = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(conn);
   try {
-    await addNormalizationJob(queues.normalization, {
+    return await replayOneJob(queues.normalization, {
       raw_event_id: rawEventId,
       tenant_id: tenantId,
     });
@@ -100,7 +166,9 @@ async function reEnqueueOne(rawEventId: string, tenantId: string): Promise<void>
   }
 }
 
-async function reEnqueueDlq(tenantId: string): Promise<number> {
+async function reEnqueueDlq(
+  tenantId: string,
+): Promise<{ count: number; results: ReplayResult[] }> {
   const env = loadEnv();
   const db = createDb(env.APPLICATION_DATABASE_URL);
   const repo = new RawEventRepository();
@@ -108,18 +176,21 @@ async function reEnqueueDlq(tenantId: string): Promise<number> {
 
   const conn = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(conn);
+  const results: ReplayResult[] = [];
   try {
     for (const r of failed) {
-      await addNormalizationJob(queues.normalization, {
-        raw_event_id: r.id,
-        tenant_id: r.tenantId,
-      });
+      results.push(
+        await replayOneJob(queues.normalization, {
+          raw_event_id: r.id,
+          tenant_id: r.tenantId,
+        }),
+      );
     }
   } finally {
     await queues.close();
     conn.disconnect();
   }
-  return failed.length;
+  return { count: failed.length, results };
 }
 
 async function main(): Promise<void> {
@@ -135,16 +206,16 @@ async function main(): Promise<void> {
   }
 
   if (args.rawEventId) {
-    await reEnqueueOne(args.rawEventId, tenantId);
+    const result = await reEnqueueOne(args.rawEventId, tenantId);
     // eslint-disable-next-line no-console
-    console.log(JSON.stringify({ replay: "raw-event", id: args.rawEventId }));
+    console.log(JSON.stringify({ replay: "raw-event", ...result }));
     return;
   }
 
   if (args.dlq) {
-    const count = await reEnqueueDlq(tenantId);
+    const { count, results } = await reEnqueueDlq(tenantId);
     // eslint-disable-next-line no-console
-    console.log(JSON.stringify({ replay: "dlq", count }));
+    console.log(JSON.stringify({ replay: "dlq", count, results }));
     return;
   }
 
@@ -153,8 +224,15 @@ async function main(): Promise<void> {
   );
 }
 
-main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error(err);
-  process.exit(1);
-});
+// Only run the CLI when this module is the entrypoint. Prevents
+// `main()` from firing when a test file imports the helpers.
+const invokedDirectly =
+  typeof process.argv[1] === "string" &&
+  import.meta.url === `file://${process.argv[1]}`;
+if (invokedDirectly) {
+  main().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error(err);
+    process.exit(1);
+  });
+}
