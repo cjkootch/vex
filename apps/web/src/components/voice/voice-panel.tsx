@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { VoiceSessionCard } from "./voice-session-card";
 
 type Status =
@@ -189,15 +190,46 @@ export function VoicePanel() {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6 px-8 py-10">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight text-white">Voice</h1>
-        <span className="text-xs text-white/50">Browser voice · OpenAI Realtime</span>
+      <header className="flex flex-col gap-2">
+        <div className="flex items-baseline justify-between gap-4">
+          <h1 className="text-2xl font-semibold tracking-tight text-white">
+            Talk to Vex
+          </h1>
+          <span className="text-xs text-white/50">
+            Browser mic · OpenAI Realtime
+          </span>
+        </div>
+        <p className="max-w-2xl text-sm text-white/60">
+          Hands-free conversation with Vex through your browser
+          microphone. This is <span className="text-white/80">not</span> a
+          PSTN call to anyone else — Vex answers, you both speak, and
+          turns stream as a live transcript below. Useful when you&rsquo;re
+          away from the keyboard and want a quick briefing, a deal
+          readout, or to dictate a note.{" "}
+          <span className="text-white/40">
+            (To dial a contact&rsquo;s phone, use{" "}
+            <Link
+              href="/app/calls"
+              className="text-accent underline-offset-2 hover:underline"
+            >
+              Calls
+            </Link>
+            .)
+          </span>
+        </p>
       </header>
 
       <section className="rounded-lg border border-line bg-muted/40 p-4">
-        <h2 className="text-sm font-semibold text-white/80">Context brief</h2>
+        <h2 className="text-sm font-semibold text-white/80">
+          What Vex knows for this session
+        </h2>
+        <p className="mt-1 text-xs text-white/50">
+          A compact brief of your recent deals, hot leads, and open
+          approvals — loaded once when the session starts so Vex can
+          answer in context without a round-trip.
+        </p>
         <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs text-white/70">
-          {brief ?? "Click Start to load the voice context for this session."}
+          {brief ?? "Click Start to load this session's context."}
         </pre>
         {briefTokens != null && (
           <p className="mt-2 text-xs text-white/40">
@@ -214,7 +246,9 @@ export function VoicePanel() {
             disabled={disabled}
             className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black disabled:opacity-50"
           >
-            {status === "ready" || status === "error" ? "Start new call" : "Start call"}
+            {status === "ready" || status === "error"
+              ? "Start new session"
+              : "Start talking"}
           </button>
         )}
         {status === "live" && (
@@ -223,7 +257,7 @@ export function VoicePanel() {
             onClick={handleEnd}
             className="rounded-md bg-bad/80 px-4 py-2 text-sm font-medium text-white"
           >
-            End call
+            End session
           </button>
         )}
         <StatusLabel status={status} durationSeconds={durationSeconds} />
