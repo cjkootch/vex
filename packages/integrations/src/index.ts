@@ -71,6 +71,7 @@ export {
   type SlackNotifyResult,
 } from "./slack.js";
 export {
+  EmailInboundNormalizer,
   FormFillNormalizer,
   ResendNormalizer,
   TwilioNormalizer,

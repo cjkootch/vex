@@ -1,3 +1,4 @@
+export { EmailInboundNormalizer } from "./email-inbound.js";
 export { FormFillNormalizer } from "./form-fill.js";
 export { ResendNormalizer } from "./resend.js";
 export { TwilioNormalizer } from "./twilio.js";
