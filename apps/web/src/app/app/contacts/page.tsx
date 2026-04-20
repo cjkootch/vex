@@ -45,6 +45,10 @@ export default function ContactsPage() {
   const [tab, setTab] = useState<"active" | "suppressed">("active");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
+  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveConfirmText, setArchiveConfirmText] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -316,15 +320,128 @@ export default function ContactsPage() {
                 <span className="font-mono">{selectedIds.size}</span> contact
                 {selectedIds.size === 1 ? "" : "s"} selected
               </span>
-              <button
-                type="button"
-                onClick={() => setSelectedIds(new Set())}
-                className="text-xs text-white/60 hover:text-white"
-              >
-                Clear
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setArchiveConfirmText("");
+                    setArchiveError(null);
+                    setArchiveModalOpen(true);
+                  }}
+                  className="rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-200 transition hover:bg-red-500/20"
+                >
+                  Delete {selectedIds.size}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-xs text-white/60 hover:text-white"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
           )}
+
+          {archiveModalOpen ? (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget && !archiveBusy) {
+                  setArchiveModalOpen(false);
+                }
+              }}
+            >
+              <div className="w-full max-w-md rounded-lg border border-line bg-bg p-5 text-white shadow-xl">
+                <h2 className="text-base font-semibold">
+                  Delete {selectedIds.size} contact
+                  {selectedIds.size === 1 ? "" : "s"}?
+                </h2>
+                <p className="mt-2 text-sm text-white/70">
+                  Selected contacts will be archived (soft-deleted).
+                  They vanish from the active list but their
+                  touchpoints, leads, and deal history stay intact.
+                  An owner can restore them later.
+                </p>
+                <p className="mt-3 text-xs text-white/50">
+                  Type <span className="font-mono text-white">DELETE</span> below to confirm.
+                </p>
+                <input
+                  type="text"
+                  value={archiveConfirmText}
+                  onChange={(e) => setArchiveConfirmText(e.target.value)}
+                  placeholder="DELETE"
+                  disabled={archiveBusy}
+                  autoFocus
+                  className="mt-2 w-full rounded-md border border-line bg-muted/30 px-3 py-1.5 font-mono text-sm text-white placeholder-white/30 focus:border-white/30 focus:outline-none"
+                />
+                {archiveError ? (
+                  <p className="mt-2 text-xs text-red-200">{archiveError}</p>
+                ) : null}
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={archiveBusy}
+                    onClick={() => setArchiveModalOpen(false)}
+                    className="rounded-md border border-line bg-muted/30 px-3 py-1.5 text-sm text-white/80 transition hover:bg-muted/50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={archiveBusy || archiveConfirmText !== "DELETE"}
+                    onClick={async () => {
+                      setArchiveBusy(true);
+                      setArchiveError(null);
+                      try {
+                        const ids = Array.from(selectedIds);
+                        const res = await fetch(
+                          "/api/contacts/bulk-archive",
+                          {
+                            method: "POST",
+                            headers: { "content-type": "application/json" },
+                            body: JSON.stringify({ contactIds: ids }),
+                          },
+                        );
+                        if (!res.ok) {
+                          const text = await res.text();
+                          throw new Error(
+                            `bulk-archive → ${res.status}: ${text.slice(0, 200)}`,
+                          );
+                        }
+                        const payload = (await res.json()) as {
+                          archivedCount: number;
+                          archivedIds: string[];
+                        };
+                        const archivedSet = new Set(payload.archivedIds);
+                        // Optimistic: drop archived rows from the list
+                        // immediately so the UI feels instant. Keep
+                        // any rows that didn't match (stale ids,
+                        // already-archived) visible.
+                        setContacts((prev) =>
+                          prev
+                            ? prev.filter((c) => !archivedSet.has(c.id))
+                            : prev,
+                        );
+                        setSelectedIds(new Set());
+                        setArchiveModalOpen(false);
+                        setArchiveConfirmText("");
+                      } catch (err) {
+                        setArchiveError((err as Error).message);
+                      } finally {
+                        setArchiveBusy(false);
+                      }
+                    }}
+                    className="rounded-md bg-red-500/80 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {archiveBusy
+                      ? "Archiving…"
+                      : `Delete ${selectedIds.size}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           <DataTable
             data={contacts}
             columns={columns}

@@ -138,6 +138,33 @@ export class ContactRepository {
   }
 
   /**
+   * Batch set `status` on a list of contacts. Used by the bulk-archive
+   * flow — operator selects N rows on `/app/contacts`, confirms, every
+   * row flips to `status='archived'` and vanishes from the active
+   * list. Returns the rows actually updated so the caller knows the
+   * effective count (some ids may have been invisible to the tenant
+   * or already at the target status — both collapse to "no row
+   * touched" and drop out of the result).
+   *
+   * Kept single-SQL (one UPDATE with WHERE id IN (...)) so a 200-row
+   * archive is one round-trip, not N.
+   */
+  async updateStatusByIds(
+    tx: Tx,
+    ids: readonly string[],
+    status: "active" | "inactive" | "archived",
+  ): Promise<Contact[]> {
+    if (ids.length === 0) return [];
+    return tx
+      .update(contacts)
+      .set({ status, updatedAt: new Date() })
+      .where(
+        sql`${contacts.id} IN (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`,
+      )
+      .returning();
+  }
+
+  /**
    * Clear the opt-out flag. Gated behind a separate endpoint so it
    * leaves a distinct audit event from setOptOut.
    */
