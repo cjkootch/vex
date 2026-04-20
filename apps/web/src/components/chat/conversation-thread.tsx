@@ -316,7 +316,14 @@ function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }
           body: JSON.stringify({}),
         },
       );
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        // Pull the upstream error body so the operator sees the real
+        // Nest/DB message ("approval … already decided", "column …
+        // does not exist", etc) instead of a cryptic "HTTP 500".
+        const text = await r.text().catch(() => "");
+        const hint = text.length > 0 && text.length < 300 ? ` — ${text}` : "";
+        throw new Error(`HTTP ${r.status}${hint}`);
+      }
       setState((s) => ({
         ...s,
         [approvalId]: {

@@ -880,13 +880,17 @@ async function applyOutboundCall(
   const aiMode = payload?.aiMode === true;
   const aiInstructions = payload?.aiInstructions ?? null;
   if (!contactId || !orgId || !toNumber) {
+    const missing: string[] = [];
+    if (!contactId) missing.push("contactId");
+    if (!orgId) missing.push("orgId");
+    if (!toNumber) missing.push("toNumber");
     await emitExecutorFailed(
       tx,
       deps,
       tenantId,
       approval.id,
       "outbound_call",
-      "missing contactId / orgId / toNumber",
+      `missing ${missing.join(" + ")}`,
     );
     return;
   }
