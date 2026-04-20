@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
@@ -9,6 +10,7 @@ import { OrgRelationshipsPanel } from "@/components/crm/org-relationships-panel"
 import { QuickActions } from "@/components/crm/quick-actions";
 import { SignalsPanel } from "@/components/signals/signals-panel";
 import { EditCompanyForm } from "@/components/crm/edit-company-form";
+import { MergeCompanyDialog } from "@/components/crm/merge-company-dialog";
 import { Tabs } from "@/components/ui/tabs";
 import { buildAskVexHref } from "@/lib/ask-vex";
 
@@ -51,11 +53,13 @@ export default function CompanyDetailPage({
 }: {
   params: { id: string };
 }) {
+  const router = useRouter();
   const [org, setOrg] = useState<OrganizationDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [refreshKey, setRefreshKey] = useState(0);
   const [editOpen, setEditOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,6 +127,13 @@ export default function CompanyDetailPage({
           >
             Edit
           </button>
+          <button
+            type="button"
+            onClick={() => setMergeOpen(true)}
+            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-bad hover:text-bad"
+          >
+            Merge…
+          </button>
           <Link
             href={buildAskVexHref({
               type: "organization",
@@ -136,6 +147,16 @@ export default function CompanyDetailPage({
           </Link>
         </div>
       </header>
+
+      <MergeCompanyDialog
+        open={mergeOpen}
+        source={{ id: org.id, legalName: org.legalName }}
+        onClose={() => setMergeOpen(false)}
+        onMerged={(targetId) => {
+          setMergeOpen(false);
+          router.push(`/app/companies/${targetId}`);
+        }}
+      />
 
       <QuickActions
         items={[

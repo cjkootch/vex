@@ -498,6 +498,11 @@ function ThreadRow({
     }
     return latest.preview ?? latest.channel;
   })();
+  const canReply =
+    thread.channelGroup === "email" ||
+    thread.channelGroup === "sms" ||
+    thread.channelGroup === "whatsapp";
+  const replyPrompt = buildReplyPrompt(thread);
   return (
     <li
       data-testid="thread-row"
@@ -533,6 +538,16 @@ function ThreadRow({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2 text-xs text-white/40">
+          {canReply && (
+            <Link
+              href={`/app/chat?ask=${encodeURIComponent(replyPrompt)}`}
+              onClick={(e) => e.stopPropagation()}
+              data-testid="thread-reply"
+              className="rounded-md border border-line bg-muted/40 px-2 py-0.5 text-white/70 hover:border-accent hover:text-accent"
+            >
+              Reply →
+            </Link>
+          )}
           <span>{relTime(thread.latest.occurredAt)}</span>
           <span
             aria-hidden="true"
@@ -562,4 +577,26 @@ function ThreadRow({
       )}
     </li>
   );
+}
+
+/**
+ * Build a chat prompt that Vex can turn into a reply draft. Deep-links
+ * the inbox into the same chat tool that already knows how to propose
+ * `communication.send` actions — no separate reply composer needed.
+ */
+function buildReplyPrompt(thread: Thread): string {
+  const channel =
+    thread.channelGroup === "email"
+      ? "email"
+      : thread.channelGroup === "whatsapp"
+        ? "WhatsApp message"
+        : "SMS";
+  const preview =
+    thread.latest.kind === "touchpoint" && thread.latest.preview
+      ? ` referencing "${thread.latest.preview.slice(0, 140)}"`
+      : "";
+  const contact = thread.contactId
+    ? `contact ${thread.contactId}`
+    : "this thread";
+  return `Draft a ${channel} reply to ${contact}${preview}.`;
 }

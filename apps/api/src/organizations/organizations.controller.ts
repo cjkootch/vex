@@ -24,6 +24,7 @@ import type {
   OrganizationRelationshipRepository,
   OrganizationRepository,
 } from "@vex/db";
+import { mergeOrganizationInto } from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
 
@@ -710,6 +711,82 @@ export class OrganizationsController {
     await withTenant(this.db, this.tenant.tenantId, async (tx) =>
       this.orgRelationships.deleteById(tx, relId),
     );
+  }
+
+  /**
+   * POST /organizations/:id/merge-into — merge this org into the target.
+   * Repoints every FK (deals, contacts, memberships, products,
+   * relationships) then archives the source with a `merged_into`
+   * pointer. Destructive; the UI confirms before calling.
+   */
+  @Post(":id/merge-into")
+  async mergeInto(
+    @Param("id") sourceId: string,
+    @Body() raw: unknown,
+  ): Promise<{
+    ok: true;
+    moved: {
+      deals: number;
+      contacts: number;
+      memberships: number;
+      products: number;
+      relationships: number;
+    };
+  }> {
+    const parsed = z
+      .object({ targetId: z.string().min(1) })
+      .safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    if (parsed.data.targetId === sourceId) {
+      throw new BadRequestException(
+        "targetId must differ from the source organization",
+      );
+    }
+    const { tenantId, userId } = this.tenant;
+    const moved = await withTenant(this.db, tenantId, async (tx) => {
+      const [source] = await tx
+        .select()
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, sourceId))
+        .limit(1);
+      const [target] = await tx
+        .select()
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, parsed.data.targetId))
+        .limit(1);
+      if (!source)
+        throw new NotFoundException(`organization ${sourceId} not found`);
+      if (!target)
+        throw new NotFoundException(
+          `target organization ${parsed.data.targetId} not found`,
+        );
+      const counts = await mergeOrganizationInto(
+        tx,
+        sourceId,
+        parsed.data.targetId,
+      );
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "organization.merged",
+        subjectType: "organization",
+        subjectId: parsed.data.targetId,
+        actorType: "user",
+        actorId: userId,
+        objectType: "organization",
+        objectId: sourceId,
+        occurredAt: new Date(),
+        idempotencyKey: `organization.merged:${sourceId}->${parsed.data.targetId}`,
+        metadata: {
+          source_legal_name: source.legalName,
+          target_legal_name: target.legalName,
+          moved: counts,
+        },
+      });
+      return counts;
+    });
+    this.log.log(
+      `organization ${sourceId} merged into ${parsed.data.targetId} by ${userId}`,
+    );
+    return { ok: true, moved };
   }
 }
 
