@@ -283,3 +283,56 @@ detail page at `/app/contacts/:id`.
       + contact + transcript Document appear in Vex.
 - [ ] Leave Formspree on for one week as a fallback.
 - [ ] Disable Formspree transcript email once Vex is confirmed stable.
+
+---
+
+## 8. Companion endpoint: `POST /webhooks/form`
+
+The marketing site's `#lead-form` (the "Request a Quote" form, separate
+from the chat) posts to a sibling endpoint using the **same shared
+secret** and **same HMAC headers** described above. One event kind:
+
+```json
+{
+  "event": "form.submitted",
+  "form_id": "lead-form",
+  "form_name": "Request a Quote",
+  "website_version": "c31e5ce",
+  "timestamp": "2026-04-20T18:00:00.000Z",
+  "lead": {
+    "name": "Jean-Marie Baptiste",
+    "email": "jm@acmeimports.ht",
+    "phone": "+509-3444-5555",
+    "sms_consent": true
+  },
+  "fields": {
+    "country": "Haiti",
+    "product_interest": "food",
+    "message": "Need 500 MT parboiled rice CIF Port-au-Prince, Q3 2026",
+    "_gotcha": ""
+  },
+  "page": {
+    "url": "https://vectortradecapital.com/#contact",
+    "referrer": "https://google.com/",
+    "utm": { "source": "google", "medium": "cpc", "campaign": "q2-haiti" }
+  }
+}
+```
+
+Behaviour:
+
+- **Honeypot** — `fields._gotcha` must be a hidden input on the page
+  (`<input name="_gotcha" style="display:none" tabindex="-1">`). If a
+  bot fills it, the normalizer short-circuits to a `bot.form_rejected`
+  audit event and creates no lead or contact.
+- **Dedup** — the raw_event provider_event_id is
+  `<form_id>:<email>:<timestamp>`, so retries with the same body
+  collapse. Additionally the `lead.captured` event carries an
+  idempotency key bucketed to 5 minutes, so a near-simultaneous double
+  submit (different millisecond timestamps) still resolves to one
+  audit row.
+- **Response** — `204 No Content` on success, `400` on bad signature
+  or missing `form_id` / `lead.email`.
+
+The endpoint is `POST https://api.vexhq.ai/webhooks/form` with the
+same `X-VTC-Timestamp` + `X-VTC-Signature` headers. No second secret.

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  FormFillNormalizer,
   ResendNormalizer,
   TwilioNormalizer,
   loadWebhookFixture,
@@ -130,6 +131,181 @@ describe("TwilioNormalizer.normalize", () => {
     };
     expect(activity.type).toBe("voice_call");
     expect(activity.durationSeconds).toBe(187);
+  });
+});
+
+describe("FormFillNormalizer.normalize", () => {
+  function buildFormDeps() {
+    const deps = makeFakeDeps();
+    const leads = {
+      findByExternalKey: vi.fn(async () => null),
+      create: vi.fn(async (_tx: Tx, _t: string, _input: unknown) => ({
+        id: "lead-new",
+        tenantId: "t",
+      })),
+    };
+    const organizations = {
+      findByNormalizedIdentity: vi.fn(async () => null),
+      create: vi.fn(async (_tx: Tx, _t: string, _input: unknown) => ({
+        id: "org-new",
+        tenantId: "t",
+      })),
+    };
+    const memberships = {
+      create: vi.fn(async (_tx: Tx, _t: string, _input: unknown) => ({
+        contactId: "c",
+        orgId: "o",
+      })),
+    };
+    const contactsExt = {
+      ...deps.contacts,
+      create: vi.fn(async (_tx: Tx, _t: string, _input: unknown) => ({
+        id: "contact-new",
+        tenantId: "t",
+        orgId: "org-new",
+        fullName: "Jean-Marie Baptiste",
+      })),
+    };
+    return { ...deps, contacts: contactsExt, leads, organizations, memberships };
+  }
+
+  const basePayload = {
+    event: "form.submitted" as const,
+    form_id: "lead-form",
+    form_name: "Request a Quote",
+    website_version: "c31e5ce",
+    timestamp: "2026-04-20T18:00:00.000Z",
+    lead: {
+      name: "Jean-Marie Baptiste",
+      email: "jm@acmeimports.ht",
+      phone: "+509-3444-5555",
+      sms_consent: true,
+    },
+    fields: {
+      country: "Haiti",
+      product_interest: "food",
+      message: "Need 500 MT parboiled rice CIF Port-au-Prince, Q3 2026",
+    },
+    page: {
+      url: "https://vectortradecapital.com/#contact",
+      referrer: "https://google.com/",
+      utm: { source: "google", medium: "cpc", campaign: "q2-haiti" },
+    },
+  };
+
+  it("creates org + contact + lead + touchpoint + event on a clean submission", async () => {
+    const deps = buildFormDeps();
+    const tx = makeFakeTx();
+    const normalizer = new FormFillNormalizer({ tx, ...deps } as never);
+
+    const input: RawEventInput = {
+      id: createId(),
+      tenantId: "01HSEEDWRK0000000000000001",
+      provider: "website_form",
+      providerEventId: "lead-form:jm@acmeimports.ht:2026-04-20T18:00:00.000Z",
+      receivedAt: new Date("2026-04-20T18:00:00.000Z"),
+      headers: {},
+      payload: basePayload,
+    };
+
+    const outcome = await normalizer.normalize(input);
+    expect(outcome.status).toBe("ok");
+
+    expect(deps.organizations.create).toHaveBeenCalled();
+    expect(deps.contacts.create).toHaveBeenCalled();
+    expect(deps.memberships.create).toHaveBeenCalled();
+    expect(deps.leads.create).toHaveBeenCalled();
+
+    const tables = deps.inserts.map((i) => i.table);
+    expect(tables).toContain("touchpoints");
+    expect(tables).toContain("events");
+
+    const touch = deps.inserts.find((i) => i.table === "touchpoints")!.args as {
+      channel: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(touch.channel).toBe("web_form");
+    expect(touch.metadata["form_id"]).toBe("lead-form");
+    expect(touch.metadata["country"]).toBe("Haiti");
+    expect(touch.metadata["product_interest"]).toBe("food");
+    expect(touch.metadata["sms_consent"]).toBe(true);
+
+    const event = deps.inserts.find((i) => i.table === "events")!.args as {
+      verb: string;
+      idempotencyKey: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(event.verb).toBe("lead.captured");
+    const fiveMin = 5 * 60 * 1000;
+    const bucket =
+      Math.floor(new Date("2026-04-20T18:00:00.000Z").getTime() / fiveMin) *
+      fiveMin;
+    expect(event.idempotencyKey).toBe(
+      `website_form.captured:lead-form:jm@acmeimports.ht:${bucket}`,
+    );
+    expect(event.metadata["source"]).toBe("website_form");
+  });
+
+  it("short-circuits to a bot.form_rejected audit when _gotcha is non-empty", async () => {
+    const deps = buildFormDeps();
+    const tx = makeFakeTx();
+    const normalizer = new FormFillNormalizer({ tx, ...deps } as never);
+
+    const input: RawEventInput = {
+      id: "raw-bot-1",
+      tenantId: "01HSEEDWRK0000000000000001",
+      provider: "website_form",
+      providerEventId: "lead-form:bot@spam.example:2026-04-20T18:00:00.000Z",
+      receivedAt: new Date("2026-04-20T18:00:00.000Z"),
+      headers: {},
+      payload: {
+        ...basePayload,
+        lead: { ...basePayload.lead, email: "bot@spam.example" },
+        fields: { ...basePayload.fields, _gotcha: "http://evil.example/" },
+      },
+    };
+
+    const outcome = await normalizer.normalize(input);
+    expect(outcome.status).toBe("skipped");
+
+    expect(deps.organizations.create).not.toHaveBeenCalled();
+    expect(deps.contacts.create).not.toHaveBeenCalled();
+    expect(deps.leads.create).not.toHaveBeenCalled();
+
+    const tables = deps.inserts.map((i) => i.table);
+    expect(tables).toContain("events");
+    expect(tables).not.toContain("touchpoints");
+
+    const event = deps.inserts.find((i) => i.table === "events")!.args as {
+      verb: string;
+      idempotencyKey: string;
+      metadata: Record<string, unknown>;
+    };
+    expect(event.verb).toBe("bot.form_rejected");
+    expect(event.idempotencyKey).toBe("website_form.honeypot:raw-bot-1");
+  });
+
+  it("throws on a payload with a missing required lead field (Zod)", async () => {
+    const deps = buildFormDeps();
+    const tx = makeFakeTx();
+    const normalizer = new FormFillNormalizer({ tx, ...deps } as never);
+
+    const input: RawEventInput = {
+      id: createId(),
+      tenantId: "t",
+      provider: "website_form",
+      providerEventId: "bad",
+      receivedAt: new Date(),
+      headers: {},
+      payload: {
+        ...basePayload,
+        lead: { name: "No Email" } as unknown as typeof basePayload.lead,
+      },
+    };
+
+    await expect(normalizer.normalize(input)).rejects.toThrow(
+      /website_form payload failed validation/,
+    );
   });
 });
 
