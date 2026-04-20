@@ -1,5 +1,7 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import {
+  ApprovalRepository,
+  EventRepository,
   withTenant,
   WorkspaceRepository,
   type Db,
@@ -14,7 +16,7 @@ import type {
   ToolRunner,
 } from "@vex/integrations";
 import { QUERY_SYSTEM_PROMPT, renderStrategyPreamble } from "@vex/agents";
-import { TenantId, type AgentRunId } from "@vex/domain";
+import { createId, TenantId, type AgentRunId } from "@vex/domain";
 import { manifestFallback, validateManifest, type ViewManifest } from "@vex/ui";
 import {
   ANTHROPIC_ADAPTER,
@@ -67,9 +69,15 @@ export interface RunQueryOutput {
   manifestValid: boolean;
 }
 
+/** T2+ chat proposals become pending approvals; T0/T1 stay informational. */
+const APPROVAL_TIERS = new Set(["T2", "T3"]);
+
 @Injectable()
 export class QueryService {
+  private readonly log = new Logger(QueryService.name);
   private readonly workspaces = new WorkspaceRepository();
+  private readonly approvals = new ApprovalRepository();
+  private readonly events = new EventRepository();
 
   constructor(
     @Inject(DB_CLIENT) private readonly db: Db,
@@ -229,6 +237,18 @@ export class QueryService {
         ? `${PREFIX}${rawAnswer}`
         : rawAnswer;
 
+    // Persist T2+ proposals as pending approvals so the chat-proposed
+    // side effects (email.send, crm.create_deal, outbound_call, etc.)
+    // actually land in /app/approvals where the operator can review
+    // and fire them. Until this existed, Claude would prose-say
+    // "I'll set up the call" without any row ever reaching the DB
+    // and the approval-executor worker had nothing to act on.
+    await this.persistProposedActions(
+      tenantId,
+      input.agentRunId,
+      queryResult.proposedActions,
+    );
+
     return {
       answer,
       manifest,
@@ -238,6 +258,62 @@ export class QueryService {
       cacheHit: queryResult.cacheReadTokens > 0,
       manifestValid: validated.success,
     };
+  }
+
+  /**
+   * For each T2+ proposed action, write an `approvals` row + a matching
+   * `approval.created` audit event inside one `withTenant` transaction.
+   * Mirrors the agent-side `ApprovalGate.create` pattern so the
+   * approval executor, /app/approvals inbox, and hot-lead notifier
+   * all behave identically regardless of whether the action came from
+   * an autonomous agent run or a chat turn.
+   *
+   * Errors are logged but swallowed — we don't want an approval-write
+   * hiccup to mask the answer the user just got.
+   */
+  private async persistProposedActions(
+    tenantId: string,
+    agentRunId: AgentRunId | undefined,
+    actions: ProposedAction[],
+  ): Promise<void> {
+    const pending = actions.filter((a) => APPROVAL_TIERS.has(a.tier));
+    if (pending.length === 0) return;
+    try {
+      await withTenant(this.db, tenantId, async (tx) => {
+        for (const action of pending) {
+          const approval = await this.approvals.create(tx, tenantId, {
+            agentRunId: agentRunId ?? null,
+            actionType: action.kind,
+            proposedPayload: {
+              ...action.payload,
+              tier: action.tier,
+              ...(action.rationale ? { rationale: action.rationale } : {}),
+            },
+          });
+          await this.events.insertIfNotExists(tx, tenantId, {
+            verb: "approval.created",
+            subjectType: "approval",
+            subjectId: approval.id,
+            actorType: "system",
+            actorId: "chat_query",
+            objectType: "approval",
+            objectId: approval.id,
+            occurredAt: new Date(),
+            idempotencyKey: `approval.created:${approval.id}`,
+            metadata: {
+              action_type: action.kind,
+              tier: action.tier,
+              source: "chat",
+              audit_event_id: createId(),
+            },
+          });
+        }
+      });
+    } catch (err) {
+      this.log.warn(
+        `failed to persist ${pending.length} chat-proposed action(s): ${(err as Error).message}`,
+      );
+    }
   }
 }
 
