@@ -172,7 +172,7 @@ export const EnvSchema = z.object({
    * sender on the domain configured in Resend. Format:
    * `"Display Name <user@verified-domain.tld>"` or a bare email.
    */
-  RESEND_DEFAULT_FROM: z.string().default("Vex <hello@vexhq.ai>"),
+  RESEND_DEFAULT_FROM: z.string().default("Vex <vector@vexhq.ai>"),
   /**
    * Resend (Svix) webhook signing secret. Format: `whsec_<base64>`. Required
    * by the Resend webhook handler — the verifier strips the `whsec_` prefix
