@@ -17,12 +17,24 @@ import {
 } from "@nestjs/common";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { createId, type DealStatus } from "@vex/domain";
+import {
+  createId,
+  type DealStatus,
+  type IncotermType,
+  type PaymentTermsType,
+  type ProductType,
+} from "@vex/domain";
 import type {
   ApprovalRepository,
   EventRepository,
   FuelDealRepository,
+  FuelMarketRateRepository,
   OrganizationRepository,
+} from "@vex/db";
+import {
+  calculateFuelDeal,
+  type FuelDealInputs,
+  type FuelDealResults,
 } from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
@@ -46,6 +58,7 @@ export const DEALS_REPO = Symbol("DEALS_REPO");
 export const DEALS_EVENT_REPO = Symbol("DEALS_EVENT_REPO");
 export const DEALS_APPROVAL_REPO = Symbol("DEALS_APPROVAL_REPO");
 export const DEALS_ORGS_REPO = Symbol("DEALS_ORGS_REPO");
+export const DEALS_MARKET_RATE_REPO = Symbol("DEALS_MARKET_RATE_REPO");
 
 /**
  * Status transitions that require a T2 approval instead of applying
@@ -119,11 +132,99 @@ const CreateDealBody = z.object({
   laycanEnd: z.string().optional(),
   notes: z.string().optional(),
   dealType: z.enum(["spot", "program", "tender", "spot_with_option"]).optional(),
-});
+  dealFrequency: z
+    .enum(["one_off", "weekly", "biweekly", "monthly", "custom"])
+    .optional(),
+  dealFrequencyIntervalDays: z.number().int().positive().optional(),
+  dealFrequencyNotes: z.string().max(500).optional(),
+})
+  .refine(
+    (v) =>
+      v.dealFrequency !== "custom" ||
+      (v.dealFrequencyIntervalDays !== undefined &&
+        v.dealFrequencyIntervalDays > 0),
+    {
+      message:
+        "dealFrequencyIntervalDays is required when dealFrequency is 'custom'",
+      path: ["dealFrequencyIntervalDays"],
+    },
+  );
 
 const UpdateStatusBody = z.object({
   status: z.enum(DEAL_STATUSES),
 });
+
+/**
+ * POST /deals/calculate accepts a superset of deal-create inputs plus the
+ * optional economics fields (cost stack, freight overrides, risk scores).
+ * Every field is optional — the endpoint fills safe zero-defaults so the
+ * calculator can always produce a result while the operator is mid-form.
+ * Callers receive back the full FuelDealResults shape plus a list of
+ * fields that are still at their default zero so the UI can prompt for
+ * the ones that most affect the outcome.
+ */
+const CalculateDealBody = z
+  .object({
+    dealRef: z.string().optional(),
+    product: z
+      .enum([
+        "ulsd",
+        "gasoline_87",
+        "gasoline_91",
+        "jet_a",
+        "jet_a1",
+        "avgas",
+        "lfo",
+        "hfo",
+        "lng",
+        "lpg",
+        "biodiesel_b20",
+      ])
+      .optional(),
+    incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]).optional(),
+    paymentTerms: z
+      .enum([
+        "prepayment_100",
+        "prepayment_80_20",
+        "lc_sight",
+        "lc_60d",
+        "lc_90d",
+        "lc_120d",
+        "sblc",
+        "open_account",
+        "telegraphic_transfer",
+        "mixed",
+      ])
+      .optional(),
+    volumeUsg: z.number().positive().optional(),
+    densityKgL: z.number().positive().max(2).optional(),
+    volumeTolerancePct: z.number().min(0).max(1).optional(),
+    sellPricePerUsg: z.number().min(0).optional(),
+    buyerCurrencyCode: z.string().length(3).optional(),
+    fxRateToUsd: z.number().positive().optional(),
+    fxHedgeInPlace: z.boolean().optional(),
+    productCostPerUsg: z.number().min(0).optional(),
+    productQualityPremiumPerUsg: z.number().min(0).optional(),
+    freightPerUsg: z.number().min(0).optional(),
+    cargoInsurancePct: z.number().min(0).max(0.5).optional(),
+    warRiskPremiumPct: z.number().min(0).max(0.5).optional(),
+    politicalRiskPremiumPct: z.number().min(0).max(0.5).optional(),
+    dischargeHandlingPerUsg: z.number().min(0).optional(),
+    compliancePerUsg: z.number().min(0).optional(),
+    tradeFinancePerUsg: z.number().min(0).optional(),
+    intermediaryFeePerUsg: z.number().min(0).optional(),
+    vtcVariableOpsPerUsg: z.number().min(0).optional(),
+    counterpartyRiskScore: z.number().min(0).max(100).optional(),
+    countryRiskScore: z.number().min(0).max(100).optional(),
+    overheadAllocationUsd: z.number().min(0).optional(),
+  })
+  .passthrough();
+
+export interface CalculateDealResponse {
+  results: FuelDealResults;
+  /** Zero-defaulted inputs that materially shape the recommendation. */
+  missingEconomicsFields: string[];
+}
 
 /**
  * Editable fields on a fuel deal. Deliberately omits `dealRef`
@@ -243,6 +344,8 @@ export class DealsController {
     @Inject(DEALS_EVENT_REPO) private readonly events: EventRepository,
     @Inject(DEALS_APPROVAL_REPO) private readonly approvals: ApprovalRepository,
     @Inject(DEALS_ORGS_REPO) private readonly organizations: OrganizationRepository,
+    @Inject(DEALS_MARKET_RATE_REPO)
+    private readonly marketRates: FuelMarketRateRepository,
   ) {}
 
   @Get()
@@ -347,6 +450,15 @@ export class DealsController {
           ...(input.laycanEnd ? { laycanEnd: input.laycanEnd } : {}),
           ...(input.notes ? { notes: input.notes } : {}),
           ...(input.dealType ? { dealType: input.dealType } : {}),
+          ...(input.dealFrequency
+            ? { dealFrequency: input.dealFrequency }
+            : {}),
+          ...(input.dealFrequencyIntervalDays !== undefined
+            ? { dealFrequencyIntervalDays: input.dealFrequencyIntervalDays }
+            : {}),
+          ...(input.dealFrequencyNotes
+            ? { dealFrequencyNotes: input.dealFrequencyNotes }
+            : {}),
           createdBy: userId,
         });
       } catch (err) {
@@ -385,6 +497,77 @@ export class DealsController {
 
     this.log.log(`deal ${input.dealRef} (${id}) created by ${userId}`);
     return { deal };
+  }
+
+  /**
+   * POST /deals/calculate — run the fuel-deal calculator against an
+   * ad-hoc input bundle without persisting anything. Powers the live
+   * dashboard on the deal creator: the operator enters pricing + cost
+   * inputs, the client debounces requests to this endpoint, and the
+   * right pane renders score + warnings + KPI tiles. Every input is
+   * optional because the deal can be saved before the economics are
+   * fully known; missing fields are filled with safe zero defaults.
+   */
+  @Post("calculate")
+  @HttpCode(200)
+  async calculate(@Body() raw: unknown): Promise<CalculateDealResponse> {
+    const parsed = CalculateDealBody.safeParse(raw ?? {});
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const input = parsed.data;
+    const inputs = buildCalculatorInputs(input);
+    const results = calculateFuelDeal(inputs);
+    return {
+      results,
+      missingEconomicsFields: findMissingEconomicsFields(input),
+    };
+  }
+
+  /**
+   * GET /deals/benchmarks — latest market rate for a (product, benchmark)
+   * pair. The deal creator uses this to render a spread chip next to the
+   * sell price input (e.g. "sell $2.85 vs Platts USGC ULSD $2.78").
+   * Benchmark slug follows the seed convention: `<basis>_<region>_<product>`.
+   */
+  @Get("benchmarks")
+  async benchmarks(
+    @Query("product") product?: string,
+    @Query("benchmark") benchmark?: string,
+  ): Promise<{
+    rate: {
+      rateDate: string;
+      product: string;
+      benchmark: string;
+      pricePerUsg: number;
+      pricePerBbl: number;
+      pricePerMt: number;
+      currency: string;
+      source: string;
+    } | null;
+  }> {
+    if (!product || !benchmark) {
+      throw new BadRequestException("product and benchmark query params required");
+    }
+    const rate = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.marketRates.getLatest(tx, product, benchmark),
+    );
+    if (!rate) return { rate: null };
+    return {
+      rate: {
+        rateDate:
+          typeof rate.rateDate === "string"
+            ? rate.rateDate
+            : (rate.rateDate as Date).toISOString().slice(0, 10),
+        product: rate.product,
+        benchmark: rate.benchmark,
+        pricePerUsg: rate.pricePerUsg,
+        pricePerBbl: rate.pricePerBbl,
+        pricePerMt: rate.pricePerMt,
+        currency: rate.currency,
+        source: rate.source,
+      },
+    };
   }
 
   @Patch(":id/status")
@@ -601,6 +784,80 @@ export class DealsController {
     return { deal };
   }
 
+}
+
+/**
+ * Default thresholds mirror the DealEvaluatorAgent constants — every
+ * warning triggered in the creator dashboard uses the same cutoffs the
+ * async evaluator will use later, so there's no "passed on the form,
+ * failed after save" surprise.
+ */
+const DEFAULT_CALCULATOR_THRESHOLDS = {
+  maxPeakCashExposureUsd: 5_000_000,
+  minGrossMarginPct: 0.05,
+  minNetMarginPerUsg: 0.03,
+  maxCounterpartyRiskScore: 65,
+  maxCountryRiskScore: 70,
+  maxDemurrageDays: 2,
+} as const;
+
+const DEFAULT_CALCULATOR_MONTHLY_OVERHEAD_USD = 120_000;
+
+function buildCalculatorInputs(
+  input: z.infer<typeof CalculateDealBody>,
+): FuelDealInputs {
+  return {
+    dealRef: input.dealRef ?? "draft",
+    product: (input.product ?? "ulsd") as ProductType,
+    incoterm: (input.incoterm ?? "cfr") as IncotermType,
+    volumeUsg: input.volumeUsg ?? 0,
+    densityKgL: input.densityKgL ?? 0.84,
+    volumeTolerancePct: input.volumeTolerancePct ?? 0,
+    sellPricePerUsg: input.sellPricePerUsg ?? 0,
+    buyerCurrencyCode: input.buyerCurrencyCode ?? "usd",
+    fxRateToUsd: input.fxRateToUsd ?? 1,
+    ...(input.fxHedgeInPlace !== undefined
+      ? { fxHedgeInPlace: input.fxHedgeInPlace }
+      : {}),
+    productCostPerUsg: input.productCostPerUsg ?? 0,
+    productQualityPremiumPerUsg: input.productQualityPremiumPerUsg ?? 0,
+    freightPerUsg: input.freightPerUsg ?? 0,
+    cargoInsurancePct: input.cargoInsurancePct ?? 0,
+    warRiskPremiumPct: input.warRiskPremiumPct ?? 0,
+    politicalRiskPremiumPct: input.politicalRiskPremiumPct ?? 0,
+    dischargeHandlingPerUsg: input.dischargeHandlingPerUsg ?? 0,
+    compliancePerUsg: input.compliancePerUsg ?? 0,
+    tradeFinancePerUsg: input.tradeFinancePerUsg ?? 0,
+    intermediaryFeePerUsg: input.intermediaryFeePerUsg ?? 0,
+    vtcVariableOpsPerUsg: input.vtcVariableOpsPerUsg ?? 0,
+    overheadAllocationUsd: input.overheadAllocationUsd ?? 0,
+    tradeFinance: {
+      type: (input.paymentTerms ?? "open_account") as PaymentTermsType,
+    },
+    counterpartyRiskScore: input.counterpartyRiskScore ?? 40,
+    countryRiskScore: input.countryRiskScore ?? 40,
+    thresholds: { ...DEFAULT_CALCULATOR_THRESHOLDS },
+    monthlyFixedOverheadUsd: DEFAULT_CALCULATOR_MONTHLY_OVERHEAD_USD,
+  };
+}
+
+/**
+ * Economics fields that materially shape the recommendation. When any of
+ * these are zero/unset, the calculator still runs but the output is not
+ * really actionable — the UI surfaces these so the operator knows what
+ * to fill in next.
+ */
+function findMissingEconomicsFields(
+  input: z.infer<typeof CalculateDealBody>,
+): string[] {
+  const missing: string[] = [];
+  if (!input.sellPricePerUsg || input.sellPricePerUsg <= 0)
+    missing.push("sellPricePerUsg");
+  if (!input.productCostPerUsg || input.productCostPerUsg <= 0)
+    missing.push("productCostPerUsg");
+  if (!input.volumeUsg || input.volumeUsg <= 0) missing.push("volumeUsg");
+  if (input.freightPerUsg === undefined) missing.push("freightPerUsg");
+  return missing;
 }
 
 function clampLimit(raw: string | undefined, fallback: number, max: number): number {

@@ -40,6 +40,15 @@ export const fuelDeals = pgTable(
     dealRef: text("deal_ref").notNull(),
     status: dealStatusEnum("status").notNull().default("draft"),
     dealType: dealTypeEnum("deal_type").notNull().default("spot"),
+    /**
+     * Cadence. Migrated in 0016_deal_frequency as a plain text column
+     * (not an enum) so operators can add new rhythms without a schema
+     * bump. Allowed values: one_off, weekly, biweekly, monthly, custom.
+     * When `custom`, `dealFrequencyIntervalDays` carries the cadence.
+     */
+    dealFrequency: text("deal_frequency").notNull().default("one_off"),
+    dealFrequencyIntervalDays: integer("deal_frequency_interval_days"),
+    dealFrequencyNotes: text("deal_frequency_notes"),
     product: productTypeEnum("product").notNull(),
     productGrade: text("product_grade"),
     productSpecNotes: text("product_spec_notes"),

@@ -6,6 +6,17 @@ import type {
   OfacScreeningStatus,
   PaymentTermsType,
 } from "@vex/domain";
+
+/**
+ * Allowed cadence values on fuel_deals.deal_frequency (see 0016 migration).
+ * Plain text column — widen without a schema bump if new rhythms appear.
+ */
+export type DealFrequency =
+  | "one_off"
+  | "weekly"
+  | "biweekly"
+  | "monthly"
+  | "custom";
 import type { Tx } from "../client.js";
 import type { FuelDealResults } from "../deals/calculator.js";
 import {
@@ -59,6 +70,11 @@ export interface FuelDealCreate {
   buyerOrgId: string;
   status?: DealStatus;
   dealType?: NewFuelDeal["dealType"];
+  /** Cadence — one_off, weekly, biweekly, monthly, custom. Defaults to one_off. */
+  dealFrequency?: DealFrequency;
+  /** Operator-defined cadence in days when dealFrequency === "custom". */
+  dealFrequencyIntervalDays?: number | null;
+  dealFrequencyNotes?: string | null;
   productGrade?: string | null;
   productSpecNotes?: string | null;
   originCountry?: string | null;
@@ -127,6 +143,9 @@ export class FuelDealRepository {
         dealRef: data.dealRef,
         status: data.status ?? "draft",
         dealType: data.dealType ?? "spot",
+        dealFrequency: data.dealFrequency ?? "one_off",
+        dealFrequencyIntervalDays: data.dealFrequencyIntervalDays ?? null,
+        dealFrequencyNotes: data.dealFrequencyNotes ?? null,
         product: data.product,
         productGrade: data.productGrade ?? null,
         productSpecNotes: data.productSpecNotes ?? null,

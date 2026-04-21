@@ -19,6 +19,7 @@ import {
   SignalRepository,
   EventRepository,
   FuelDealRepository,
+  FuelMarketRateRepository,
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
   OrganizationRepository,
@@ -118,6 +119,7 @@ async function bootstrap(): Promise<void> {
   const signalRepository = new SignalRepository();
   const workspaceRepository = new WorkspaceRepository();
   const fuelDealRepository = new FuelDealRepository();
+  const fuelMarketRateRepository = new FuelMarketRateRepository();
   const campaignRepository = new CampaignRepository();
   const campaignStepRepository = new CampaignStepRepository();
   const campaignEnrollmentRepository = new CampaignEnrollmentRepository();
@@ -272,6 +274,7 @@ async function bootstrap(): Promise<void> {
         events: eventRepository,
         approvals: approvalRepository,
         organizations: organizationRepository,
+        marketRates: fuelMarketRateRepository,
       }),
       leads: LeadsModule.register({ db }),
       events: EventsModule.register({ db }),

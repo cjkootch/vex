@@ -4,12 +4,14 @@ import type {
   Db,
   EventRepository,
   FuelDealRepository,
+  FuelMarketRateRepository,
   OrganizationRepository,
 } from "@vex/db";
 import {
   DEALS_APPROVAL_REPO,
   DEALS_DB_CLIENT,
   DEALS_EVENT_REPO,
+  DEALS_MARKET_RATE_REPO,
   DEALS_ORGS_REPO,
   DEALS_REPO,
   DealsController,
@@ -21,6 +23,7 @@ export interface DealsModuleConfig {
   events: EventRepository;
   approvals: ApprovalRepository;
   organizations: OrganizationRepository;
+  marketRates: FuelMarketRateRepository;
 }
 
 /**
@@ -43,6 +46,7 @@ export class DealsModule {
         { provide: DEALS_EVENT_REPO, useFactory: () => config.events },
         { provide: DEALS_APPROVAL_REPO, useFactory: () => config.approvals },
         { provide: DEALS_ORGS_REPO, useFactory: () => config.organizations },
+        { provide: DEALS_MARKET_RATE_REPO, useFactory: () => config.marketRates },
       ],
     };
   }
