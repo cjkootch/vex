@@ -1072,7 +1072,7 @@ async function applyOutboundCall(
           fallback: "direct_twilio_no_temporal",
         },
       });
-      await deps.approvals.decide(tx, innerApproval.id, "approved", "chat_agent");
+      await deps.approvals.decide(tx, innerApproval.id, "auto_approved", null);
 
       // voice_call activity row — what the Inbox timeline queries
       // to surface in-progress calls. Temporal's call-activities
@@ -1198,7 +1198,7 @@ async function applyOutboundCall(
       chat_approval_id: approval.id,
     },
   });
-  await deps.approvals.decide(tx, innerApproval.id, "approved", "chat_agent");
+  await deps.approvals.decide(tx, innerApproval.id, "auto_approved", null);
 
   // When the user supplied custom AI instructions, stash them in
   // Redis before starting the workflow. The API's twiml handler
