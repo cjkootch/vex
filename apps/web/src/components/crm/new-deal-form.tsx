@@ -4,7 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Modal } from "@/components/ui/modal";
 import { FormField, Select, TextArea, TextInput } from "@/components/ui/form-field";
 import { DealCreatorDashboard, type CalculatePayload } from "@/components/crm/deal-creator-dashboard";
-import type { CalculatorResponse, MarketRate } from "@/components/crm/deal-calculator-types";
+import type {
+  BuyerIntel,
+  CalculatorResponse,
+  MarketRate,
+} from "@/components/crm/deal-calculator-types";
 import {
   ParticipantEditor,
   commissionPerUsg,
@@ -145,6 +149,7 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
   const [calc, setCalc] = useState<CalculatorResponse | null>(null);
   const [calcLoading, setCalcLoading] = useState(false);
   const [benchmark, setBenchmark] = useState<MarketRate | null>(null);
+  const [buyerIntel, setBuyerIntel] = useState<BuyerIntel | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -284,6 +289,28 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
     return () => clearTimeout(timer);
   }, [open, calcPayload]);
 
+  // Pull buyer intel (counterparty risk + concentration) whenever the
+  // buyer dropdown changes. Null orgId clears the card.
+  useEffect(() => {
+    if (!open || !buyerOrgId) {
+      setBuyerIntel(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/deals/buyer-intel/${encodeURIComponent(buyerOrgId)}`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status}`);
+        const body = (await res.json()) as BuyerIntel;
+        if (!cancelled) setBuyerIntel(body);
+      })
+      .catch(() => {
+        if (!cancelled) setBuyerIntel(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, buyerOrgId]);
+
   // Pull benchmark rate when product + pricing basis are both set.
   useEffect(() => {
     if (!open) return;
@@ -341,6 +368,7 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
     setSubmitting(false);
     setCalc(null);
     setBenchmark(null);
+    setBuyerIntel(null);
   }, []);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>): Promise<void> {
@@ -750,6 +778,7 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
               calc={calc}
               loading={calcLoading}
               benchmark={benchmark}
+              buyerIntel={buyerIntel}
               sellPricePerUsg={toNumberOrUndef(sellPricePerUsg) ?? null}
               participantFeePerUsg={participantFeePerUsg}
               participants={participants}

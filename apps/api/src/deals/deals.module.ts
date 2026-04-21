@@ -1,6 +1,7 @@
 import { Module, type DynamicModule } from "@nestjs/common";
 import type {
   ApprovalRepository,
+  CounterpartyRiskRepository,
   Db,
   EventRepository,
   FuelDealParticipantRepository,
@@ -10,6 +11,7 @@ import type {
 } from "@vex/db";
 import {
   DEALS_APPROVAL_REPO,
+  DEALS_COUNTERPARTY_REPO,
   DEALS_DB_CLIENT,
   DEALS_EVENT_REPO,
   DEALS_MARKET_RATE_REPO,
@@ -27,6 +29,7 @@ export interface DealsModuleConfig {
   organizations: OrganizationRepository;
   marketRates: FuelMarketRateRepository;
   participants: FuelDealParticipantRepository;
+  counterparty: CounterpartyRiskRepository;
 }
 
 /**
@@ -51,6 +54,7 @@ export class DealsModule {
         { provide: DEALS_ORGS_REPO, useFactory: () => config.organizations },
         { provide: DEALS_MARKET_RATE_REPO, useFactory: () => config.marketRates },
         { provide: DEALS_PARTICIPANT_REPO, useFactory: () => config.participants },
+        { provide: DEALS_COUNTERPARTY_REPO, useFactory: () => config.counterparty },
       ],
     };
   }

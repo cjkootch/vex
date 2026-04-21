@@ -15,7 +15,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   createId,
@@ -26,6 +26,7 @@ import {
 } from "@vex/domain";
 import type {
   ApprovalRepository,
+  CounterpartyRiskRepository,
   EventRepository,
   FuelDealParticipantRepository,
   FuelDealRepository,
@@ -61,6 +62,7 @@ export const DEALS_APPROVAL_REPO = Symbol("DEALS_APPROVAL_REPO");
 export const DEALS_ORGS_REPO = Symbol("DEALS_ORGS_REPO");
 export const DEALS_MARKET_RATE_REPO = Symbol("DEALS_MARKET_RATE_REPO");
 export const DEALS_PARTICIPANT_REPO = Symbol("DEALS_PARTICIPANT_REPO");
+export const DEALS_COUNTERPARTY_REPO = Symbol("DEALS_COUNTERPARTY_REPO");
 
 /**
  * Status transitions that require a T2 approval instead of applying
@@ -391,6 +393,8 @@ export class DealsController {
     private readonly marketRates: FuelMarketRateRepository,
     @Inject(DEALS_PARTICIPANT_REPO)
     private readonly participants: FuelDealParticipantRepository,
+    @Inject(DEALS_COUNTERPARTY_REPO)
+    private readonly counterparty: CounterpartyRiskRepository,
   ) {}
 
   @Get()
@@ -635,6 +639,97 @@ export class DealsController {
         source: rate.source,
       },
     };
+  }
+
+  /**
+   * GET /deals/buyer-intel/:orgId — everything the creator's dashboard
+   * needs to qualify a buyer the moment it's picked: latest
+   * counterparty-risk row (tier, composite, recommended payment terms,
+   * recommended max exposure) + the buyer's current share of VTC's
+   * open pipeline by volume. Used to prevent silent limit breaches
+   * (exposure cap exceeded, concentration > 40%) at creation time
+   * rather than after the calculator fires post-save.
+   */
+  @Get("buyer-intel/:orgId")
+  async buyerIntel(@Param("orgId") orgId: string): Promise<{
+    counterparty: {
+      riskTier: string;
+      compositeScore: number;
+      countryRisk: number;
+      paymentHistoryRisk: number;
+      creditRisk: number;
+      sanctionsExposureRisk: number;
+      concentrationRisk: number;
+      recommendedPaymentTerms: string | null;
+      recommendedMaxExposureUsd: number | null;
+      scoredAt: string;
+    } | null;
+    concentration: {
+      /** Share of open pipeline by volume, 0..1. */
+      buyerShare: number;
+      buyerVolumeUsg: number;
+      totalOpenVolumeUsg: number;
+      openDealCount: number;
+    };
+  }> {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const score = await this.counterparty.score(tx, orgId);
+
+      // Concentration — sum volume_usg for every non-cancelled /
+      // non-settled deal in this tenant, then compute the buyer's
+      // share. Uses volume (not revenue) because sell price isn't on
+      // the deal row; within a single product family this is a solid
+      // proxy and matches the calculator's concentration warning.
+      const openStatuses: DealStatus[] = [
+        "draft",
+        "negotiating",
+        "approved",
+        "in_transit",
+      ];
+      const openRows = await tx
+        .select({
+          buyerOrgId: schema.fuelDeals.buyerOrgId,
+          volumeUsg: schema.fuelDeals.volumeUsg,
+        })
+        .from(schema.fuelDeals)
+        .where(inArray(schema.fuelDeals.status, openStatuses));
+
+      let totalOpenVolumeUsg = 0;
+      let buyerVolumeUsg = 0;
+      let openDealCount = 0;
+      for (const row of openRows) {
+        totalOpenVolumeUsg += row.volumeUsg;
+        if (row.buyerOrgId === orgId) {
+          buyerVolumeUsg += row.volumeUsg;
+          openDealCount++;
+        }
+      }
+      const buyerShare =
+        totalOpenVolumeUsg > 0 ? buyerVolumeUsg / totalOpenVolumeUsg : 0;
+
+      return {
+        counterparty: score
+          ? {
+              riskTier: score.riskTier,
+              compositeScore: score.compositeScore,
+              countryRisk: score.countryRisk,
+              paymentHistoryRisk: score.paymentHistoryRisk,
+              creditRisk: score.creditRisk,
+              sanctionsExposureRisk: score.sanctionsExposureRisk,
+              concentrationRisk: score.concentrationRisk,
+              recommendedPaymentTerms: score.recommendedPaymentTerms,
+              recommendedMaxExposureUsd: score.recommendedMaxExposureUsd,
+              scoredAt: score.scoredAt.toISOString(),
+            }
+          : null,
+        concentration: {
+          buyerShare,
+          buyerVolumeUsg,
+          totalOpenVolumeUsg,
+          openDealCount,
+        },
+      };
+    });
   }
 
   @Patch(":id/status")

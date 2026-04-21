@@ -1,6 +1,7 @@
 "use client";
 
 import type {
+  BuyerIntel,
   CalculatorResponse,
   DealRecommendation,
   DealWarningSeverity,
@@ -36,6 +37,7 @@ interface Props {
   calc: CalculatorResponse | null;
   loading: boolean;
   benchmark: MarketRate | null;
+  buyerIntel: BuyerIntel | null;
   sellPricePerUsg: number | null;
   /** Sum of every participant commission converted to $/USG. */
   participantFeePerUsg?: number;
@@ -65,6 +67,7 @@ export function DealCreatorDashboard({
   calc,
   loading,
   benchmark,
+  buyerIntel,
   sellPricePerUsg,
   participantFeePerUsg,
   participants,
@@ -93,6 +96,8 @@ export function DealCreatorDashboard({
           suppressed={!hasEnoughInputs}
         />
       )}
+
+      {buyerIntel && <BuyerIntelCard intel={buyerIntel} />}
 
       {benchmark && sellPricePerUsg !== null && sellPricePerUsg > 0 && (
         <BenchmarkChip benchmark={benchmark} sellPricePerUsg={sellPricePerUsg} />
@@ -369,6 +374,142 @@ function WarningsList({
       )}
     </div>
   );
+}
+
+function BuyerIntelCard({ intel }: { intel: BuyerIntel }) {
+  const cp = intel.counterparty;
+  const share = intel.concentration.buyerShare;
+  const overConcentrated = share >= 0.4;
+  const approaching = share >= 0.25 && share < 0.4;
+  // Tier tone mirrors the counterparty_risk_tier enum values: tier_1
+  // is healthy, tier_3 is risky, watch/declined are hard stops.
+  const tierTone: Record<string, string> = {
+    tier_1: "border-good/40 bg-good/10 text-good",
+    tier_2: "border-accent/40 bg-accent/10 text-accent",
+    tier_3: "border-warn/40 bg-warn/10 text-warn",
+    watch: "border-warn/40 bg-warn/10 text-warn",
+    declined: "border-bad/40 bg-bad/10 text-bad",
+  };
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-line bg-canvas/50 px-3 py-2 text-xs">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] uppercase tracking-wide text-white/40">
+          Buyer intel
+        </span>
+        {cp ? (
+          <span
+            className={`rounded-md border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+              tierTone[cp.riskTier] ?? "border-line bg-muted/40 text-white/60"
+            }`}
+          >
+            {cp.riskTier.replace(/_/g, " ")}
+          </span>
+        ) : (
+          <span className="text-[10px] italic text-white/40">unscored</span>
+        )}
+      </div>
+
+      {cp ? (
+        <div className="grid grid-cols-2 gap-2">
+          <IntelTile
+            label="Composite"
+            value={`${cp.compositeScore.toFixed(0)} / 100`}
+            footnote="higher = riskier"
+          />
+          <IntelTile
+            label="Max exposure"
+            value={
+              cp.recommendedMaxExposureUsd !== null
+                ? formatIntelUsd(cp.recommendedMaxExposureUsd)
+                : "—"
+            }
+            footnote="recommended"
+          />
+          <IntelTile
+            label="Terms"
+            value={
+              cp.recommendedPaymentTerms?.replace(/_/g, " ") ?? "—"
+            }
+            footnote="recommended"
+          />
+          <IntelTile
+            label="Credit / country"
+            value={`${cp.creditRisk.toFixed(0)} / ${cp.countryRisk.toFixed(0)}`}
+            footnote="dim. scores"
+          />
+        </div>
+      ) : (
+        <p className="text-white/60">
+          No counterparty score on file. Deal can still be saved; consider
+          running a KYC / risk assessment before approval.
+        </p>
+      )}
+
+      <div
+        className={`rounded-md border px-2 py-1.5 text-[11px] ${
+          overConcentrated
+            ? "border-bad/40 bg-bad/10 text-bad"
+            : approaching
+              ? "border-warn/40 bg-warn/10 text-warn"
+              : "border-line bg-canvas/40 text-white/70"
+        }`}
+      >
+        <div className="font-semibold">
+          {overConcentrated
+            ? "Concentration alert"
+            : approaching
+              ? "Concentration approaching cap"
+              : "Pipeline concentration"}
+        </div>
+        <div className="opacity-90">
+          {intel.concentration.openDealCount > 0 && intel.concentration.totalOpenVolumeUsg > 0
+            ? `${(share * 100).toFixed(1)}% of open pipeline by volume (${intel.concentration.openDealCount} open ${intel.concentration.openDealCount === 1 ? "deal" : "deals"})`
+            : "No open deals with this buyer yet"}
+        </div>
+        {overConcentrated && (
+          <div className="mt-0.5 opacity-80">
+            &gt; 40% triggers a caution warning on the calculator. Consider
+            deferring or splitting the deal.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function IntelTile({
+  label,
+  value,
+  footnote,
+}: {
+  label: string;
+  value: string;
+  footnote?: string;
+}) {
+  return (
+    <div className="rounded-md border border-line bg-canvas/60 px-2 py-1.5">
+      <div className="text-[10px] uppercase tracking-wide text-white/40">
+        {label}
+      </div>
+      <div className="mt-0.5 text-xs font-semibold text-white tabular-nums">
+        {value}
+      </div>
+      {footnote && (
+        <div className="text-[10px] text-white/30">{footnote}</div>
+      )}
+    </div>
+  );
+}
+
+function formatIntelUsd(value: number): string {
+  if (Math.abs(value) >= 1_000_000) {
+    return `$${(value / 1_000_000).toFixed(2)}M`;
+  }
+  if (Math.abs(value) >= 1_000) {
+    return `$${(value / 1_000).toFixed(0)}k`;
+  }
+  return `$${value.toFixed(0)}`;
 }
 
 function ParticipantBreakdown({

@@ -77,3 +77,24 @@ export interface MarketRate {
   currency: string;
   source: string;
 }
+
+export interface BuyerIntel {
+  counterparty: {
+    riskTier: string;
+    compositeScore: number;
+    countryRisk: number;
+    paymentHistoryRisk: number;
+    creditRisk: number;
+    sanctionsExposureRisk: number;
+    concentrationRisk: number;
+    recommendedPaymentTerms: string | null;
+    recommendedMaxExposureUsd: number | null;
+    scoredAt: string;
+  } | null;
+  concentration: {
+    buyerShare: number;
+    buyerVolumeUsg: number;
+    totalOpenVolumeUsg: number;
+    openDealCount: number;
+  };
+}
