@@ -101,3 +101,9 @@ export {
   type FreightRateRouteQuery,
   type MarkToMarketResult,
 } from "./freight-rate-repository.js";
+export {
+  PortRepository,
+  type PortCreate,
+  type PortEventInsert,
+  type PortUpdate,
+} from "./port-repository.js";
