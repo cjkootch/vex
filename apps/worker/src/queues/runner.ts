@@ -75,7 +75,10 @@ type ResendClient = ReturnType<typeof createResendClient>;
 import {
   recordQueueBackpressure,
   recordQueueDepth,
+  type CostLedger,
 } from "@vex/telemetry";
+import { pricing, unitsToUsdMicros } from "@vex/integrations";
+import { TenantId } from "@vex/domain";
 
 /** Interval at which the worker samples queue depths for telemetry. */
 const BACKPRESSURE_SAMPLE_MS = 10_000;
@@ -271,6 +274,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       campaigns: repos.campaigns,
       campaignSteps: repos.campaignSteps,
       campaignEnrollments: repos.campaignEnrollments,
+      costLedger,
       touchpoints: repos.touchpoints,
       activities: repos.activities,
       followUps: repos.followUps,
@@ -490,6 +494,12 @@ export interface ApprovalExecutorDeps {
   campaigns: CampaignRepository;
   campaignSteps: CampaignStepRepository;
   campaignEnrollments: CampaignEnrollmentRepository;
+  /**
+   * Shared CostLedger — each applyX branch records its own billable
+   * unit (email.send, sms.send, pstn.call, web.search, …) so the
+   * Admin Cost tab reflects real third-party spend, not just LLM.
+   */
+  costLedger: CostLedger;
   touchpoints: TouchpointRepository;
   activities: ActivityRepository;
   followUps: FollowUpRepository;
@@ -717,6 +727,19 @@ async function applyEmailSend(
     return;
   }
   const messageId = result.data?.id ?? "unknown";
+  // Record Resend cost: 1 entry per recipient (Resend bills per email
+  // delivered, not per API call). Best-effort — PostgresCostLedger
+  // swallows errors so a ledger hiccup never fails the send.
+  await deps.costLedger.record({
+    idempotencyKey: `email.send:${approval.id}`,
+    tenantId: TenantId(tenantId),
+    operation: "email.send",
+    provider: "resend",
+    units: to.length,
+    unitKind: "email",
+    costUsdMicros: unitsToUsdMicros(to.length, pricing.resend.emailSendUsd),
+    occurredAt: new Date(),
+  });
   await deps.touchpoints.insert(tx, tenantId, {
     channel: "email.sent",
     actor: `approval:${approval.id}`,
@@ -774,6 +797,24 @@ async function applyMessageSend(
       kind === "whatsapp"
         ? await deps.twilio.sendWhatsApp(to, body)
         : await deps.twilio.sendSms(to, body);
+    // Record Twilio per-message cost. SMS is billed per segment
+    // (Twilio splits >160-char bodies itself); we approximate 1
+    // segment here + let real spend reconcile post-hoc via Twilio's
+    // usage API (future polling job).
+    const unitPrice =
+      kind === "whatsapp"
+        ? pricing.twilio.whatsappSessionUsd
+        : pricing.twilio.smsSegmentUsd;
+    await deps.costLedger.record({
+      idempotencyKey: `${kind}.send:${approval.id}`,
+      tenantId: TenantId(tenantId),
+      operation: kind === "whatsapp" ? "whatsapp.send" : "sms.send",
+      provider: "twilio",
+      units: 1,
+      unitKind: kind === "whatsapp" ? "session" : "segment",
+      costUsdMicros: unitsToUsdMicros(1, unitPrice),
+      occurredAt: new Date(),
+    });
     await deps.touchpoints.insert(tx, tenantId, {
       channel: `${kind}.sent`,
       actor: `approval:${approval.id}`,
@@ -1047,6 +1088,22 @@ async function applyOutboundCall(
           twilio_status: status,
           fallback: "direct_twilio_no_temporal",
         },
+      });
+
+      // Record Twilio per-call cost at dial. We don't know duration
+      // yet — record as a flat pstn.call entry. Duration-based
+      // reconciliation lands when the status callback patches the
+      // activity with durationSeconds; a follow-up job could then
+      // upsert a finer-grained pstn.minute entry.
+      await deps.costLedger.record({
+        idempotencyKey: `pstn.call:${approval.id}`,
+        tenantId: TenantId(tenantId),
+        operation: "pstn.call",
+        provider: "twilio",
+        units: 1,
+        unitKind: "call_connect",
+        costUsdMicros: unitsToUsdMicros(1, pricing.twilio.voiceMinuteUsd),
+        occurredAt: new Date(),
       });
 
       await deps.approvals.markApplied(tx, approval.id, callSid);

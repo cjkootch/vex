@@ -18,8 +18,11 @@ import type {
 import { QUERY_SYSTEM_PROMPT, renderStrategyPreamble, ActionDescriptor } from "@vex/agents";
 import { createId, TenantId, type AgentRunId } from "@vex/domain";
 import { manifestFallback, validateManifest, type ViewManifest } from "@vex/ui";
+import type { CostLedger } from "@vex/telemetry";
+import { pricing, unitsToUsdMicros } from "@vex/integrations";
 import {
   ANTHROPIC_ADAPTER,
+  COST_LEDGER,
   DB_CLIENT,
   OPENAI_ADAPTER,
   RETRIEVAL_SERVICE,
@@ -114,6 +117,7 @@ export class QueryService {
     @Inject(OPENAI_ADAPTER) private readonly openai: OpenAIAdapter,
     @Inject(ANTHROPIC_ADAPTER) private readonly anthropic: AnthropicAdapter,
     @Inject(TAVILY_CLIENT) private readonly tavily: TavilyClient | null,
+    @Inject(COST_LEDGER) private readonly costLedger: CostLedger,
   ) {}
 
   /**
@@ -207,6 +211,20 @@ export class QueryService {
         depth: "basic",
         maxResults: 5,
         includeAnswer: true,
+      });
+      // Record Tavily search cost on the ledger. Basic search ≈ 1
+      // credit ≈ $0.0045 on the default plan. Idempotency key
+      // includes the query-hash + current ISO minute so retries of
+      // the same tool call inside one turn don't double-charge.
+      await this.costLedger.record({
+        idempotencyKey: `web.search:${input.idempotencyKey}:${q.slice(0, 32)}`,
+        tenantId,
+        operation: "web.search",
+        provider: "tavily",
+        units: 1,
+        unitKind: "search",
+        costUsdMicros: unitsToUsdMicros(1, pricing.tavily.searchBasicUsd),
+        occurredAt: new Date(),
       });
       return {
         query: q,

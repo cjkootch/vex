@@ -223,7 +223,7 @@ async function bootstrap(): Promise<void> {
         websiteChatSecret: env.WEBSITE_CHAT_WEBHOOK_SECRET,
         resolveTenant: () => "01HSEEDWRK0000000000000001",
       }),
-      query: QueryModule.register({ db, retrieval, openai, anthropic, tavily }),
+      query: QueryModule.register({ db, retrieval, openai, anthropic, tavily, costLedger }),
       approvals: ApprovalsModule.register({
         db,
         approvals: approvalRepository,

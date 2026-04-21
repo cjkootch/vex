@@ -30,7 +30,40 @@ export const pricing = {
       textOutputUsdPerMillion: 20,
     },
   },
+  /**
+   * Third-party per-unit pricing. USD per unit (not per 1M). Used by
+   * integrations that meter per message / minute / call / search
+   * rather than per-token. Figures are defaults — rates vary by
+   * destination + contract tier, update when billing reconciles.
+   */
+  resend: {
+    /** Paid Resend tier: $0.40 per 1k emails. */
+    emailSendUsd: 0.0004,
+  },
+  twilio: {
+    /** Outbound US SMS segment. */
+    smsSegmentUsd: 0.0083,
+    /** Business-initiated WhatsApp conversation (US). */
+    whatsappSessionUsd: 0.005,
+    /** Outbound PSTN dial to US numbers — per-minute average. */
+    voiceMinuteUsd: 0.014,
+  },
+  tavily: {
+    /** Basic search ≈ 1 credit; default plan ≈ $0.0045/credit. */
+    searchBasicUsd: 0.0045,
+    /** Advanced search ≈ 2 credits. */
+    searchAdvancedUsd: 0.009,
+  },
 } as const;
+
+/**
+ * Convert a per-unit USD price + count into integer USD micros.
+ * Used for non-token providers (Resend, Twilio, Tavily) where the
+ * billable unit is a message, minute, or search rather than a token.
+ */
+export function unitsToUsdMicros(count: number, usdPerUnit: number): number {
+  return Math.round(count * usdPerUnit * 1_000_000);
+}
 
 /**
  * Convert a token count and a per-1M-token USD price into integer USD micros.
