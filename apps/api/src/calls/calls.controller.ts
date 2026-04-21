@@ -484,8 +484,8 @@ export class CallsController {
   @SkipThrottle()
   @HttpCode(204)
   async statusCallback(@Req() req: RawBodyRequest<FastifyRequest>): Promise<void> {
-    const { params, workflowId } = this.parseTwilio(req);
-    await this.service.handleStatusCallback(workflowId, params);
+    const { params, workflowId, tenantId } = this.parseTwilio(req);
+    await this.service.handleStatusCallback(workflowId, params, tenantId);
   }
 
   /**

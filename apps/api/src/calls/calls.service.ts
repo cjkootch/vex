@@ -841,6 +841,7 @@ export class CallsService {
   async handleStatusCallback(
     workflowId: string,
     params: Record<string, string>,
+    tenantId: string,
   ): Promise<void> {
     const callSid = params["CallSid"];
     const status = params["CallStatus"] as CallStatusPayloadName;
@@ -853,9 +854,38 @@ export class CallsService {
       : undefined;
     const at = params["Timestamp"] ?? new Date().toISOString();
 
-    if (!this.temporal) {
+    // Always update the voice_call activity directly so the Inbox +
+    // Calls list reflect real-time status (initiated → ringing →
+    // in-progress → completed). Without this, fallback-dialed calls
+    // (where Temporal is null) stay frozen at dispatch status; and
+    // even Temporal-path calls surface status changes faster here
+    // than waiting for the workflow to re-emit to the activity.
+    try {
+      await withTenant(this.db, tenantId, async (tx) => {
+        const row = await this.activities.findByCallSid(tx, callSid);
+        if (!row) return;
+        const metaPatch: Record<string, unknown> = { status };
+        if (params["From"]) metaPatch["from_number"] = params["From"];
+        if (params["To"]) metaPatch["to_number"] = params["To"];
+        await this.activities.patchMetadata(tx, row.id, {
+          result: status,
+          ...(durationSeconds !== undefined &&
+          Number.isFinite(durationSeconds) &&
+          durationSeconds > 0
+            ? { durationSeconds }
+            : {}),
+          metadata: metaPatch,
+        });
+      });
+    } catch (err) {
       this.log.warn(
-        `call-status signal skipped for ${workflowId}: temporal unavailable`,
+        `call-status activity patch failed for ${workflowId}: ${(err as Error).message}`,
+      );
+    }
+
+    if (!this.temporal) {
+      this.log.log(
+        `call-status (no-temporal path): workflow=${workflowId} status=${status}`,
       );
       return;
     }
