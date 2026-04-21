@@ -4,7 +4,9 @@ import {
   computeFreightCost,
   computeVesselUtilization,
   dealVolumeMt,
+  validatePortConstraints,
   type FuelDealInputs,
+  type PortSpec,
   type VesselSpec,
 } from "./calculator.js";
 
@@ -192,5 +194,162 @@ describe("calculateFuelDeal — freightRateSweep sensitivity", () => {
     const r = calculateFuelDeal({ ...baseInputs, freightPerUsg: 0 });
     expect(r.sensitivity.freightRateSweep.values).toEqual([]);
     expect(r.sensitivity.freightRateSweep.highlightCol).toBe(-1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validatePortConstraints (0020_ports — T4)
+// ---------------------------------------------------------------------------
+
+const vesselMr: VesselSpec = {
+  class: "mr_tanker",
+  dwtMt: 48_000,
+  maxDraftM: 12.0,
+  loaM: 183,
+  beamM: 32,
+};
+
+function port(over: Partial<PortSpec> = {}): PortSpec {
+  return {
+    unlocode: "XXKIN",
+    name: "Test Port",
+    maxDraftM: 13,
+    maxLoaM: 250,
+    maxBeamM: 40,
+    maxDwtMt: 80_000,
+    reeferCapable: true,
+    congestionFactor: 1.0,
+    restrictedCargoNotes: null,
+    ...over,
+  };
+}
+
+describe("validatePortConstraints", () => {
+  it("fires draft_exceeds_port_limit when vessel draft > port draft", () => {
+    const w = validatePortConstraints({
+      product: "ulsd",
+      coldChainRequired: false,
+      vessel: { ...vesselMr, maxDraftM: 14 },
+      originPort: port({ maxDraftM: 12 }),
+      destinationPort: null,
+    });
+    expect(
+      w.find((x) => x.code === "port.draft_exceeds_port_limit"),
+    ).toBeDefined();
+    expect(
+      w.find((x) => x.code === "port.draft_exceeds_port_limit")!.severity,
+    ).toBe("critical");
+  });
+
+  it("fires loa_exceeds_port_limit when vessel LOA > port LOA", () => {
+    const w = validatePortConstraints({
+      product: "ulsd",
+      coldChainRequired: false,
+      vessel: { ...vesselMr, loaM: 260 },
+      originPort: port({ maxLoaM: 250 }),
+      destinationPort: null,
+    });
+    expect(w.some((x) => x.code === "port.loa_exceeds_port_limit")).toBe(true);
+  });
+
+  it("fires dwt_exceeds_port_limit at caution severity", () => {
+    const w = validatePortConstraints({
+      product: "ulsd",
+      coldChainRequired: false,
+      vessel: { ...vesselMr, dwtMt: 100_000 },
+      originPort: port({ maxDwtMt: 80_000 }),
+      destinationPort: null,
+    });
+    const hit = w.find((x) => x.code === "port.dwt_exceeds_port_limit");
+    expect(hit).toBeDefined();
+    expect(hit!.severity).toBe("caution");
+  });
+
+  it("fires reefer_not_supported when coldChainRequired + !reeferCapable", () => {
+    const w = validatePortConstraints({
+      product: "ulsd",
+      coldChainRequired: true,
+      vessel: null,
+      originPort: port({ reeferCapable: false }),
+      destinationPort: null,
+    });
+    expect(w.some((x) => x.code === "port.reefer_not_supported")).toBe(true);
+  });
+
+  it("fires restricted_cargo when token + restriction verb co-occur", () => {
+    const w = validatePortConstraints({
+      product: "hfo",
+      coldChainRequired: false,
+      vessel: null,
+      originPort: port({
+        restrictedCargoNotes: "No HFO above 0.5% sulfur allowed.",
+      }),
+      destinationPort: null,
+    });
+    expect(w.some((x) => x.code === "port.restricted_cargo")).toBe(true);
+  });
+
+  it("does NOT fire restricted_cargo on a benign note", () => {
+    const w = validatePortConstraints({
+      product: "hfo",
+      coldChainRequired: false,
+      vessel: null,
+      originPort: port({
+        restrictedCargoNotes: "Bunkering available for all standard fuels.",
+      }),
+      destinationPort: null,
+    });
+    expect(w.find((x) => x.code === "port.restricted_cargo")).toBeUndefined();
+  });
+
+  it("fires congestion_elevated when factor > 1.3", () => {
+    const w = validatePortConstraints({
+      product: "ulsd",
+      coldChainRequired: false,
+      vessel: null,
+      originPort: port({ congestionFactor: 1.45 }),
+      destinationPort: null,
+    });
+    expect(w.some((x) => x.code === "port.congestion_elevated")).toBe(true);
+  });
+
+  it("checks both legs and suffixes affectedField with origin/destination", () => {
+    const w = validatePortConstraints({
+      product: "ulsd",
+      coldChainRequired: false,
+      vessel: { ...vesselMr, maxDraftM: 14 },
+      originPort: port({ maxDraftM: 12 }),
+      destinationPort: port({ name: "Dest Port", maxDraftM: 11 }),
+    });
+    const drafts = w.filter((x) => x.code === "port.draft_exceeds_port_limit");
+    expect(drafts).toHaveLength(2);
+    expect(drafts.map((x) => x.affectedField).sort()).toEqual([
+      "port.destination.maxDraftM",
+      "port.origin.maxDraftM",
+    ]);
+  });
+
+  it("is a no-op when both ports are null", () => {
+    const w = validatePortConstraints({
+      product: "ulsd",
+      coldChainRequired: false,
+      vessel: vesselMr,
+      originPort: null,
+      destinationPort: null,
+    });
+    expect(w).toEqual([]);
+  });
+});
+
+describe("calculateFuelDeal — port warnings flow through", () => {
+  it("merges port warnings into the main warnings array", () => {
+    const r = calculateFuelDeal({
+      ...baseInputs,
+      vesselSpec: { ...vesselMr, maxDraftM: 14 },
+      originPort: port({ maxDraftM: 12 }),
+    });
+    expect(
+      r.warnings.some((w) => w.code === "port.draft_exceeds_port_limit"),
+    ).toBe(true);
   });
 });

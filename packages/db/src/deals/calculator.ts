@@ -95,6 +95,30 @@ export interface VesselSpec {
   class: VesselClass;
   dwtMt: number;
   maxDraftM: number;
+  /** Length overall (metres). Added for the port LOA constraint check. */
+  loaM?: number;
+  /** Beam (metres). Added for port beam constraint checks. */
+  beamM?: number;
+}
+
+/**
+ * Port physical + operational spec for the constraint checks in
+ * {@link validatePortConstraints}. Shape lines up with the `ports`
+ * dimension (0020_ports) — the calculator is pure, so callers pull
+ * the row via PortRepository and pass the subset they care about.
+ */
+export interface PortSpec {
+  unlocode: string;
+  name: string;
+  maxDraftM?: number | null;
+  maxLoaM?: number | null;
+  maxBeamM?: number | null;
+  maxDwtMt?: number | null;
+  reeferCapable?: boolean;
+  /** "congestion_factor" on the migration. > 1.0 = slower than nominal. */
+  congestionFactor?: number | null;
+  /** Free-text; the product→keyword match looks for restriction verbs here. */
+  restrictedCargoNotes?: string | null;
 }
 
 /**
@@ -228,6 +252,19 @@ export interface FuelDealInputs {
    * existing `freightPerUsg` per-USG entry.
    */
   freightRateUsdPerMt?: number;
+  /**
+   * Port specs from the ports dimension (0020_ports). Both optional —
+   * when present, {@link validatePortConstraints} runs draft / LOA /
+   * DWT / reefer / restricted-cargo / congestion checks and appends
+   * the findings to the main warnings array.
+   */
+  originPort?: PortSpec;
+  destinationPort?: PortSpec;
+  /**
+   * Food line-of-business flag. When true, ports touched by the deal
+   * must have reefer_capable = true or a critical warning fires.
+   */
+  coldChainRequired?: boolean;
   overheadAllocationUsd: number;
   tradeFinance: TradeFinanceInputs;
   counterpartyRiskScore: number;
@@ -807,7 +844,190 @@ export function calculateWarnings(
     });
   }
 
+  // --- Port constraints (0020_ports) --------------------------------------
+  // Run whenever either port is linked. Draft / LOA / DWT checks
+  // require a vessel; reefer + restricted-cargo + congestion checks
+  // don't. Each hit becomes a DealWarning; severities mirror the spec.
+  for (const w of validatePortConstraints({
+    product: inputs.product,
+    coldChainRequired: inputs.coldChainRequired ?? false,
+    vessel: inputs.vesselSpec ?? null,
+    originPort: inputs.originPort ?? null,
+    destinationPort: inputs.destinationPort ?? null,
+  })) {
+    warnings.push(w);
+  }
+
   return warnings;
+}
+
+// ===========================================================================
+// Port constraint checks (0020_ports)
+// ===========================================================================
+
+/**
+ * Inputs the port-constraint checks read off a deal. Kept minimal so
+ * callers (the calculator + the port-intelligence agent) can run the
+ * checks without the full FuelDealInputs surface.
+ */
+export interface PortCheckDeal {
+  product: ProductType;
+  coldChainRequired: boolean;
+}
+
+/**
+ * Port-side validation. Runs six cuts per leg (origin + destination):
+ *
+ *   draft_exceeds_port_limit   critical  vessel.maxDraftM > port.maxDraftM
+ *   loa_exceeds_port_limit     critical  vessel.loaM > port.maxLoaM
+ *   dwt_exceeds_port_limit     caution   vessel.dwtMt > port.maxDwtMt
+ *   reefer_not_supported       critical  coldChainRequired && !port.reeferCapable
+ *   restricted_cargo           caution   product token + restriction verb in notes
+ *   congestion_elevated        caution   port.congestionFactor > 1.3
+ *
+ * `affectedField` is suffixed with `.origin` / `.destination` so the
+ * UI can dedupe across the two legs.
+ */
+export function validatePortConstraints(args: {
+  product: ProductType;
+  coldChainRequired: boolean;
+  vessel: VesselSpec | null;
+  originPort: PortSpec | null;
+  destinationPort: PortSpec | null;
+}): DealWarning[] {
+  const warnings: DealWarning[] = [];
+  const legs: Array<{ label: "origin" | "destination"; port: PortSpec | null }> = [
+    { label: "origin", port: args.originPort },
+    { label: "destination", port: args.destinationPort },
+  ];
+  for (const { label, port } of legs) {
+    if (!port) continue;
+
+    if (args.vessel) {
+      if (
+        port.maxDraftM !== null &&
+        port.maxDraftM !== undefined &&
+        args.vessel.maxDraftM > port.maxDraftM
+      ) {
+        warnings.push({
+          code: "port.draft_exceeds_port_limit",
+          severity: "critical",
+          message:
+            `${port.name}: vessel draft ${args.vessel.maxDraftM.toFixed(1)}m ` +
+            `exceeds port max ${port.maxDraftM.toFixed(1)}m.`,
+          affectedField: `port.${label}.maxDraftM`,
+        });
+      }
+      if (
+        args.vessel.loaM !== undefined &&
+        port.maxLoaM !== null &&
+        port.maxLoaM !== undefined &&
+        args.vessel.loaM > port.maxLoaM
+      ) {
+        warnings.push({
+          code: "port.loa_exceeds_port_limit",
+          severity: "critical",
+          message:
+            `${port.name}: vessel LOA ${args.vessel.loaM.toFixed(0)}m ` +
+            `exceeds port max ${port.maxLoaM.toFixed(0)}m.`,
+          affectedField: `port.${label}.maxLoaM`,
+        });
+      }
+      if (
+        port.maxDwtMt !== null &&
+        port.maxDwtMt !== undefined &&
+        args.vessel.dwtMt > port.maxDwtMt
+      ) {
+        warnings.push({
+          code: "port.dwt_exceeds_port_limit",
+          severity: "caution",
+          message:
+            `${port.name}: vessel DWT ${args.vessel.dwtMt.toLocaleString()} MT ` +
+            `exceeds port max ${port.maxDwtMt.toLocaleString()} MT.`,
+          affectedField: `port.${label}.maxDwtMt`,
+        });
+      }
+    }
+
+    if (args.coldChainRequired && port.reeferCapable === false) {
+      warnings.push({
+        code: "port.reefer_not_supported",
+        severity: "critical",
+        message:
+          `${port.name}: deal requires cold-chain handling but port is not reefer-capable.`,
+        affectedField: `port.${label}.reeferCapable`,
+      });
+    }
+
+    if (hasRestrictedCargoMatch(port.restrictedCargoNotes, args.product)) {
+      warnings.push({
+        code: "port.restricted_cargo",
+        severity: "caution",
+        message:
+          `${port.name}: restricted cargo note may apply to ${args.product} — ` +
+          `operator review required (${truncate(port.restrictedCargoNotes!, 80)}).`,
+        affectedField: `port.${label}.restrictedCargoNotes`,
+      });
+    }
+
+    if (
+      port.congestionFactor !== null &&
+      port.congestionFactor !== undefined &&
+      port.congestionFactor > 1.3
+    ) {
+      warnings.push({
+        code: "port.congestion_elevated",
+        severity: "caution",
+        message:
+          `${port.name}: congestion factor ${port.congestionFactor.toFixed(2)}× — ` +
+          `expect +${((port.congestionFactor - 1) * 100).toFixed(0)}% on port days.`,
+        affectedField: `port.${label}.congestionFactor`,
+      });
+    }
+  }
+  return warnings;
+}
+
+/**
+ * Product → keyword match for the `restricted_cargo` check. Hits when
+ * the port's free-text notes contain BOTH a product token AND a
+ * restriction verb. Tuned to be conservative — false positives create
+ * operator friction; false negatives are caught downstream by the
+ * agent / human review.
+ */
+const PRODUCT_RESTRICTION_TOKENS: Record<string, string[]> = {
+  ulsd: ["ulsd", "diesel"],
+  gasoline_87: ["gasoline", "mogas"],
+  gasoline_91: ["gasoline", "mogas"],
+  jet_a: ["jet", "aviation"],
+  jet_a1: ["jet", "aviation"],
+  avgas: ["avgas", "aviation"],
+  lfo: ["lfo", "light fuel"],
+  hfo: ["hfo", "heavy fuel", "sulfur", "sulphur"],
+  lng: ["lng", "liquefied natural"],
+  lpg: ["lpg", "propane", "butane"],
+  biodiesel_b20: ["biodiesel", "bio-diesel", "b20"],
+};
+
+const RESTRICTION_VERBS_RE =
+  /\b(no|not|prohibit|prohibited|restrict|restricted|ban|banned|disallow|disallowed|forbid|forbidden|only)\b/i;
+
+function hasRestrictedCargoMatch(
+  notes: string | null | undefined,
+  product: string,
+): boolean {
+  if (!notes) return false;
+  const tokens = PRODUCT_RESTRICTION_TOKENS[product];
+  if (!tokens || tokens.length === 0) return false;
+  const lower = notes.toLowerCase();
+  const matchedToken = tokens.some((t) => lower.includes(t));
+  if (!matchedToken) return false;
+  return RESTRICTION_VERBS_RE.test(notes);
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 1).trimEnd()}…`;
 }
 
 // ===========================================================================
