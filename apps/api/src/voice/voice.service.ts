@@ -1,4 +1,9 @@
-import { Inject, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { withTenant, type Db } from "@vex/db";
 import {
@@ -134,6 +139,30 @@ export class VoiceService {
     });
 
     return { sessionId: input.sessionId, status: "processing" };
+  }
+
+  /**
+   * Transcribe a short clip uploaded from the chat composer's mic button.
+   * The browser hits this via the apps/web proxy; we forward the audio
+   * blob straight to Whisper and return the text so the client can drop
+   * it into the textarea. Cost is booked on the shared ledger.
+   */
+  async transcribe(input: {
+    tenantId: string;
+    audio: Buffer;
+    filename: string;
+    mimeType: string;
+  }): Promise<{ text: string; durationSeconds: number }> {
+    if (input.audio.length === 0) {
+      throw new BadRequestException("empty audio payload");
+    }
+    return this.openai.transcribe({
+      tenantId: TenantId(input.tenantId),
+      idempotencyKey: `voice.transcribe:${createId()}`,
+      audio: input.audio,
+      filename: input.filename || "clip.webm",
+      mimeType: input.mimeType || "audio/webm",
+    });
   }
 
   async detail(tenantId: string, sessionId: string): Promise<VoiceSessionRecord> {

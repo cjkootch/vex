@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -45,6 +52,22 @@ export function ConversationThread({ turns, onTurns, scope, initialDraft }: Prop
   const { text, manifest, isStreaming, wakingUp, error, send } = useVexQuery();
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const initialDraftAppliedRef = useRef<string | undefined>(initialDraft);
+
+  // Voice-input state — mic button next to the Send button records a
+  // short clip, POSTs it to /api/voice/transcribe, and drops the text
+  // back into the composer. MediaRecorder is gated behind a feature
+  // check so unsupported browsers just hide the button.
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const voiceSupported =
+    typeof window !== "undefined" &&
+    typeof window.MediaRecorder !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia);
   // If a new initialDraft arrives (e.g. operator clicks a different
   // subject's Ask Vex while already on /app/chat), refresh the input
   // once — but don't clobber what they've typed mid-edit.
@@ -75,6 +98,98 @@ export function ConversationThread({ turns, onTurns, scope, initialDraft }: Prop
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [turns.length, text]);
+
+  const stopMediaStream = useCallback((): void => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    recorderRef.current = null;
+    chunksRef.current = [];
+  }, []);
+
+  useEffect(() => stopMediaStream, [stopMediaStream]);
+
+  async function startRecording(): Promise<void> {
+    if (recording || transcribing) return;
+    setVoiceError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      // webm/opus is the broadest MediaRecorder default; Whisper accepts
+      // it directly. We let the browser pick if the hint isn't supported.
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+          ? "audio/webm"
+          : "";
+      const recorder = mime
+        ? new MediaRecorder(stream, { mimeType: mime })
+        : new MediaRecorder(stream);
+      recorderRef.current = recorder;
+      chunksRef.current = [];
+      recorder.ondataavailable = (evt) => {
+        if (evt.data && evt.data.size > 0) chunksRef.current.push(evt.data);
+      };
+      recorder.onstop = () => {
+        const type = recorder.mimeType || "audio/webm";
+        const blob = new Blob(chunksRef.current, { type });
+        stopMediaStream();
+        if (blob.size === 0) return;
+        void uploadClip(blob);
+      };
+      recorder.start();
+      setRecording(true);
+    } catch (err) {
+      stopMediaStream();
+      setVoiceError(
+        err instanceof DOMException && err.name === "NotAllowedError"
+          ? "mic permission denied"
+          : "couldn’t start recording",
+      );
+    }
+  }
+
+  function stopRecording(): void {
+    if (!recorderRef.current || !recording) return;
+    setRecording(false);
+    setTranscribing(true);
+    try {
+      recorderRef.current.stop();
+    } catch {
+      setTranscribing(false);
+      stopMediaStream();
+    }
+  }
+
+  async function uploadClip(blob: Blob): Promise<void> {
+    try {
+      const ext = blob.type.includes("mp4")
+        ? "mp4"
+        : blob.type.includes("ogg")
+          ? "ogg"
+          : "webm";
+      const form = new FormData();
+      form.append("audio", blob, `clip.${ext}`);
+      const res = await fetch("/api/voice/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        setVoiceError(`transcribe failed (${res.status})`);
+        return;
+      }
+      const json = (await res.json()) as { text?: string };
+      const heard = (json.text ?? "").trim();
+      if (!heard) {
+        setVoiceError("no speech detected");
+        return;
+      }
+      setInput((prev) => (prev ? `${prev} ${heard}` : heard));
+    } catch (err) {
+      setVoiceError(`transcribe failed: ${(err as Error).message}`);
+    } finally {
+      setTranscribing(false);
+    }
+  }
 
   function handleSubmit(e: FormEvent<HTMLFormElement>): void {
     e.preventDefault();
@@ -187,23 +302,55 @@ export function ConversationThread({ turns, onTurns, scope, initialDraft }: Prop
         onSubmit={handleSubmit}
         className="flex-shrink-0 border-t border-line bg-canvas/95 px-6 py-4 backdrop-blur"
       >
-        <div className="mx-auto flex max-w-3xl items-end gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKey}
-            placeholder="Ask Vex…"
-            rows={1}
-            data-testid="chat-input"
-            className="min-h-[44px] flex-1 resize-none rounded-md border border-line bg-muted/60 px-3 py-2 text-base text-white outline-none focus:border-accent md:text-sm"
-          />
-          <button
-            type="submit"
-            disabled={isStreaming || !input.trim()}
-            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-30"
-          >
-            Send
-          </button>
+        <div className="mx-auto flex max-w-3xl flex-col gap-1">
+          <div className="flex items-end gap-2">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKey}
+              placeholder={
+                recording ? "Listening…" : transcribing ? "Transcribing…" : "Ask Vex…"
+              }
+              rows={1}
+              data-testid="chat-input"
+              disabled={recording || transcribing}
+              className="min-h-[44px] flex-1 resize-none rounded-md border border-line bg-muted/60 px-3 py-2 text-base text-white outline-none focus:border-accent disabled:opacity-70 md:text-sm"
+            />
+            {voiceSupported && (
+              <button
+                type="button"
+                onClick={recording ? stopRecording : () => void startRecording()}
+                disabled={transcribing || isStreaming}
+                aria-label={recording ? "Stop recording" : "Start voice input"}
+                data-testid="chat-mic"
+                className={`flex h-[44px] w-[44px] items-center justify-center rounded-md border text-sm disabled:opacity-30 ${
+                  recording
+                    ? "border-bad/60 bg-bad/20 text-bad"
+                    : "border-line bg-muted/60 text-white/70 hover:text-white"
+                }`}
+              >
+                {transcribing ? (
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                ) : recording ? (
+                  <MicStopIcon />
+                ) : (
+                  <MicIcon />
+                )}
+              </button>
+            )}
+            <button
+              type="submit"
+              disabled={isStreaming || !input.trim() || recording || transcribing}
+              className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-30"
+            >
+              Send
+            </button>
+          </div>
+          {voiceError && (
+            <p className="text-xs text-bad" data-testid="chat-mic-error">
+              {voiceError}
+            </p>
+          )}
         </div>
       </form>
     </div>
@@ -593,5 +740,32 @@ function Dot({ delay }: { delay: number }) {
       animate={{ opacity: [0.35, 1, 0.35], y: [0, -2, 0] }}
       transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut", delay }}
     />
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-5 w-5"
+      aria-hidden
+    >
+      <rect x="7.5" y="2.5" width="5" height="9" rx="2.5" />
+      <path d="M4.5 9.5a5.5 5.5 0 0 0 11 0" />
+      <path d="M10 15v2.5" />
+    </svg>
+  );
+}
+
+function MicStopIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3" aria-hidden>
+      <rect x="4" y="4" width="12" height="12" rx="1.5" />
+    </svg>
   );
 }
