@@ -28,6 +28,16 @@ export interface InboundEmailBody {
   html: string | null;
 }
 
+/**
+ * Cap the returned text + html so the downstream EmailInboundPayload
+ * zod schema (`text.max(200_000)`, `html.max(500_000)`) never rejects
+ * a real email. Threaded Outlook replies with embedded base64 image
+ * signatures blow past 500KB easily — 6 thread turns × ~60KB inline
+ * PNG = 400KB+ before the zod cap cares about the html's own length.
+ */
+const TEXT_CAP = 190_000;
+const HTML_CAP = 480_000;
+
 export async function fetchResendInboundBody(
   apiKey: string,
   emailId: string,
@@ -48,9 +58,11 @@ export async function fetchResendInboundBody(
       text?: string | null;
       html?: string | null;
     };
+    const text = typeof body.text === "string" ? body.text : null;
+    const html = typeof body.html === "string" ? body.html : null;
     return {
-      text: typeof body.text === "string" ? body.text : null,
-      html: typeof body.html === "string" ? body.html : null,
+      text: text !== null ? text.slice(0, TEXT_CAP) : null,
+      html: html !== null ? html.slice(0, HTML_CAP) : null,
     };
   } catch {
     return null;
