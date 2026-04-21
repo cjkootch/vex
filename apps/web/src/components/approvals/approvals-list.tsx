@@ -370,6 +370,9 @@ function ApprovalCard({
     case "contact.merge":
       body = <ContactMergeBody payload={item.proposedPayload} />;
       break;
+    case "contact.update":
+      body = <ContactUpdateBody payload={item.proposedPayload} />;
+      break;
     case "call.request_backup":
       body = <CallBackupBody payload={item.proposedPayload} />;
       break;
@@ -842,6 +845,67 @@ function CreateDealBody({ payload }: { payload: Record<string, unknown> }) {
           {notes}
         </p>
       )}
+      {rationale && (
+        <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
+          “{rationale}”
+        </p>
+      )}
+    </div>
+  );
+}
+
+function ContactUpdateBody({ payload }: { payload: Record<string, unknown> }) {
+  const contactId = stringField(payload, "contactId");
+  const patch = (payload["patch"] ?? {}) as Record<string, unknown>;
+  const rationale = stringField(payload, "rationale");
+  const rows: Array<{ label: string; value: string }> = [];
+  const push = (label: string, val: unknown): void => {
+    if (val === undefined) return;
+    if (val === null) {
+      rows.push({ label, value: "<cleared>" });
+      return;
+    }
+    if (Array.isArray(val)) {
+      rows.push({ label, value: val.length === 0 ? "<empty>" : val.join(", ") });
+      return;
+    }
+    if (typeof val === "string") rows.push({ label, value: val });
+  };
+  push("Name", patch["fullName"]);
+  push("Title", patch["title"]);
+  push("Emails", patch["emails"]);
+  push("Phones", patch["phones"]);
+  push("Timezone", patch["timezone"]);
+  push("Tags", patch["tags"]);
+
+  return (
+    <div className="mt-2 space-y-1.5">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="font-semibold text-white">Update contact</span>
+        {contactId ? (
+          <Link
+            href={`/app/contacts/${encodeURIComponent(contactId)}`}
+            className="font-mono text-white/70 hover:text-accent"
+          >
+            {contactId.slice(-8)}
+          </Link>
+        ) : (
+          <span className="text-bad">&lt;no contactId&gt;</span>
+        )}
+      </div>
+      {rows.length > 0 ? (
+        <dl className="grid grid-cols-[80px_1fr] gap-x-4 gap-y-1 text-xs">
+          {rows.map((r) => (
+            <KV key={r.label} label={r.label}>{r.value}</KV>
+          ))}
+        </dl>
+      ) : (
+        <p className="text-xs text-bad">⚠ patch is empty — executor will reject.</p>
+      )}
+      <p className="text-[11px] text-white/40">
+        Arrays REPLACE the existing set (emails / phones / tags), not
+        append. Verify the full target list above before approving.
+      </p>
       {rationale && (
         <p className="border-t border-line/40 pt-1.5 text-xs italic text-white/60">
           “{rationale}”

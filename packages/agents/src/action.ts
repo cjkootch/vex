@@ -149,6 +149,37 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     contactIds: z.array(zUlid).min(1).max(500),
     rationale: z.string().min(1).max(1000),
   }),
+  // Chat-initiated contact patch. Updates any subset of the
+  // operator-editable fields on a single contact. At least one
+  // field must be present — the executor rejects an empty patch.
+  // Emails and phones are ARRAYS — the full replacement set, not
+  // an append. Null in a field clears it (except fullName which
+  // stays required).
+  z.object({
+    kind: z.literal("contact.update"),
+    tier: z.literal(ApprovalTier.T2),
+    contactId: zUlid,
+    patch: z
+      .object({
+        fullName: z.string().min(1).max(200).optional(),
+        title: z.string().max(200).nullable().optional(),
+        emails: z.array(z.string().email()).max(20).optional(),
+        phones: z
+          .array(
+            z
+              .string()
+              .regex(/^\+[1-9]\d{7,14}$/, "phones must be E.164 (e.g. +18324927169)"),
+          )
+          .max(20)
+          .optional(),
+        timezone: z.string().max(100).nullable().optional(),
+        tags: z.array(z.string().min(1).max(64)).max(40).optional(),
+      })
+      .refine((p) => Object.keys(p).length > 0, {
+        message: "patch must have at least one field",
+      }),
+    rationale: z.string().min(1).max(1000),
+  }),
   // Chat-initiated contact merge. Unifies two contact records so
   // every timeline edge (touchpoints, activities, leads, org
   // memberships, emails, phones, tags) rolls up under the target.

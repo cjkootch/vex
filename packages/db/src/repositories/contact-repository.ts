@@ -227,6 +227,44 @@ export class ContactRepository {
   }
 
   /**
+   * Patch an existing contact. Caller supplies a partial Contact —
+   * only fields present on the object get written. `null` in a
+   * nullable field (title, timezone) clears it; `undefined` leaves
+   * the existing value alone. Arrays (emails / phones / tags) are
+   * full replacements, NOT appends.
+   *
+   * Throws if the contact doesn't exist — the executor turns that
+   * into a clean approval.executor.failed audit event.
+   */
+  async updatePatch(
+    tx: Tx,
+    id: string,
+    patch: {
+      fullName?: string;
+      title?: string | null;
+      emails?: string[];
+      phones?: string[];
+      timezone?: string | null;
+      tags?: string[];
+    },
+  ): Promise<Contact> {
+    const set: Record<string, unknown> = { updatedAt: new Date() };
+    if (patch.fullName !== undefined) set["fullName"] = patch.fullName;
+    if (patch.title !== undefined) set["title"] = patch.title;
+    if (patch.emails !== undefined) set["emails"] = patch.emails;
+    if (patch.phones !== undefined) set["phones"] = patch.phones;
+    if (patch.timezone !== undefined) set["timezone"] = patch.timezone;
+    if (patch.tags !== undefined) set["tags"] = patch.tags;
+    const [row] = await tx
+      .update(contacts)
+      .set(set)
+      .where(eq(contacts.id, id))
+      .returning();
+    if (!row) throw new Error(`contact ${id} not found`);
+    return row;
+  }
+
+  /**
    * Merge `sourceId` into `targetId`. Inside one transaction:
    *   1. Move FK-owning rows (touchpoints, activities, leads) from
    *      source → target so the target's timeline inherits the

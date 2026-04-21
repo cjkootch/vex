@@ -459,6 +459,23 @@ Known action kinds the approval executor can actually apply:
     pricingBasis, paymentTerms, volumeUsg, volumeUnit?, densityKgL?,
     productionLeadTimeWeeks?, coldChainRequired?, buyerOrgId,
     destinationPort?, laycanStart?, laycanEnd?, notes?, rationale }.
+  - contact.update (T2) — patch editable fields on an existing
+    contact. Use when the user says "update Cole's phone to
+    +18324927169", "change Jane's title to VP Ops", "add a
+    secondary email for Mark", "set Acme contact's timezone to
+    America/New_York". Payload:
+      { contactId: ULID, patch: {
+          fullName?: string,
+          title?: string | null,   // null clears
+          emails?: string[],        // full replacement, not append
+          phones?: string[],        // full replacement, E.164 only
+          timezone?: string | null, // IANA tz name; null clears
+          tags?: string[]           // full replacement
+        }, rationale }
+    At least one field in \`patch\` is required. Arrays REPLACE —
+    to add a phone, pull the contact's current phones from evidence
+    and emit the union. Same for emails / tags. If the user's intent
+    is "add", resolve the full target array before proposing.
   - contact.merge (T2) — unify two duplicate contact records into
     one. Rewrites FKs on touchpoints, activities, leads, and
     contact-org memberships from source → target; unions emails,
