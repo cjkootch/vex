@@ -17,10 +17,11 @@ export interface SendEmailRequest {
 
 /**
  * Resend's inbound webhook delivers metadata only (from/to/subject/
- * email_id/attachments). The parsed body lives behind their REST API:
- * GET /emails/{id} — reachable with the same API key we use to send.
- * Returns null on non-200 or fetch error so the caller can treat it
- * as best-effort and still store the metadata-only row.
+ * email_id/attachments). The parsed body lives behind
+ * GET /emails/receiving/{id} — distinct from the outbound GET
+ * /emails/{id} which 404s for inbound ids. Returns null on non-200
+ * or fetch error so the caller can treat it as best-effort and
+ * still store the metadata-only row.
  */
 export interface InboundEmailBody {
   text: string | null;
@@ -35,7 +36,7 @@ export async function fetchResendInboundBody(
   const fetchImpl = options.fetchImpl ?? fetch;
   try {
     const res = await fetchImpl(
-      `https://api.resend.com/emails/${encodeURIComponent(emailId)}`,
+      `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`,
       {
         method: "GET",
         headers: { authorization: `Bearer ${apiKey}` },
