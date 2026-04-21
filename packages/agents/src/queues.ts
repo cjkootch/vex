@@ -49,7 +49,8 @@ export type AgentJobKind =
   | "lead_qualification"
   | "reactivation_batch"
   | "ofac_screening"
-  | "freight_market";
+  | "freight_market"
+  | "port_intelligence";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;
@@ -267,6 +268,18 @@ export async function scheduleRecurringAgents(
     {
       repeat: { pattern: "0 6 * * *" },
       jobId: `recurring:freight_market:${workspaceId}`,
+    },
+  );
+  // Daily 05:00 — port constraint + active-event checks across every
+  // open deal. Runs before the freight market pass + the daily brief
+  // so port warnings land in the signals inbox first thing in the
+  // morning, ahead of any desk action.
+  await queue.add(
+    "port_intelligence",
+    { kind: "port_intelligence", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 5 * * *" },
+      jobId: `recurring:port_intelligence:${workspaceId}`,
     },
   );
 }

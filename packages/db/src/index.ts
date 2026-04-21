@@ -83,6 +83,7 @@ export {
   calculateUnitEconomics,
   calculateVesselEconomics,
   calculateWarnings,
+  validatePortConstraints,
   DealRecommendation,
   DealWarningSeverity,
   type BreakevenAnalysis,
@@ -95,7 +96,10 @@ export {
   type FuelDealResults,
   type InsuranceCosts,
   type PerUsgEconomics,
+  type PortCheckDeal,
+  type PortSpec,
   type TradeFinanceInputs,
   type VesselEconomics,
   type VesselInputs,
+  type VesselSpec,
 } from "./deals/calculator.js";

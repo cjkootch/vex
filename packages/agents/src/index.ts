@@ -104,6 +104,7 @@ export {
   LeadQualificationAgent,
   FreightMarketAgent,
   OFACScreeningAgent,
+  PortIntelligenceAgent,
   ReactivationBatchAgent,
   VesselIntelligenceAgent,
   sanctionsExposureRiskFor,
@@ -114,6 +115,7 @@ export {
   type CallPrepAgentInput,
   type LeadQualificationInput,
   type OfacScreeningAgentInput,
+  type PortIntelligenceInput,
   type ReactivationBatchInput,
   type VesselIntelligenceInput,
 } from "./agents/index.js";

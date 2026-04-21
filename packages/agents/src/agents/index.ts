@@ -25,3 +25,7 @@ export {
   type VesselIntelligenceInput,
 } from "./vessel-intelligence.js";
 export { FreightMarketAgent } from "./freight-market.js";
+export {
+  PortIntelligenceAgent,
+  type PortIntelligenceInput,
+} from "./port-intelligence.js";
