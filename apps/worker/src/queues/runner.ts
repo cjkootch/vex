@@ -582,6 +582,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyContactMerge(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "contact.update") {
+          await applyContactUpdate(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "campaign.create") {
           await applyCampaignCreate(tx, deps, workspace_id, approval);
           return;
@@ -2471,6 +2475,86 @@ async function applyEnrollBatch(
         );
       }
     }
+  }
+}
+
+/**
+ * Approved `contact.update` — patch an existing contact's editable
+ * fields (fullName, title, emails, phones, timezone, tags).
+ * Arrays are full replacements, not appends. The agent-side zod
+ * descriptor already enforced "at least one field present" and
+ * E.164 on phones, so this branch just relays the patch and emits
+ * an audit event.
+ */
+async function applyContactUpdate(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as {
+    contactId?: string;
+    patch?: Record<string, unknown> | null;
+    rationale?: string;
+  } | null;
+  const contactId = payload?.contactId;
+  const patch = payload?.patch;
+  if (!contactId || !patch || typeof patch !== "object") {
+    const missing: string[] = [];
+    if (!contactId) missing.push("contactId");
+    if (!patch) missing.push("patch");
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.update",
+      `missing ${missing.join(" + ")}`,
+    );
+    return;
+  }
+  if (approval.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, approval, "contact.update");
+    return;
+  }
+  try {
+    const updated = await deps.contacts.updatePatch(tx, contactId, {
+      ...(typeof patch["fullName"] === "string" ? { fullName: patch["fullName"] } : {}),
+      ...("title" in patch ? { title: patch["title"] as string | null } : {}),
+      ...(Array.isArray(patch["emails"]) ? { emails: patch["emails"] as string[] } : {}),
+      ...(Array.isArray(patch["phones"]) ? { phones: patch["phones"] as string[] } : {}),
+      ...("timezone" in patch
+        ? { timezone: patch["timezone"] as string | null }
+        : {}),
+      ...(Array.isArray(patch["tags"]) ? { tags: patch["tags"] as string[] } : {}),
+    });
+    await deps.approvals.markApplied(tx, approval.id, updated.id);
+    await deps.events.insertIfNotExists(tx, tenantId, {
+      verb: "contact.updated",
+      subjectType: "contact",
+      subjectId: updated.id,
+      actorType: "user",
+      actorId: approval.reviewerId ?? "approval_executor",
+      objectType: "contact",
+      objectId: updated.id,
+      occurredAt: new Date(),
+      idempotencyKey: `contact.updated:${approval.id}`,
+      metadata: {
+        approval_id: approval.id,
+        fields: Object.keys(patch),
+        rationale: payload?.rationale ?? null,
+        applied_by: approval.reviewerId,
+      },
+    });
+  } catch (err) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.update",
+      (err as Error).message,
+    );
   }
 }
 
