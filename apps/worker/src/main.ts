@@ -95,6 +95,7 @@ async function main(): Promise<void> {
     temporalClient = await createTemporalClient({
       address: env.TEMPORAL_ADDRESS,
       namespace: env.TEMPORAL_NAMESPACE,
+      ...(env.TEMPORAL_API_KEY ? { apiKey: env.TEMPORAL_API_KEY } : {}),
     });
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -202,6 +203,7 @@ async function main(): Promise<void> {
           address: env.TEMPORAL_ADDRESS,
           namespace: env.TEMPORAL_NAMESPACE,
           taskQueue: env.TEMPORAL_TASK_QUEUE,
+          ...(env.TEMPORAL_API_KEY ? { apiKey: env.TEMPORAL_API_KEY } : {}),
           db,
           anthropic,
           costLedger,
