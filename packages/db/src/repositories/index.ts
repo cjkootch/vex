@@ -95,3 +95,9 @@ export {
   type VesselListFilter,
   type VesselUpdate,
 } from "./vessel-repository.js";
+export {
+  FreightRateRepository,
+  type FreightRateInsert,
+  type FreightRateRouteQuery,
+  type MarkToMarketResult,
+} from "./freight-rate-repository.js";
