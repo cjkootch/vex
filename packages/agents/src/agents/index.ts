@@ -20,3 +20,7 @@ export {
   sanctionsExposureRiskFor,
   type OfacScreeningAgentInput,
 } from "./ofac-screening.js";
+export {
+  VesselIntelligenceAgent,
+  type VesselIntelligenceInput,
+} from "./vessel-intelligence.js";

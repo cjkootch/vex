@@ -104,6 +104,7 @@ export {
   LeadQualificationAgent,
   OFACScreeningAgent,
   ReactivationBatchAgent,
+  VesselIntelligenceAgent,
   sanctionsExposureRiskFor,
   type AgentContext,
   type AgentOutput,
@@ -113,6 +114,7 @@ export {
   type LeadQualificationInput,
   type OfacScreeningAgentInput,
   type ReactivationBatchInput,
+  type VesselIntelligenceInput,
 } from "./agents/index.js";
 export {
   evaluateGate,
