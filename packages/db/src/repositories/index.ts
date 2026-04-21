@@ -43,8 +43,10 @@ export {
 } from "./approval-repository.js";
 export { ThreadRepository } from "./thread-repository.js";
 export {
+  PostgresCostLedger,
   PostgresCostLedgerRepository,
   type CostLedgerRepository,
+  type CostLedgerInsert,
 } from "./cost-ledger-repository.js";
 export {
   CounterpartyRiskRepository,

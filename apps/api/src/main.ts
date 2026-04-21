@@ -22,6 +22,7 @@ import {
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
   OrganizationRepository,
+  PostgresCostLedger,
   RawEventRepository,
   RetrievalService,
   SummaryRepository,
@@ -45,7 +46,7 @@ import {
   createTavilyClient,
   createTwilioClient,
 } from "@vex/integrations";
-import { initOtel, InMemoryCostLedger, shutdownOtel } from "@vex/telemetry";
+import { initOtel, shutdownOtel } from "@vex/telemetry";
 import { AppModule } from "./app.module.js";
 import { WebhooksModule } from "./webhooks/webhooks.module.js";
 import { QueryModule } from "./query/query.module.js";
@@ -124,7 +125,10 @@ async function bootstrap(): Promise<void> {
   const redis = createRedisConnection(env.REDIS_URL);
   const queues = createQueues(redis);
 
-  const costLedger = new InMemoryCostLedger();
+  // Persist every LLM cost entry through to Postgres so the Admin
+  // Cost tab reflects real spend. InMemoryCostLedger evaporates on
+  // restart and was the reason Today/Week/Month sat at $0.00.
+  const costLedger = new PostgresCostLedger(db);
   const openai = new OpenAIAdapter({ apiKey: env.OPENAI_API_KEY, costLedger });
   const anthropic = new AnthropicAdapter({ apiKey: env.ANTHROPIC_API_KEY, costLedger });
   const retrieval = new RetrievalService();

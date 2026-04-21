@@ -42,6 +42,7 @@ import {
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
   OrganizationRepository,
+  PostgresCostLedger,
   PostgresCostLedgerRepository,
   RawEventRepository,
   FollowUpRepository,
@@ -72,7 +73,6 @@ import {
 
 type ResendClient = ReturnType<typeof createResendClient>;
 import {
-  InMemoryCostLedger,
   recordQueueBackpressure,
   recordQueueDepth,
 } from "@vex/telemetry";
@@ -198,7 +198,9 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   const dlqWorker = createDlqWorker(dlqProcessor, connection);
   await dlqWorker.waitUntilReady();
 
-  const costLedger = new InMemoryCostLedger();
+  // Persist every LLM cost entry through to Postgres so the Admin
+  // Cost tab + agent-runner daily budget gate both see real spend.
+  const costLedger = new PostgresCostLedger(db);
   const anthropic = new AnthropicAdapter({ apiKey: options.anthropicApiKey, costLedger });
   const openai = new OpenAIAdapter({ apiKey: options.openaiApiKey, costLedger });
   const retrieval = new RetrievalService();
