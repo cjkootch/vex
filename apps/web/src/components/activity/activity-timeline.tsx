@@ -154,6 +154,16 @@ const VERB_LABELS: Record<string, string> = {
   "organization.created": "Company created",
   "approval.executor.received": "Approval routed to executor",
   "approval.executor.failed": "Approval executor failed",
+  "email.sent": "Email sent",
+  "email.received": "Email received",
+  "email.delivered": "Email delivered",
+  "email.bounced": "Email bounced",
+  "email.opened": "Email opened",
+  "email.clicked": "Email link clicked",
+  "sms.sent": "SMS sent",
+  "sms.received": "SMS received",
+  "whatsapp.sent": "WhatsApp sent",
+  "whatsapp.received": "WhatsApp received",
   "deal.milestone.bis_license_issued": "BIS licence issued",
   "deal.milestone.ofac_cleared": "OFAC cleared",
   "deal.milestone.contract_signed": "Contract signed",
@@ -198,6 +208,25 @@ function formatRelative(iso: string): string {
 
 function renderMetadata(event: ActivityEvent) {
   const md = event.metadata ?? {};
+
+  // Email (inbound + outbound) gets a richer row — subject on its own
+  // line and preview below so operators don't have to expand to see
+  // what arrived. from_addr contextualises inbound replies.
+  if (event.verb.startsWith("email.")) {
+    const subject = stringField(md, "subject");
+    const from = stringField(md, "from");
+    const preview = stringField(md, "preview");
+    if (subject || from || preview) {
+      return (
+        <div className="mt-1 flex flex-col gap-0.5 text-xs text-white/70">
+          {subject && <div className="font-medium text-white/90">{subject}</div>}
+          {from && <div className="text-white/50">from {from}</div>}
+          {preview && <div className="text-white/60">{preview}</div>}
+        </div>
+      );
+    }
+  }
+
   const bits: string[] = [];
   const from = md["from_status"];
   const to = md["to_status"];
@@ -224,4 +253,12 @@ function renderMetadata(event: ActivityEvent) {
   return (
     <div className="mt-0.5 text-xs text-white/60">{bits.join(" · ")}</div>
   );
+}
+
+function stringField(
+  md: Record<string, unknown>,
+  key: string,
+): string | null {
+  const v = md[key];
+  return typeof v === "string" && v.trim().length > 0 ? v : null;
 }
