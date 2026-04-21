@@ -29,4 +29,5 @@ export * from "./fuel-deal-cashflow-events.js";
 export * from "./fuel-deal-scenarios.js";
 export * from "./fuel-deal-counterparty-scores.js";
 export * from "./fuel-deal-documents.js";
+export * from "./fuel-deal-participants.js";
 export * from "./fuel-market-rates.js";

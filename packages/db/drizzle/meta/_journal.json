@@ -120,6 +120,13 @@
       "when": 1777708800000,
       "tag": "0016_deal_frequency",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1777795200000,
+      "tag": "0017_fuel_deal_participants",
+      "breakpoints": true
     }
   ]
 }

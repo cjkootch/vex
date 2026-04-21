@@ -3,6 +3,7 @@ import type {
   ApprovalRepository,
   Db,
   EventRepository,
+  FuelDealParticipantRepository,
   FuelDealRepository,
   FuelMarketRateRepository,
   OrganizationRepository,
@@ -13,6 +14,7 @@ import {
   DEALS_EVENT_REPO,
   DEALS_MARKET_RATE_REPO,
   DEALS_ORGS_REPO,
+  DEALS_PARTICIPANT_REPO,
   DEALS_REPO,
   DealsController,
 } from "./deals.controller.js";
@@ -24,6 +26,7 @@ export interface DealsModuleConfig {
   approvals: ApprovalRepository;
   organizations: OrganizationRepository;
   marketRates: FuelMarketRateRepository;
+  participants: FuelDealParticipantRepository;
 }
 
 /**
@@ -47,6 +50,7 @@ export class DealsModule {
         { provide: DEALS_APPROVAL_REPO, useFactory: () => config.approvals },
         { provide: DEALS_ORGS_REPO, useFactory: () => config.organizations },
         { provide: DEALS_MARKET_RATE_REPO, useFactory: () => config.marketRates },
+        { provide: DEALS_PARTICIPANT_REPO, useFactory: () => config.participants },
       ],
     };
   }

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type {
   CounterpartyRiskTier,
@@ -28,6 +28,10 @@ import {
   type FuelDealScenario,
 } from "../schema/fuel-deal-scenarios.js";
 import { fuelDeals, type FuelDeal, type NewFuelDeal } from "../schema/fuel-deals.js";
+import {
+  fuelDealParticipants,
+  type FuelDealParticipant,
+} from "../schema/fuel-deal-participants.js";
 import {
   fuelMarketRates,
   type FuelMarketRate,
@@ -546,5 +550,77 @@ export class FuelMarketRateRepository {
       .returning();
     if (!row) throw new Error("fuel_market_rates insert returned no row");
     return row;
+  }
+}
+
+// ===========================================================================
+// FuelDealParticipantRepository
+// ===========================================================================
+
+export type DealPartyType =
+  | "supplier"
+  | "supplier_broker"
+  | "buyer"
+  | "buyer_broker"
+  | "intermediary";
+
+export type CommissionType =
+  | "percentage"
+  | "cents_per_liter"
+  | "usd_per_mt"
+  | "flat_usd"
+  | "none";
+
+export interface FuelDealParticipantCreate {
+  dealId: string;
+  partyType: DealPartyType;
+  displayName: string;
+  orgId?: string | null;
+  contactId?: string | null;
+  commissionType?: CommissionType;
+  commissionValue?: number | null;
+  commissionNotes?: string | null;
+  notes?: string | null;
+  id?: string;
+}
+
+export class FuelDealParticipantRepository {
+  async listByDeal(tx: Tx, dealId: string): Promise<FuelDealParticipant[]> {
+    return tx
+      .select()
+      .from(fuelDealParticipants)
+      .where(eq(fuelDealParticipants.dealId, dealId))
+      .orderBy(asc(fuelDealParticipants.createdAt));
+  }
+
+  async create(
+    tx: Tx,
+    tenantId: string,
+    data: FuelDealParticipantCreate,
+  ): Promise<FuelDealParticipant> {
+    const [row] = await tx
+      .insert(fuelDealParticipants)
+      .values({
+        id: data.id ?? createId(),
+        tenantId,
+        dealId: data.dealId,
+        partyType: data.partyType,
+        orgId: data.orgId ?? null,
+        contactId: data.contactId ?? null,
+        displayName: data.displayName,
+        commissionType: data.commissionType ?? "none",
+        commissionValue: data.commissionValue ?? null,
+        commissionNotes: data.commissionNotes ?? null,
+        notes: data.notes ?? null,
+      })
+      .returning();
+    if (!row) throw new Error("fuel_deal_participants insert returned no row");
+    return row;
+  }
+
+  async delete(tx: Tx, id: string): Promise<void> {
+    await tx
+      .delete(fuelDealParticipants)
+      .where(eq(fuelDealParticipants.id, id));
   }
 }

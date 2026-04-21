@@ -5,6 +5,11 @@ import { Modal } from "@/components/ui/modal";
 import { FormField, Select, TextArea, TextInput } from "@/components/ui/form-field";
 import { DealCreatorDashboard, type CalculatePayload } from "@/components/crm/deal-creator-dashboard";
 import type { CalculatorResponse, MarketRate } from "@/components/crm/deal-calculator-types";
+import {
+  ParticipantEditor,
+  commissionPerUsg,
+  type ParticipantDraft,
+} from "@/components/crm/participant-editor";
 
 export interface NewDealFormProps {
   open: boolean;
@@ -130,6 +135,11 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
   const [countryRiskScore, setCountryRiskScore] = useState("");
   const [overheadAllocationUsd, setOverheadAllocationUsd] = useState("");
 
+  // Participants — suppliers, brokers, buyers, intermediaries. Each
+  // carries its own commission structure (see participant-editor.tsx)
+  // which the dashboard rolls into `intermediaryFeePerUsg` live.
+  const [participants, setParticipants] = useState<ParticipantDraft[]>([]);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [calc, setCalc] = useState<CalculatorResponse | null>(null);
@@ -158,6 +168,29 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
     };
   }, [open, buyerOrgId]);
 
+  // Roll participant commissions into a single per-USG number. We feed
+  // this into the calculator's `intermediaryFeePerUsg` line alongside
+  // whatever the operator typed into the raw intermediary input —
+  // participants represent external parties, so summing into that
+  // bucket keeps the per-USG waterfall accurate without adding a new
+  // column to the calculator.
+  const participantFeePerUsg = useMemo(() => {
+    const sell = toNumberOrUndef(sellPricePerUsg);
+    const density = toNumberOrUndef(densityKgL);
+    const volume = toNumberOrUndef(volumeUsg);
+    const ctx = {
+      ...(sell !== undefined ? { sellPricePerUsg: sell } : {}),
+      ...(density !== undefined ? { densityKgL: density } : {}),
+      ...(volume !== undefined ? { volumeUsg: volume } : {}),
+    };
+    let total = 0;
+    for (const p of participants) {
+      const per = commissionPerUsg(p, ctx);
+      if (per !== null) total += per;
+    }
+    return total;
+  }, [participants, sellPricePerUsg, densityKgL, volumeUsg]);
+
   // Assemble the calculator payload from current form state. Each
   // numeric field parses through `setNum` which only writes a key when
   // the string has a real number — skipping them lets the backend keep
@@ -183,6 +216,14 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
     setNum("compliancePerUsg", compliancePerUsg);
     setNum("tradeFinancePerUsg", tradeFinancePerUsg);
     setNum("intermediaryFeePerUsg", intermediaryFeePerUsg);
+    // Fold participant commissions into the intermediary bucket — they
+    // represent external parties that eat margin, same as a raw
+    // intermediary fee. The dashboard shows the breakdown separately
+    // so the operator sees attribution; the calculator sums it.
+    if (participantFeePerUsg > 0) {
+      const existing = payload.intermediaryFeePerUsg ?? 0;
+      payload.intermediaryFeePerUsg = existing + participantFeePerUsg;
+    }
     setNum("vtcVariableOpsPerUsg", vtcVariableOpsPerUsg);
     setNum("counterpartyRiskScore", counterpartyRiskScore);
     setNum("countryRiskScore", countryRiskScore);
@@ -207,6 +248,7 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
     counterpartyRiskScore,
     countryRiskScore,
     overheadAllocationUsd,
+    participantFeePerUsg,
   ]);
 
   // Debounced calculator fetch — waits 250ms after the last change so a
@@ -294,6 +336,7 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
     setCounterpartyRiskScore("");
     setCountryRiskScore("");
     setOverheadAllocationUsd("");
+    setParticipants([]);
     setError(null);
     setSubmitting(false);
     setCalc(null);
@@ -346,6 +389,27 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
             : {}),
           ...(dealFrequencyNotes.trim()
             ? { dealFrequencyNotes: dealFrequencyNotes.trim() }
+            : {}),
+          ...(participants.length > 0
+            ? {
+                participants: participants
+                  .filter((p) => p.displayName.trim().length > 0)
+                  .map((p) => {
+                    const v = Number.parseFloat(p.commissionValue);
+                    const hasValue =
+                      p.commissionType !== "none" && Number.isFinite(v) && v > 0;
+                    return {
+                      partyType: p.partyType,
+                      displayName: p.displayName.trim(),
+                      ...(p.orgId ? { orgId: p.orgId } : {}),
+                      commissionType: p.commissionType,
+                      ...(hasValue ? { commissionValue: v } : {}),
+                      ...(p.commissionNotes.trim()
+                        ? { commissionNotes: p.commissionNotes.trim() }
+                        : {}),
+                    };
+                  }),
+              }
             : {}),
         }),
       });
@@ -635,6 +699,17 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
               </div>
             </FormSection>
 
+            <FormSection
+              title="Participants & commissions"
+              subtitle="Brokers, suppliers, intermediaries. Commissions feed the live margin below."
+            >
+              <ParticipantEditor
+                participants={participants}
+                onChange={setParticipants}
+                orgs={orgs}
+              />
+            </FormSection>
+
             <FormSection title="Logistics & notes" subtitle="Optional.">
               <div className="grid grid-cols-2 gap-3">
                 <FormField label="Destination port">
@@ -676,6 +751,19 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
               loading={calcLoading}
               benchmark={benchmark}
               sellPricePerUsg={toNumberOrUndef(sellPricePerUsg) ?? null}
+              participantFeePerUsg={participantFeePerUsg}
+              participants={participants}
+              participantContext={{
+                ...(toNumberOrUndef(sellPricePerUsg) !== undefined
+                  ? { sellPricePerUsg: toNumberOrUndef(sellPricePerUsg)! }
+                  : {}),
+                ...(toNumberOrUndef(densityKgL) !== undefined
+                  ? { densityKgL: toNumberOrUndef(densityKgL)! }
+                  : {}),
+                ...(toNumberOrUndef(volumeUsg) !== undefined
+                  ? { volumeUsg: toNumberOrUndef(volumeUsg)! }
+                  : {}),
+              }}
             />
           </aside>
         </div>

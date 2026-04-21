@@ -27,6 +27,7 @@ import {
 import type {
   ApprovalRepository,
   EventRepository,
+  FuelDealParticipantRepository,
   FuelDealRepository,
   FuelMarketRateRepository,
   OrganizationRepository,
@@ -59,6 +60,7 @@ export const DEALS_EVENT_REPO = Symbol("DEALS_EVENT_REPO");
 export const DEALS_APPROVAL_REPO = Symbol("DEALS_APPROVAL_REPO");
 export const DEALS_ORGS_REPO = Symbol("DEALS_ORGS_REPO");
 export const DEALS_MARKET_RATE_REPO = Symbol("DEALS_MARKET_RATE_REPO");
+export const DEALS_PARTICIPANT_REPO = Symbol("DEALS_PARTICIPANT_REPO");
 
 /**
  * Status transitions that require a T2 approval instead of applying
@@ -82,6 +84,46 @@ const RequestStatusChangeBody = z.object({
   status: z.enum(DEAL_STATUSES),
   rationale: z.string().min(1).max(1000),
 });
+
+/**
+ * A single participant on a deal (supplier, buyer, brokers on either
+ * side, intermediaries). `display_name` is always required so an
+ * operator can type a broker name before the org exists in the CRM;
+ * `orgId` / `contactId` link up when available. Commission variance is
+ * captured by a type + value pair — the web client normalises every
+ * variant to a per-USG equivalent so the dashboard can feed them into
+ * the calculator's intermediary-fee line.
+ */
+const ParticipantBody = z
+  .object({
+    partyType: z.enum([
+      "supplier",
+      "supplier_broker",
+      "buyer",
+      "buyer_broker",
+      "intermediary",
+    ]),
+    displayName: z.string().min(1).max(200),
+    orgId: z.string().min(1).optional(),
+    contactId: z.string().min(1).optional(),
+    commissionType: z
+      .enum(["percentage", "cents_per_liter", "usd_per_mt", "flat_usd", "none"])
+      .optional(),
+    commissionValue: z.number().min(0).optional(),
+    commissionNotes: z.string().max(500).optional(),
+    notes: z.string().max(1000).optional(),
+  })
+  .refine(
+    (v) =>
+      v.commissionType === undefined ||
+      v.commissionType === "none" ||
+      v.commissionValue !== undefined,
+    {
+      message:
+        "commissionValue is required when commissionType is not 'none'",
+      path: ["commissionValue"],
+    },
+  );
 
 const CreateDealBody = z.object({
   dealRef: z.string().min(1).max(50),
@@ -137,6 +179,7 @@ const CreateDealBody = z.object({
     .optional(),
   dealFrequencyIntervalDays: z.number().int().positive().optional(),
   dealFrequencyNotes: z.string().max(500).optional(),
+  participants: z.array(ParticipantBody).max(20).optional(),
 })
   .refine(
     (v) =>
@@ -346,6 +389,8 @@ export class DealsController {
     @Inject(DEALS_ORGS_REPO) private readonly organizations: OrganizationRepository,
     @Inject(DEALS_MARKET_RATE_REPO)
     private readonly marketRates: FuelMarketRateRepository,
+    @Inject(DEALS_PARTICIPANT_REPO)
+    private readonly participants: FuelDealParticipantRepository,
   ) {}
 
   @Get()
@@ -469,6 +514,28 @@ export class DealsController {
           );
         }
         throw err;
+      }
+
+      // Participants — optional at create. Inserted in the same tx so
+      // either the deal + all participants land or neither does.
+      if (input.participants && input.participants.length > 0) {
+        for (const p of input.participants) {
+          await this.participants.create(tx, tenantId, {
+            dealId: id,
+            partyType: p.partyType,
+            displayName: p.displayName,
+            ...(p.orgId ? { orgId: p.orgId } : {}),
+            ...(p.contactId ? { contactId: p.contactId } : {}),
+            ...(p.commissionType
+              ? { commissionType: p.commissionType }
+              : {}),
+            ...(p.commissionValue !== undefined
+              ? { commissionValue: p.commissionValue }
+              : {}),
+            ...(p.commissionNotes ? { commissionNotes: p.commissionNotes } : {}),
+            ...(p.notes ? { notes: p.notes } : {}),
+          });
+        }
       }
 
       await this.events.insertIfNotExists(tx, tenantId, {
@@ -771,6 +838,46 @@ export class DealsController {
 
     this.log.log(`deal ${id} updated by ${userId}`);
     return { deal };
+  }
+
+  /**
+   * GET /deals/:id/participants — list every supplier / buyer / broker
+   * / intermediary attached to a deal along with their commission
+   * structure. Powers the deal-detail page's "Participants" tab and
+   * the deal-creator's on-save confirmation.
+   */
+  @Get(":id/participants")
+  async listParticipants(@Param("id") id: string): Promise<{
+    participants: Array<{
+      id: string;
+      partyType: string;
+      displayName: string;
+      orgId: string | null;
+      contactId: string | null;
+      commissionType: string;
+      commissionValue: number | null;
+      commissionNotes: string | null;
+      notes: string | null;
+      createdAt: string;
+    }>;
+  }> {
+    const rows = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      return this.participants.listByDeal(tx, id);
+    });
+    return {
+      participants: rows.map((r) => ({
+        id: r.id,
+        partyType: r.partyType,
+        displayName: r.displayName,
+        orgId: r.orgId,
+        contactId: r.contactId,
+        commissionType: r.commissionType,
+        commissionValue: r.commissionValue,
+        commissionNotes: r.commissionNotes,
+        notes: r.notes,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    };
   }
 
   @Get(":id")

@@ -6,6 +6,10 @@ import type {
   DealWarningSeverity,
   MarketRate,
 } from "@/components/crm/deal-calculator-types";
+import {
+  commissionPerUsg,
+  type ParticipantDraft,
+} from "@/components/crm/participant-editor";
 
 export interface CalculatePayload {
   dealRef?: string;
@@ -33,6 +37,17 @@ interface Props {
   loading: boolean;
   benchmark: MarketRate | null;
   sellPricePerUsg: number | null;
+  /** Sum of every participant commission converted to $/USG. */
+  participantFeePerUsg?: number;
+  /** Participant rows driving that sum, for per-row attribution. */
+  participants?: ParticipantDraft[];
+  /** Inputs the per-USG conversion depends on. Used to recompute per
+   *  row for the attribution breakdown shown in the dashboard. */
+  participantContext?: {
+    sellPricePerUsg?: number;
+    densityKgL?: number;
+    volumeUsg?: number;
+  };
 }
 
 /**
@@ -51,6 +66,9 @@ export function DealCreatorDashboard({
   loading,
   benchmark,
   sellPricePerUsg,
+  participantFeePerUsg,
+  participants,
+  participantContext,
 }: Props) {
   const results = calc?.results ?? null;
   const missing = calc?.missingEconomicsFields ?? [];
@@ -92,6 +110,14 @@ export function DealCreatorDashboard({
           peakCashUsd={results.cashflow.peakExposureUsd}
           revenueUsd={results.totals.revenueUsd}
           grossProfitUsd={results.totals.grossProfitUsd}
+        />
+      )}
+
+      {participants && participants.length > 0 && (
+        <ParticipantBreakdown
+          participants={participants}
+          total={participantFeePerUsg ?? 0}
+          ctx={participantContext ?? {}}
         />
       )}
 
@@ -341,6 +367,56 @@ function WarningsList({
           </div>
         ),
       )}
+    </div>
+  );
+}
+
+function ParticipantBreakdown({
+  participants,
+  total,
+  ctx,
+}: {
+  participants: ParticipantDraft[];
+  total: number;
+  ctx: { sellPricePerUsg?: number; densityKgL?: number; volumeUsg?: number };
+}) {
+  const rows = participants
+    .filter((p) => p.displayName.trim().length > 0)
+    .map((p) => ({
+      p,
+      perUsg: commissionPerUsg(p, ctx),
+    }));
+  const label: Record<string, string> = {
+    supplier: "Supplier",
+    supplier_broker: "Supplier-side broker",
+    buyer: "Buyer",
+    buyer_broker: "Buyer-side broker",
+    intermediary: "Intermediary",
+  };
+  return (
+    <div className="flex flex-col gap-1 rounded-md border border-line bg-canvas/40 px-3 py-2 text-[11px]">
+      <div className="flex items-center justify-between text-white/40">
+        <span className="uppercase tracking-wide">Commissions</span>
+        <span className="tabular-nums text-white/80">
+          ${total.toFixed(4)} / USG
+        </span>
+      </div>
+      {rows.map(({ p, perUsg }) => (
+        <div
+          key={p.key}
+          className="flex items-center justify-between text-white/70"
+        >
+          <span className="truncate pr-2">
+            {p.displayName}
+            <span className="text-white/40"> · {label[p.partyType] ?? p.partyType}</span>
+          </span>
+          <span className="tabular-nums">
+            {perUsg === null
+              ? <span className="text-white/40">—</span>
+              : `$${perUsg.toFixed(4)}`}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

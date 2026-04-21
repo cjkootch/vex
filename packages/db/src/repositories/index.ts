@@ -50,11 +50,16 @@ export {
 } from "./cost-ledger-repository.js";
 export {
   CounterpartyRiskRepository,
+  FuelDealParticipantRepository,
   FuelDealRepository,
   FuelDealScenarioRepository,
   FuelMarketRateRepository,
+  type CommissionType,
   type CounterpartyScoreUpsert,
+  type DealFrequency,
+  type DealPartyType,
   type FuelDealCreate,
+  type FuelDealParticipantCreate,
   type FuelDealScenarioCreate,
   type FuelMarketRateInsert,
 } from "./deals.js";
