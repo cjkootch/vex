@@ -5,10 +5,12 @@ import type {
   OpenAIAdapter,
   TavilyClient,
 } from "@vex/integrations";
+import type { CostLedger } from "@vex/telemetry";
 import { QueryController } from "./query.controller.js";
 import { QueryService } from "./query.service.js";
 import {
   ANTHROPIC_ADAPTER,
+  COST_LEDGER,
   DB_CLIENT,
   OPENAI_ADAPTER,
   RETRIEVAL_SERVICE,
@@ -22,6 +24,13 @@ export interface QueryModuleConfig {
   anthropic: AnthropicAdapter;
   /** Null when TAVILY_API_KEY isn't configured — research_contact tool disables. */
   tavily: TavilyClient | null;
+  /**
+   * Shared CostLedger so Tavily (web.search) spend lands in the
+   * Admin Cost tab alongside Anthropic/OpenAI. The LLM adapters
+   * record their own tokens via the adapters themselves; this
+   * wires the tool-runner path.
+   */
+  costLedger: CostLedger;
 }
 
 @Module({})
@@ -36,6 +45,7 @@ export class QueryModule {
         { provide: OPENAI_ADAPTER, useFactory: () => config.openai },
         { provide: ANTHROPIC_ADAPTER, useFactory: () => config.anthropic },
         { provide: TAVILY_CLIENT, useFactory: () => config.tavily },
+        { provide: COST_LEDGER, useFactory: () => config.costLedger },
         QueryService,
       ],
     };

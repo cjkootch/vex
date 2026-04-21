@@ -62,7 +62,7 @@ export {
   type TavilySearchResponse,
   type TavilySearchResult,
 } from "./tavily.js";
-export { pricing } from "./pricing.js";
+export { pricing, tokensToUsdMicros, unitsToUsdMicros } from "./pricing.js";
 export {
   SlackNotifier,
   buildHotLeadBlocks,

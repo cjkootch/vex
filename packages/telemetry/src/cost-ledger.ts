@@ -7,8 +7,11 @@ export type CostOperation =
   | "tts"
   | "stt"
   | "pstn.minute"
+  | "pstn.call"
   | "email.send"
-  | "sms.send";
+  | "sms.send"
+  | "whatsapp.send"
+  | "web.search";
 
 export interface CostEntry {
   /** Stable idempotency key — two records with the same key are the same event. */
