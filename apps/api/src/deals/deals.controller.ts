@@ -142,7 +142,14 @@ const ParticipantBody = z
 
 const CreateDealBody = z.object({
   dealRef: z.string().min(1).max(50),
+  /**
+   * Line-of-business discriminator. When "food" the density field is
+   * optional and food-specific fields (productionLeadTimeWeeks,
+   * coldChainRequired, volumeUnit) unlock.
+   */
+  lineOfBusiness: z.enum(["fuel", "food"]).optional(),
   product: z.enum([
+    // fuel
     "ulsd",
     "gasoline_87",
     "gasoline_91",
@@ -154,6 +161,13 @@ const CreateDealBody = z.object({
     "lng",
     "lpg",
     "biodiesel_b20",
+    // food (sprint V)
+    "rice",
+    "beans",
+    "pork",
+    "chicken",
+    "cooking_oil",
+    "powdered_milk",
   ]),
   incoterm: z.enum(["fob", "cif", "cfr", "dap", "exw", "fas"]),
   pricingBasis: z.enum([
@@ -179,7 +193,12 @@ const CreateDealBody = z.object({
     "mixed",
   ]),
   volumeUsg: z.number().positive(),
-  densityKgL: z.number().positive().max(2),
+  /** Fuel: required. Food: omit. */
+  densityKgL: z.number().positive().max(2).optional(),
+  /** "usg" (fuel default) / "mt" / "lbs" / "kg" (food). */
+  volumeUnit: z.enum(["usg", "mt", "lbs", "kg"]).optional(),
+  productionLeadTimeWeeks: z.number().int().nonnegative().max(52).optional(),
+  coldChainRequired: z.boolean().optional(),
   buyerOrgId: z.string().min(1),
   sellerOrgId: z.string().optional(),
   productGrade: z.string().optional(),
@@ -196,6 +215,13 @@ const CreateDealBody = z.object({
   dealFrequencyNotes: z.string().max(500).optional(),
   participants: z.array(ParticipantBody).max(20).optional(),
 })
+  .refine(
+    (v) => v.lineOfBusiness === "food" || v.densityKgL !== undefined,
+    {
+      message: "densityKgL is required for fuel deals",
+      path: ["densityKgL"],
+    },
+  )
   .refine(
     (v) =>
       v.dealFrequency !== "custom" ||
@@ -508,7 +534,22 @@ export class DealsController {
           pricingBasis: input.pricingBasis,
           paymentTerms: input.paymentTerms,
           volumeUsg: input.volumeUsg,
-          densityKgL: input.densityKgL,
+          // Fuel deals carry a density; food deals leave it null. The
+          // Zod refine above ensures densityKgL is set when
+          // lineOfBusiness !== "food".
+          densityKgL: input.densityKgL ?? null,
+          ...(input.lineOfBusiness !== undefined
+            ? { lineOfBusiness: input.lineOfBusiness }
+            : {}),
+          ...(input.volumeUnit !== undefined
+            ? { volumeUnit: input.volumeUnit }
+            : {}),
+          ...(input.productionLeadTimeWeeks !== undefined
+            ? { productionLeadTimeWeeks: input.productionLeadTimeWeeks }
+            : {}),
+          ...(input.coldChainRequired !== undefined
+            ? { coldChainRequired: input.coldChainRequired }
+            : {}),
           buyerOrgId: input.buyerOrgId,
           ...(input.sellerOrgId ? { sellerOrgId: input.sellerOrgId } : {}),
           ...(input.productGrade ? { productGrade: input.productGrade } : {}),

@@ -26,7 +26,12 @@ interface OrgOption {
   legalName: string;
 }
 
-const PRODUCT_OPTIONS = [
+const LINE_OF_BUSINESS_OPTIONS = [
+  { value: "fuel", label: "Fuel" },
+  { value: "food", label: "Food" },
+];
+
+const FUEL_PRODUCT_OPTIONS = [
   { value: "ulsd", label: "ULSD (Ultra Low Sulfur Diesel)" },
   { value: "gasoline_87", label: "Gasoline 87" },
   { value: "gasoline_91", label: "Gasoline 91" },
@@ -39,6 +44,38 @@ const PRODUCT_OPTIONS = [
   { value: "lpg", label: "LPG" },
   { value: "biodiesel_b20", label: "Biodiesel B20" },
 ];
+
+const FOOD_PRODUCT_OPTIONS = [
+  { value: "rice", label: "Rice" },
+  { value: "beans", label: "Beans" },
+  { value: "pork", label: "Pork" },
+  { value: "chicken", label: "Chicken" },
+  { value: "cooking_oil", label: "Cooking oil" },
+  { value: "powdered_milk", label: "Powdered milk" },
+];
+
+const FOOD_VOLUME_UNIT_OPTIONS = [
+  { value: "mt", label: "Metric tons (MT)" },
+  { value: "kg", label: "Kilograms (kg)" },
+  { value: "lbs", label: "Pounds (lbs)" },
+];
+
+const DEFAULT_PRODUCT_BY_LOB: Record<"fuel" | "food", string> = {
+  fuel: "ulsd",
+  food: "rice",
+};
+
+function productOptionsFor(lob: "fuel" | "food") {
+  return lob === "food" ? FOOD_PRODUCT_OPTIONS : FUEL_PRODUCT_OPTIONS;
+}
+
+function volumeLabelFor(
+  lob: "fuel" | "food",
+  unit: "usg" | "mt" | "kg" | "lbs",
+): string {
+  if (lob === "fuel") return "USG";
+  return unit.toUpperCase();
+}
 
 const INCOTERM_OPTIONS = [
   { value: "fob", label: "FOB" },
@@ -104,7 +141,12 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
 
   // Required basics.
   const [dealRef, setDealRef] = useState("");
+  const [lineOfBusiness, setLineOfBusiness] = useState<"fuel" | "food">("fuel");
   const [product, setProduct] = useState("ulsd");
+  const [volumeUnit, setVolumeUnit] = useState<"usg" | "mt" | "kg" | "lbs">("usg");
+  // Food-specific.
+  const [productionLeadTimeWeeks, setProductionLeadTimeWeeks] = useState("");
+  const [coldChainRequired, setColdChainRequired] = useState(false);
   const [incoterm, setIncoterm] = useState("cfr");
   const [pricingBasis, setPricingBasis] = useState("platts");
   const [paymentTerms, setPaymentTerms] = useState("lc_sight");
@@ -335,9 +377,25 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
     };
   }, [open, product, pricingBasis]);
 
+  // Switching LOB resets the product + volume unit to sensible defaults
+  // for that book so the operator isn't left with a fuel product on a
+  // food deal (which the API enum would reject). Density is cleared on
+  // the fuel → food transition.
+  const changeLob = useCallback((next: "fuel" | "food"): void => {
+    setLineOfBusiness(next);
+    setProduct(DEFAULT_PRODUCT_BY_LOB[next]);
+    setVolumeUnit(next === "fuel" ? "usg" : "mt");
+    if (next === "food") setDensityKgL("");
+    else if (!densityKgL) setDensityKgL("0.84");
+  }, [densityKgL]);
+
   const reset = useCallback((): void => {
     setDealRef("");
+    setLineOfBusiness("fuel");
     setProduct("ulsd");
+    setVolumeUnit("usg");
+    setProductionLeadTimeWeeks("");
+    setColdChainRequired(false);
     setIncoterm("cfr");
     setPricingBasis("platts");
     setPaymentTerms("lc_sight");
@@ -377,11 +435,28 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
     if (!dealRef.trim()) return setError("Deal reference is required.");
     if (!buyerOrgId) return setError("Pick a buyer company.");
     const vol = Number.parseFloat(volumeUsg);
+    const volumeLabel = volumeLabelFor(lineOfBusiness, volumeUnit);
     if (!Number.isFinite(vol) || vol <= 0)
-      return setError("Volume (USG) must be a positive number.");
-    const density = Number.parseFloat(densityKgL);
-    if (!Number.isFinite(density) || density <= 0 || density > 2)
-      return setError("Density (kg/L) must be between 0 and 2.");
+      return setError(`Volume (${volumeLabel}) must be a positive number.`);
+    // Density is fuel-only. For food the column stays null.
+    let density: number | null = null;
+    if (lineOfBusiness === "fuel") {
+      const parsed = Number.parseFloat(densityKgL);
+      if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 2)
+        return setError("Density (kg/L) must be between 0 and 2.");
+      density = parsed;
+    }
+    // Food-specific lead time. Optional; validate shape if provided.
+    const leadWeeks =
+      lineOfBusiness === "food" && productionLeadTimeWeeks.trim()
+        ? Number.parseInt(productionLeadTimeWeeks, 10)
+        : null;
+    if (
+      leadWeeks !== null &&
+      (!Number.isFinite(leadWeeks) || leadWeeks < 0 || leadWeeks > 52)
+    ) {
+      return setError("Production lead time must be 0–52 weeks.");
+    }
     const customDays =
       dealFrequency === "custom"
         ? Number.parseInt(dealFrequencyIntervalDays, 10)
@@ -398,12 +473,22 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           dealRef: dealRef.trim(),
+          lineOfBusiness,
           product,
           incoterm,
           pricingBasis,
           paymentTerms,
           volumeUsg: vol,
-          densityKgL: density,
+          volumeUnit,
+          ...(density !== null ? { densityKgL: density } : {}),
+          ...(lineOfBusiness === "food"
+            ? {
+                ...(leadWeeks !== null
+                  ? { productionLeadTimeWeeks: leadWeeks }
+                  : {}),
+                coldChainRequired,
+              }
+            : {}),
           buyerOrgId,
           ...(destinationPort.trim()
             ? { destinationPort: destinationPort.trim() }
@@ -486,6 +571,15 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
                     maxLength={50}
                   />
                 </FormField>
+                <FormField label="Line of business" required>
+                  <Select
+                    value={lineOfBusiness}
+                    onChange={(e) =>
+                      changeLob(e.target.value as "fuel" | "food")
+                    }
+                    options={LINE_OF_BUSINESS_OPTIONS}
+                  />
+                </FormField>
                 <FormField label="Buyer" required>
                   <Select
                     value={buyerOrgId}
@@ -501,7 +595,7 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
                   <Select
                     value={product}
                     onChange={(e) => setProduct(e.target.value)}
-                    options={PRODUCT_OPTIONS}
+                    options={productOptionsFor(lineOfBusiness)}
                   />
                 </FormField>
                 <FormField label="Incoterm" required>
@@ -525,27 +619,82 @@ export function NewDealForm({ open, onClose, onCreated }: NewDealFormProps) {
                     options={PAYMENT_OPTIONS}
                   />
                 </FormField>
-                <FormField label="Volume (USG)" required>
+                <FormField
+                  label={`Volume (${volumeLabelFor(lineOfBusiness, volumeUnit)})`}
+                  required
+                >
                   <TextInput
                     type="number"
                     inputMode="decimal"
                     value={volumeUsg}
                     onChange={(e) => setVolumeUsg(e.target.value)}
-                    placeholder="3000000"
+                    placeholder={lineOfBusiness === "fuel" ? "3000000" : "500"}
                     min="1"
                   />
                 </FormField>
-                <FormField label="Density (kg/L)" required hint="ULSD ≈ 0.84">
-                  <TextInput
-                    type="number"
-                    inputMode="decimal"
-                    value={densityKgL}
-                    onChange={(e) => setDensityKgL(e.target.value)}
-                    step="0.001"
-                    min="0.1"
-                    max="2"
-                  />
-                </FormField>
+                {lineOfBusiness === "food" && (
+                  <FormField label="Volume unit" required>
+                    <Select
+                      value={volumeUnit}
+                      onChange={(e) =>
+                        setVolumeUnit(e.target.value as "mt" | "kg" | "lbs")
+                      }
+                      options={FOOD_VOLUME_UNIT_OPTIONS}
+                    />
+                  </FormField>
+                )}
+                {lineOfBusiness === "fuel" && (
+                  <FormField
+                    label="Density (kg/L)"
+                    required
+                    hint="ULSD ≈ 0.84"
+                  >
+                    <TextInput
+                      type="number"
+                      inputMode="decimal"
+                      value={densityKgL}
+                      onChange={(e) => setDensityKgL(e.target.value)}
+                      step="0.001"
+                      min="0.1"
+                      max="2"
+                    />
+                  </FormField>
+                )}
+                {lineOfBusiness === "food" && (
+                  <>
+                    <FormField
+                      label="Production lead time"
+                      hint="Weeks between PO and shipment — protein / processed staples typically 3–6 wks."
+                    >
+                      <TextInput
+                        type="number"
+                        inputMode="numeric"
+                        value={productionLeadTimeWeeks}
+                        onChange={(e) =>
+                          setProductionLeadTimeWeeks(e.target.value)
+                        }
+                        min="0"
+                        max="52"
+                        step="1"
+                        placeholder="4"
+                      />
+                    </FormField>
+                    <FormField label="Cold chain" hint="Reefer container required?">
+                      <label className="flex items-center gap-2 text-xs text-white/70">
+                        <input
+                          type="checkbox"
+                          checked={coldChainRequired}
+                          onChange={(e) =>
+                            setColdChainRequired(e.target.checked)
+                          }
+                        />
+                        {coldChainRequired
+                          ? "Reefer required"
+                          : "Ambient cargo"}
+                      </label>
+                    </FormField>
+                  </>
+                )}
                 <FormField label="Frequency">
                   <Select
                     value={dealFrequency}
