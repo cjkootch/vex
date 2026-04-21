@@ -172,7 +172,24 @@ export const EnvSchema = z.object({
    * sender on the domain configured in Resend. Format:
    * `"Display Name <user@verified-domain.tld>"` or a bare email.
    */
-  RESEND_DEFAULT_FROM: z.string().default("Vex <vector@vexhq.ai>"),
+  /**
+   * From-address Resend uses for every outbound email. Must be a
+   * VERIFIED domain in your Resend dashboard, otherwise every send
+   * gets a "domain not verified" rejection. Accepted shapes:
+   *   "email@example.com"
+   *   "Display Name <email@example.com>"
+   * Angle-bracket form gets cleaner inbox display. The regex
+   * validates at boot so a typo fails the worker immediately
+   * instead of every queued email.send falling over at dispatch
+   * with a generic Resend validation error.
+   */
+  RESEND_DEFAULT_FROM: z
+    .string()
+    .regex(
+      /^(?:[^<]+<\s*[^\s@<>]+@[^\s@<>]+\s*>|[^\s@<>]+@[^\s@<>]+)$/,
+      "RESEND_DEFAULT_FROM must be 'email@domain' or 'Display Name <email@domain>'",
+    )
+    .default("Vex <vector@vexhq.ai>"),
   /**
    * Resend (Svix) webhook signing secret. Format: `whsec_<base64>`. Required
    * by the Resend webhook handler — the verifier strips the `whsec_` prefix
