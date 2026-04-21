@@ -10,6 +10,7 @@ import {
   DB_CLIENT,
   NORMALIZATION_QUEUE,
   RAW_EVENT_REPO,
+  RESEND_INBOUND_VERIFIER,
   RESEND_VERIFIER,
   TWILIO_VERIFIER,
   WEBHOOK_TENANT_RESOLVER,
@@ -22,6 +23,14 @@ export interface WebhooksModuleConfig {
   rawEventRepository: RawEventRepository;
   normalizationQueue: Queue<NormalizationJobData>;
   resendSecret: string;
+  /**
+   * Svix secret for Resend Inbound webhook endpoint (separate from
+   * the outbound delivery webhook). Falls back to `resendSecret`
+   * when omitted — Resend dashboards let operators reuse one secret
+   * across endpoints if they prefer, though a distinct secret per
+   * endpoint is best practice.
+   */
+  resendInboundSecret?: string;
   twilioAuthToken: string;
   websiteChatSecret: string;
   resolveTenant: WebhookTenantResolver;
@@ -40,6 +49,13 @@ export class WebhooksModule {
         {
           provide: RESEND_VERIFIER,
           useFactory: () => new ResendVerifier({ secret: config.resendSecret }),
+        },
+        {
+          provide: RESEND_INBOUND_VERIFIER,
+          useFactory: () =>
+            new ResendVerifier({
+              secret: config.resendInboundSecret ?? config.resendSecret,
+            }),
         },
         {
           provide: TWILIO_VERIFIER,

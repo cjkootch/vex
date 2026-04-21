@@ -235,6 +235,9 @@ async function bootstrap(): Promise<void> {
         rawEventRepository,
         normalizationQueue: queues.normalization,
         resendSecret: env.RESEND_WEBHOOK_SECRET,
+        ...(env.RESEND_INBOUND_WEBHOOK_SECRET
+          ? { resendInboundSecret: env.RESEND_INBOUND_WEBHOOK_SECRET }
+          : {}),
         twilioAuthToken: env.TWILIO_AUTH_TOKEN,
         websiteChatSecret: env.WEBSITE_CHAT_WEBHOOK_SECRET,
         resolveTenant: () => "01HSEEDWRK0000000000000001",
