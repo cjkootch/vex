@@ -10,6 +10,7 @@ import {
   DB_CLIENT,
   NORMALIZATION_QUEUE,
   RAW_EVENT_REPO,
+  RESEND_API_KEY,
   RESEND_INBOUND_VERIFIER,
   RESEND_VERIFIER,
   TWILIO_VERIFIER,
@@ -31,6 +32,12 @@ export interface WebhooksModuleConfig {
    * endpoint is best practice.
    */
   resendInboundSecret?: string;
+  /**
+   * Resend REST API key — used to fetch the full parsed body of
+   * inbound emails (Resend's webhook payload is metadata-only).
+   * When unset the inbound controller stores metadata only.
+   */
+  resendApiKey?: string | null;
   twilioAuthToken: string;
   websiteChatSecret: string;
   resolveTenant: WebhookTenantResolver;
@@ -56,6 +63,10 @@ export class WebhooksModule {
             new ResendVerifier({
               secret: config.resendInboundSecret ?? config.resendSecret,
             }),
+        },
+        {
+          provide: RESEND_API_KEY,
+          useFactory: () => config.resendApiKey ?? null,
         },
         {
           provide: TWILIO_VERIFIER,
