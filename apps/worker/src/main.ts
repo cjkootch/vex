@@ -28,10 +28,16 @@ import { startTemporalWorker } from "./temporal/runner.js";
 
 const DEFAULT_WORKSPACE_ID = "01HSEEDWRK0000000000000001";
 const SCANNER_INTERVAL_MS = 60 * 60 * 1000;
-/** Intent classifier runs every 10 minutes. Inbound replies should
- *  get labelled fast so the CampaignEnrollmentWorkflow branches
- *  without waiting for the next scheduled tick. */
-const INTENT_CLASSIFIER_INTERVAL_MS = 10 * 60 * 1000;
+/**
+ * Intent classifier cadence. Bumped from 10 → 30 min because the
+ * 24×6×30 = ~4.3k Claude calls/day it was firing at the previous
+ * cadence cost ~20-30% of the workspace's daily token budget on
+ * low-reply days — and most of the gain of tight latency only
+ * matters when a campaign has live outbound. Operators can drop
+ * this to 5-10 min once they're routinely driving a nurture
+ * sequence with live inbound; defaulting to 30 halves idle spend.
+ */
+const INTENT_CLASSIFIER_INTERVAL_MS = 30 * 60 * 1000;
 /** Reconcile orphaned enrollments every 15 minutes — longer than the
  *  default staleness threshold so we don't race a just-enrolled row. */
 const ENROLLMENT_RECONCILIATION_INTERVAL_MS = 15 * 60 * 1000;
@@ -220,12 +226,26 @@ async function main(): Promise<void> {
     organizations: new OrganizationRepository(),
   });
 
-  const scannerTimer = setInterval(() => {
-    void scanner.scan(DEFAULT_WORKSPACE_ID).catch((err) => {
-      // eslint-disable-next-line no-console
-      console.error("scanner failed", err);
-    });
-  }, SCANNER_INTERVAL_MS);
+  // Kill-switch for the hourly org-research scanner. Set
+  // RESEARCH_SCANNER_DISABLED=1 on Fly (or locally) to stop the
+  // scanner from ticking without redeploying code. Every tick pulls
+  // up to 10 stale orgs through Claude; when the operator isn't
+  // actively testing, this can be turned off to zero its token spend.
+  const scannerDisabled = process.env["RESEARCH_SCANNER_DISABLED"] === "1";
+  const scannerTimer = scannerDisabled
+    ? null
+    : setInterval(() => {
+        void scanner.scan(DEFAULT_WORKSPACE_ID).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error("scanner failed", err);
+        });
+      }, SCANNER_INTERVAL_MS);
+  if (scannerDisabled) {
+    // eslint-disable-next-line no-console
+    console.log(
+      "worker: research scanner disabled via RESEARCH_SCANNER_DISABLED=1",
+    );
+  }
   void scanner.scan(DEFAULT_WORKSPACE_ID).catch((err) => {
     // eslint-disable-next-line no-console
     console.error("initial scan failed", err);
@@ -412,7 +432,7 @@ async function main(): Promise<void> {
   runDigestCheck();
 
   const shutdown = async (): Promise<void> => {
-    clearInterval(scannerTimer);
+    if (scannerTimer) clearInterval(scannerTimer);
     if (intentTimer) clearInterval(intentTimer);
     if (reconcilerTimer) clearInterval(reconcilerTimer);
     if (notifierTimer) clearInterval(notifierTimer);

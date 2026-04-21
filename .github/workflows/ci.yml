@@ -67,8 +67,14 @@ jobs:
 
   eval:
     name: Run eval suite (gate 85%)
+    # Run only on pull_request (not on push-to-main). The same eval
+    # also runs inside neon-branch.yml's create-and-migrate job, so
+    # on PRs this is deliberately a single-run: either this ci.yml
+    # path (when NEON_DEV_URL is set + NEON_API_KEY isn't) OR the
+    # Neon path. Token spend on the eval jumped ~15M/day during
+    # heavy merge days; gating on pull_request alone cuts it in half.
+    if: ${{ github.event_name == 'pull_request' && needs.preflight.outputs.has_eval_secrets == 'true' }}
     needs: [ci, preflight]
-    if: ${{ needs.preflight.outputs.has_eval_secrets == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Advisory: the runner's own comment notes ~11 fixtures are
