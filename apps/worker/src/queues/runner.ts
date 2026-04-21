@@ -1031,6 +1031,22 @@ async function applyOutboundCall(
         },
       });
 
+      // Transition the agent_run through its lifecycle so the
+      // /app/calls list moves the row out of "In progress" once the
+      // dial hand-off succeeded. Without this, every fallback call
+      // sits forever in the 'pending' bucket even after it hung up.
+      await deps.agentRuns.markRunning(tx, agentRun.id);
+      await deps.agentRuns.complete(tx, agentRun.id, {
+        status: "completed",
+        costUsd: 0,
+        outputRefs: {
+          workflow_id: workflowId,
+          twilio_call_sid: callSid,
+          twilio_status: status,
+          fallback: "direct_twilio_no_temporal",
+        },
+      });
+
       await deps.approvals.markApplied(tx, approval.id, callSid);
       await deps.events.insertIfNotExists(tx, tenantId, {
         verb: "approval.executor.applied",
@@ -1053,6 +1069,12 @@ async function applyOutboundCall(
         },
       });
     } catch (err) {
+      await deps.agentRuns.complete(tx, agentRun.id, {
+        status: "failed",
+        costUsd: 0,
+        outputRefs: { fallback: "direct_twilio_no_temporal" },
+        error: (err as Error).message,
+      });
       await emitExecutorFailed(
         tx,
         deps,
