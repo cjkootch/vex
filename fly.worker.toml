@@ -38,8 +38,18 @@ primary_region = "iad"
 
 # No [http_service] — this is a worker process, not an HTTP server.
 # Fly routes nothing to it; it pulls jobs from Redis + Temporal.
+#
+# Worker counts are managed with `fly scale count 1 -a vex-worker`
+# rather than a fly.toml directive — Fly v2's per-app machine count
+# is a runtime concern, not a build-time one. Without that floor,
+# stopping a machine via the UI or a failed deploy leaves the app
+# with zero machines and the BullMQ approval-executor queue silently
+# stalls.
 
 [[vm]]
   memory = "2gb"
   cpu_kind = "shared"
   cpus = 1
+
+[deploy]
+  strategy = "rolling"

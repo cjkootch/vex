@@ -1234,31 +1234,54 @@ async function applyOutboundCall(
     }
   }
 
-  await deps.temporal.workflow.start("outboundCallWorkflow", {
-    taskQueue: TEMPORAL_TASK_QUEUE,
-    workflowId,
-    args: [
-      {
-        tenantId,
-        workspaceId: tenantId,
-        contactId,
-        orgId,
-        toNumber,
-        agentRunId: agentRun.id,
-        initiatedByUserId: "chat_agent",
-        ...(aiMode ? { aiMode: true } : {}),
-      },
-    ],
-  });
+  // Temporal handshake: start + signal. Wrapped so any gRPC,
+  // auth, or task-queue error surfaces as an `approval.executor.failed`
+  // audit event rather than a silently swallowed BullMQ job. Without
+  // this, "the call just didn't fire" is invisible to operators —
+  // the approval row stays approved + unapplied with no clue why.
+  try {
+    await deps.temporal.workflow.start("outboundCallWorkflow", {
+      taskQueue: TEMPORAL_TASK_QUEUE,
+      workflowId,
+      args: [
+        {
+          tenantId,
+          workspaceId: tenantId,
+          contactId,
+          orgId,
+          toNumber,
+          agentRunId: agentRun.id,
+          initiatedByUserId: "chat_agent",
+          ...(aiMode ? { aiMode: true } : {}),
+        },
+      ],
+    });
 
-  // Temporal buffers signals sent before handlers register, so this
-  // resolves cleanly even when it arrives during workflow init.
-  const handle = deps.temporal.workflow.getHandle(workflowId);
-  await handle.signal("approval.decision", {
-    approvalId: innerApproval.id,
-    decision: "approved",
-    reviewerId: "chat_agent",
-  });
+    // Temporal buffers signals sent before handlers register, so this
+    // resolves cleanly even when it arrives during workflow init.
+    const handle = deps.temporal.workflow.getHandle(workflowId);
+    await handle.signal("approval.decision", {
+      approvalId: innerApproval.id,
+      decision: "approved",
+      reviewerId: "chat_agent",
+    });
+  } catch (err) {
+    await deps.agentRuns.complete(tx, agentRun.id, {
+      status: "failed",
+      costUsd: 0,
+      outputRefs: { workflow_id: workflowId },
+      error: (err as Error).message,
+    });
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "outbound_call",
+      `temporal_start_failed: ${(err as Error).message}`,
+    );
+    return;
+  }
 
   await deps.events.insertIfNotExists(tx, tenantId, {
     verb: "approval.executor.applied",

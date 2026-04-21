@@ -358,24 +358,55 @@ export function createDlqWorker(
   });
 }
 
+/**
+ * BullMQ swallows processor exceptions when no "failed" / "error"
+ * listener is attached — silent failures are the worst kind when a
+ * call or agent run just doesn't happen and nobody sees why. The
+ * hook below also logs `active` so operators can tell "job never
+ * arrived" from "job arrived + threw" in the logs.
+ */
+function attachFailureLogger<T>(worker: Worker<T>, queue: string): void {
+  worker.on("active", (job) => {
+    console.log(
+      `[bullmq] queue=${queue} job=${job.id} active (attempt ${job.attemptsMade + 1}/${job.opts?.attempts ?? 1})`,
+    );
+  });
+  worker.on("failed", (job, err) => {
+    const jobId = job?.id ?? "<unknown>";
+    const attemptsMade = job?.attemptsMade ?? 0;
+    const attemptsMax = job?.opts?.attempts ?? 1;
+    console.error(
+      `[bullmq] queue=${queue} job=${jobId} failed (attempt ${attemptsMade}/${attemptsMax}): ${err.message}`,
+      { stack: err.stack, data: job?.data },
+    );
+  });
+  worker.on("error", (err) => {
+    console.error(`[bullmq] queue=${queue} worker error: ${err.message}`, {
+      stack: err.stack,
+    });
+  });
+}
+
 export function createAgentWorker(
   processor: Processor<AgentJobData, unknown>,
   connection: Redis,
 ): Worker<AgentJobData> {
-  return new Worker<AgentJobData>(QueueName.Agents, processor, {
+  const worker = new Worker<AgentJobData>(QueueName.Agents, processor, {
     connection,
     concurrency: QueueConcurrency[QueueName.Agents],
     ...(QueueRateLimits[QueueName.Agents]
       ? { limiter: QueueRateLimits[QueueName.Agents] }
       : {}),
   });
+  attachFailureLogger(worker, QueueName.Agents);
+  return worker;
 }
 
 export function createApprovalExecutorWorker(
   processor: Processor<ApprovalExecutorJobData, unknown>,
   connection: Redis,
 ): Worker<ApprovalExecutorJobData> {
-  return new Worker<ApprovalExecutorJobData>(
+  const worker = new Worker<ApprovalExecutorJobData>(
     QueueName.ApprovalExecutor,
     processor,
     {
@@ -383,19 +414,23 @@ export function createApprovalExecutorWorker(
       concurrency: QueueConcurrency[QueueName.ApprovalExecutor],
     },
   );
+  attachFailureLogger(worker, QueueName.ApprovalExecutor);
+  return worker;
 }
 
 export function createTranscriptWorker(
   processor: Processor<TranscriptJobData, unknown>,
   connection: Redis,
 ): Worker<TranscriptJobData> {
-  return new Worker<TranscriptJobData>(QueueName.Transcript, processor, {
+  const worker = new Worker<TranscriptJobData>(QueueName.Transcript, processor, {
     connection,
     concurrency: QueueConcurrency[QueueName.Transcript],
     ...(QueueRateLimits[QueueName.Transcript]
       ? { limiter: QueueRateLimits[QueueName.Transcript] }
       : {}),
   });
+  attachFailureLogger(worker, QueueName.Transcript);
+  return worker;
 }
 
 /**
