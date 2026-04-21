@@ -25,6 +25,7 @@ import { runDailyDigest } from "./jobs/daily-digest-job.js";
 import { runIntentClassifierTick } from "./jobs/intent-classifier-job.js";
 import { startBullWorker } from "./queues/runner.js";
 import { startTemporalWorker } from "./temporal/runner.js";
+import type { Worker as TemporalWorker } from "@temporalio/worker";
 
 const DEFAULT_WORKSPACE_ID = "01HSEEDWRK0000000000000001";
 const SCANNER_INTERVAL_MS = 60 * 60 * 1000;
@@ -196,19 +197,34 @@ async function main(): Promise<void> {
   // Skip the worker when TEMPORAL_ADDRESS is still the placeholder so
   // first-boot on Fly doesn't crash-loop. BullMQ keeps running;
   // Temporal workflows stay dormant until a real address is set.
-  const temporal =
-    env.TEMPORAL_ADDRESS === "localhost:7233"
-      ? null
-      : await startTemporalWorker({
-          address: env.TEMPORAL_ADDRESS,
-          namespace: env.TEMPORAL_NAMESPACE,
-          taskQueue: env.TEMPORAL_TASK_QUEUE,
-          ...(env.TEMPORAL_API_KEY ? { apiKey: env.TEMPORAL_API_KEY } : {}),
-          db,
-          anthropic,
-          costLedger,
-          ...callBundle,
-        });
+  // Wrapped in try/catch so a real-but-unreachable Temporal cluster
+  // (wrong address, bad API key, network block, etc.) logs loudly
+  // instead of taking the whole worker process down — the
+  // direct-Twilio fallback (#188) + BullMQ queues keep running.
+  let temporal: TemporalWorker | null = null;
+  if (env.TEMPORAL_ADDRESS !== "localhost:7233") {
+    try {
+      temporal = await startTemporalWorker({
+        address: env.TEMPORAL_ADDRESS,
+        namespace: env.TEMPORAL_NAMESPACE,
+        taskQueue: env.TEMPORAL_TASK_QUEUE,
+        ...(env.TEMPORAL_API_KEY ? { apiKey: env.TEMPORAL_API_KEY } : {}),
+        db,
+        anthropic,
+        costLedger,
+        ...callBundle,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `worker: Temporal Worker.connect failed (address=${env.TEMPORAL_ADDRESS} ` +
+          `namespace=${env.TEMPORAL_NAMESPACE} api_key_present=${Boolean(env.TEMPORAL_API_KEY)}): ` +
+          `${(err as Error).message}`,
+      );
+      // eslint-disable-next-line no-console
+      console.error(err);
+    }
+  }
 
   if (!temporal) {
     // eslint-disable-next-line no-console
