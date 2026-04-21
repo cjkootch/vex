@@ -290,11 +290,15 @@ export class QueryService {
     // and fire them. Until this existed, Claude would prose-say
     // "I'll set up the call" without any row ever reaching the DB
     // and the approval-executor worker had nothing to act on.
+    const normalizedActions = enforceAiModeWhenVexIsTheCaller(
+      queryResult.proposedActions,
+      input.message,
+    );
     const { created: createdApprovals, rejected: rejectedProposals } =
       await this.persistProposedActions(
         tenantId,
         input.agentRunId,
-        queryResult.proposedActions,
+        normalizedActions,
       );
 
     return {
@@ -429,6 +433,35 @@ const CONVERSATIONAL_OPENERS = new Set([
   "yo",
   "sup",
 ]);
+
+/**
+ * Deterministic safety net for `outbound_call` proposals. The prompt
+ * instructs Claude to set `aiMode=true` when the user's intent is
+ * "have Vex call X" vs "dial X for me", but it's an optional field
+ * and the model occasionally drops it — producing an operator-join
+ * conference (hold music) when the operator clearly asked for an AI
+ * call. Match the user's original message against a tight allowlist
+ * of Vex-as-caller phrasings and force `aiMode=true` before the
+ * proposal is persisted. Preserves an explicitly-set `aiMode=false`
+ * so operators can still opt back into the conference path.
+ */
+export function enforceAiModeWhenVexIsTheCaller(
+  actions: ProposedAction[],
+  userMessage: string,
+): ProposedAction[] {
+  if (!VEX_CALLER_RE.test(userMessage)) return actions;
+  return actions.map((a) => {
+    if (a.kind !== "outbound_call") return a;
+    if (a.payload["aiMode"] !== undefined) return a;
+    return { ...a, payload: { ...a.payload, aiMode: true } };
+  });
+}
+
+// "Have Vex call X", "AI call X", "Vex talks to X", "have the agent
+// call X". Deliberately narrow — "dial X", "call X and I'll join",
+// "ring X" should all keep the operator-join default.
+const VEX_CALLER_RE =
+  /\b(vex\s+(call|calls|talk|talks|dial|ring)|ai[-\s]?call|have\s+(vex|the\s+agent)\s+(call|talk|dial|ring))/i;
 
 function isConversationalOpener(message: string): boolean {
   const trimmed = message.trim().toLowerCase();
