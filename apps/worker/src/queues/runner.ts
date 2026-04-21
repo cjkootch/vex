@@ -4,7 +4,10 @@ import {
   AgentRunner,
   DailyBriefAgent,
   FollowUpAgent,
+  FreightMarketAgent,
   LeadQualificationAgent,
+  OFACScreeningAgent,
+  PortIntelligenceAgent,
   ReactivationBatchAgent,
   ResearchAgent,
   backpressureEngaged,
@@ -474,6 +477,26 @@ function buildAgentProcessor(
               : {}),
             ...(typeof rationale === "string" ? { rationale } : {}),
           }),
+          { workspaceId: data.workspace_id },
+        );
+      }
+      case "ofac_screening": {
+        const orgIdRaw = data.input?.["organization_id"];
+        const orgId = typeof orgIdRaw === "string" ? orgIdRaw : undefined;
+        return runner.run(
+          new OFACScreeningAgent(orgId ? { orgId } : {}),
+          { workspaceId: data.workspace_id },
+        );
+      }
+      case "freight_market":
+        return runner.run(new FreightMarketAgent(), {
+          workspaceId: data.workspace_id,
+        });
+      case "port_intelligence": {
+        const dealIdRaw = data.input?.["deal_id"];
+        const dealId = typeof dealIdRaw === "string" ? dealIdRaw : undefined;
+        return runner.run(
+          new PortIntelligenceAgent(dealId ? { dealId } : {}),
           { workspaceId: data.workspace_id },
         );
       }

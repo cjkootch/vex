@@ -20,6 +20,8 @@ import {
 } from "./enums.js";
 import { organizations } from "./organizations.js";
 import { contacts } from "./contacts.js";
+import { vessels } from "./vessels.js";
+import { ports } from "./ports.js";
 import { leads } from "./leads.js";
 import { campaigns } from "./campaigns.js";
 import { users } from "./users.js";
@@ -40,6 +42,15 @@ export const fuelDeals = pgTable(
     dealRef: text("deal_ref").notNull(),
     status: dealStatusEnum("status").notNull().default("draft"),
     dealType: dealTypeEnum("deal_type").notNull().default("spot"),
+    /**
+     * Cadence. Migrated in 0016_deal_frequency as a plain text column
+     * (not an enum) so operators can add new rhythms without a schema
+     * bump. Allowed values: one_off, weekly, biweekly, monthly, custom.
+     * When `custom`, `dealFrequencyIntervalDays` carries the cadence.
+     */
+    dealFrequency: text("deal_frequency").notNull().default("one_off"),
+    dealFrequencyIntervalDays: integer("deal_frequency_interval_days"),
+    dealFrequencyNotes: text("deal_frequency_notes"),
     product: productTypeEnum("product").notNull(),
     productGrade: text("product_grade"),
     productSpecNotes: text("product_spec_notes"),
@@ -159,6 +170,41 @@ export const fuelDeals = pgTable(
     countryRiskScore: doublePrecision("country_risk_score"),
     politicalRiskInsured: boolean("political_risk_insured").notNull().default(false),
 
+    /**
+     * Vessel intelligence (0019_vessels). Each fuel deal can pin to a
+     * physical hull and carry the freight terms actually booked. The
+     * lock-time market rate gives the evaluator the delta between
+     * what we paid and what the spot looked like at lock — surfaces
+     * good (or bad) timing inside the calculator's freight line.
+     */
+    vesselId: text("vessel_id").references(() => vessels.id, {
+      onDelete: "set null",
+    }),
+    vesselUtilizationPct: doublePrecision("vessel_utilization_pct"),
+    freightRateUsdPerMt: doublePrecision("freight_rate_usd_per_mt"),
+    freightRateLockedAt: timestamp("freight_rate_locked_at", {
+      withTimezone: true,
+    }),
+    freightRateSource: text("freight_rate_source"),
+    freightMarketRateAtLock: doublePrecision("freight_market_rate_at_lock"),
+    demurrageRateUsdPerDay: doublePrecision("demurrage_rate_usd_per_day"),
+    ballastBonusUsd: doublePrecision("ballast_bonus_usd"),
+    /** "voyage" | "time" | "spot". Text — CP terminology varies. */
+    charterType: text("charter_type"),
+
+    /**
+     * Port intelligence (0020_ports). ULID-linked origin + destination
+     * ports. Coexist with the legacy text `originPort` / `destinationPort`
+     * columns so the migration from free-text strings can roll forward
+     * gradually.
+     */
+    originPortId: text("origin_port_id").references(() => ports.id, {
+      onDelete: "set null",
+    }),
+    destinationPortId: text("destination_port_id").references(() => ports.id, {
+      onDelete: "set null",
+    }),
+
     notes: text("notes"),
     internalNotes: text("internal_notes"),
     createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
@@ -174,6 +220,11 @@ export const fuelDeals = pgTable(
     laycanIdx: index("fuel_deals_laycan_idx").on(t.laycanStart),
     createdAtIdx: index("fuel_deals_created_at_idx").on(t.createdAt),
     dealRefIdx: index("fuel_deals_deal_ref_idx").on(t.tenantId, t.dealRef),
+    vesselIdx: index("fuel_deals_vessel_idx").on(t.vesselId),
+    originPortIdx: index("fuel_deals_origin_port_idx").on(t.originPortId),
+    destinationPortIdx: index("fuel_deals_destination_port_idx").on(
+      t.destinationPortId,
+    ),
   }),
 );
 

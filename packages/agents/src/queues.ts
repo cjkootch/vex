@@ -47,7 +47,10 @@ export type AgentJobKind =
   | "research"
   | "follow_up"
   | "lead_qualification"
-  | "reactivation_batch";
+  | "reactivation_batch"
+  | "ofac_screening"
+  | "freight_market"
+  | "port_intelligence";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;
@@ -245,6 +248,38 @@ export async function scheduleRecurringAgents(
     {
       repeat: { pattern: "0 */2 8-18 * * 1-5" },
       jobId: `recurring:follow_up:${workspaceId}`,
+    },
+  );
+  // Daily 07:00 — runs just after OFAC's overnight SDN publication so
+  // the team sees any new matches in the signals inbox at start of day.
+  await queue.add(
+    "ofac_screening",
+    { kind: "ofac_screening", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 7 * * *" },
+      jobId: `recurring:ofac_screening:${workspaceId}`,
+    },
+  );
+  // Daily 06:00 — ingests freight rates + flags shifted/missing rates
+  // before the desk's 07:00 daily brief so freight context is fresh.
+  await queue.add(
+    "freight_market",
+    { kind: "freight_market", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 6 * * *" },
+      jobId: `recurring:freight_market:${workspaceId}`,
+    },
+  );
+  // Daily 05:00 — port constraint + active-event checks across every
+  // open deal. Runs before the freight market pass + the daily brief
+  // so port warnings land in the signals inbox first thing in the
+  // morning, ahead of any desk action.
+  await queue.add(
+    "port_intelligence",
+    { kind: "port_intelligence", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 5 * * *" },
+      jobId: `recurring:port_intelligence:${workspaceId}`,
     },
   );
 }

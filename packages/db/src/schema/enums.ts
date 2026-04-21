@@ -190,6 +190,34 @@ export const vesselTypeEnum = pgEnum("vessel_type", [
   VesselType.Flexitank,
 ]);
 
+/**
+ * Broader vessel classification used by the vessels dimension table
+ * (0019_vessels). Distinct from vesselTypeEnum above — that one is
+ * pinned to refined-product tankers + ISO containers and is stamped
+ * onto fuel_deal_cost_stack rows. This enum covers bulk carriers,
+ * container ships, and reefer tonnage as the book grows beyond
+ * refined products. Two enums coexist because they answer different
+ * questions ("how was this cargo packaged" vs "what hull is it on").
+ */
+export const vesselClassEnum = pgEnum("vessel_class", [
+  "handysize",
+  "handymax",
+  "panamax",
+  "aframax",
+  "suezmax",
+  "vlcc",
+  "mr_tanker",
+  "lr1",
+  "lr2",
+  "coastal",
+  "barge",
+  "container",
+  "reefer",
+  "bulk_carrier",
+]);
+
+export type VesselClass = (typeof vesselClassEnum.enumValues)[number];
+
 export const freightBasisEnum = pgEnum("freight_basis", [
   FreightBasis.PerUsg,
   FreightBasis.LumpSum,

@@ -1,4 +1,6 @@
 import { Module, type DynamicModule } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import type { AgentJobData } from "@vex/agents";
 import type {
   Db,
   EventRepository,
@@ -7,6 +9,7 @@ import type {
   OrganizationRepository,
 } from "@vex/db";
 import {
+  ORGANIZATIONS_AGENTS_QUEUE,
   ORGANIZATIONS_DB_CLIENT,
   ORGANIZATIONS_EVENT_REPO,
   ORGANIZATIONS_PRODUCTS_REPO,
@@ -21,6 +24,12 @@ export interface OrganizationsModuleConfig {
   events: EventRepository;
   orgProducts: OrganizationProductRepository;
   orgRelationships: OrganizationRelationshipRepository;
+  /**
+   * Agents queue — used to enqueue a single-org OFAC screen the moment
+   * a new organization lands, so the buyer-intel card is never
+   * "unscreened" for more than a few seconds.
+   */
+  agentsQueue: Queue<AgentJobData>;
 }
 
 @Module({})
@@ -40,6 +49,10 @@ export class OrganizationsModule {
         {
           provide: ORGANIZATIONS_RELATIONSHIPS_REPO,
           useFactory: () => config.orgRelationships,
+        },
+        {
+          provide: ORGANIZATIONS_AGENTS_QUEUE,
+          useFactory: () => config.agentsQueue,
         },
       ],
     };

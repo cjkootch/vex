@@ -122,6 +122,31 @@ export const SEED_FUEL_MARKET_RATE_IDS = Array.from({ length: 5 }, (_, i) =>
 );
 
 /**
+ * Caribbean + US-gulf port seed IDs (0020_ports). 17 ports hand-seeded
+ * for VTC's active lanes. Keyed by UN/LOCODE so seed.ts + tests can
+ * reach a specific port without a registry lookup.
+ */
+export const SEED_PORT_IDS: Record<string, string> = {
+  JMKIN: make("PRT", 1),
+  JMMBJ: make("PRT", 2),
+  TTPOS: make("PRT", 3),
+  TTPLM: make("PRT", 4),
+  DOHAI: make("PRT", 5),
+  DOSDE: make("PRT", 6),
+  DOCBY: make("PRT", 7),
+  HTPAP: make("PRT", 8),
+  BSNAS: make("PRT", 9),
+  BBBGI: make("PRT", 10),
+  CWWIL: make("PRT", 11),
+  GYGEO: make("PRT", 12),
+  SUPBM: make("PRT", 13),
+  USHOU: make("PRT", 14),
+  USLAX: make("PRT", 15),
+  USNYC: make("PRT", 16),
+  USMIA: make("PRT", 17),
+};
+
+/**
  * Flat list of every seed ID. Useful for sanity-checking fixtures.
  */
 export const ALL_SEED_IDS: readonly string[] = [
@@ -141,4 +166,5 @@ export const ALL_SEED_IDS: readonly string[] = [
   ...SEED_FUEL_DEAL_CASHFLOW_IDS,
   ...Object.values(SEED_COUNTERPARTY_SCORE_IDS),
   ...SEED_FUEL_MARKET_RATE_IDS,
+  ...Object.values(SEED_PORT_IDS),
 ];

@@ -113,6 +113,41 @@
       "when": 1777622400000,
       "tag": "0015_cost_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1777708800000,
+      "tag": "0016_deal_frequency",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1777795200000,
+      "tag": "0017_fuel_deal_participants",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1777881600000,
+      "tag": "0018_ofac_screening",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1777968000000,
+      "tag": "0019_vessels",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1778054400000,
+      "tag": "0020_ports",
+      "breakpoints": true
     }
   ]
 }

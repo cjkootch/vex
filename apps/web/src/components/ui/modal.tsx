@@ -16,9 +16,23 @@ export interface ModalProps {
   description?: string;
   children: ReactNode;
   footer?: ReactNode;
+  /**
+   * Panel width. `md` matches the original Sprint-14 modal; `xl` widens
+   * for two-pane workspaces (the deal creator dashboard). Keep the
+   * default at `md` so existing callers are untouched.
+   */
+  size?: "md" | "xl";
 }
 
-export function Modal({ open, onClose, title, description, children, footer }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  description,
+  children,
+  footer,
+  size = "md",
+}: ModalProps) {
   useEffect(() => {
     if (!open) return;
     function onKey(e: KeyboardEvent): void {
@@ -37,7 +51,9 @@ export function Modal({ open, onClose, title, description, children, footer }: M
       role="presentation"
     >
       <div
-        className="w-full max-w-lg rounded-lg border border-line bg-canvas p-6 shadow-xl"
+        className={`w-full rounded-lg border border-line bg-canvas p-6 shadow-xl ${
+          size === "xl" ? "max-w-6xl" : "max-w-lg"
+        }`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

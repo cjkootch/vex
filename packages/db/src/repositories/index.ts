@@ -50,11 +50,16 @@ export {
 } from "./cost-ledger-repository.js";
 export {
   CounterpartyRiskRepository,
+  FuelDealParticipantRepository,
   FuelDealRepository,
   FuelDealScenarioRepository,
   FuelMarketRateRepository,
+  type CommissionType,
   type CounterpartyScoreUpsert,
+  type DealFrequency,
+  type DealPartyType,
   type FuelDealCreate,
+  type FuelDealParticipantCreate,
   type FuelDealScenarioCreate,
   type FuelMarketRateInsert,
 } from "./deals.js";
@@ -78,3 +83,27 @@ export {
   OrganizationRelationshipRepository,
   type OrganizationRelationshipInsert,
 } from "./organization-relationship-repository.js";
+export {
+  OfacScreenRepository,
+  type OfacScreenClearInput,
+  type OfacScreenInsert,
+  type OfacScreenStatus,
+} from "./ofac-screen-repository.js";
+export {
+  VesselRepository,
+  type VesselCreate,
+  type VesselListFilter,
+  type VesselUpdate,
+} from "./vessel-repository.js";
+export {
+  FreightRateRepository,
+  type FreightRateInsert,
+  type FreightRateRouteQuery,
+  type MarkToMarketResult,
+} from "./freight-rate-repository.js";
+export {
+  PortRepository,
+  type PortCreate,
+  type PortEventInsert,
+  type PortUpdate,
+} from "./port-repository.js";

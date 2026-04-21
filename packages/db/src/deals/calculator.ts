@@ -61,6 +61,126 @@ export interface VesselInputs {
   canalTransitUsd: number;
 }
 
+/**
+ * Vessel particulars (T4-gap of the vessel intelligence build). Distinct
+ * from {@link VesselInputs} above — that one carries per-deal economics
+ * (capacity, utilization, lump-sum freight, demurrage). This one carries
+ * the hull's identity + dimensions, sourced from the vessels dimension
+ * table (0019_vessels). Used to:
+ *   - derive utilization from volumeMt / dwtMt when the operator hasn't
+ *     entered an explicit utilization,
+ *   - drive the `freight_rate_missing` warning when a vessel is on the
+ *     deal but no freight rate has been locked.
+ *
+ * Kept distinct from `VesselInputs` so existing calculator callers keep
+ * working unchanged — both fields are optional.
+ */
+export type VesselClass =
+  | "handysize"
+  | "handymax"
+  | "panamax"
+  | "aframax"
+  | "suezmax"
+  | "vlcc"
+  | "mr_tanker"
+  | "lr1"
+  | "lr2"
+  | "coastal"
+  | "barge"
+  | "container"
+  | "reefer"
+  | "bulk_carrier";
+
+export interface VesselSpec {
+  class: VesselClass;
+  dwtMt: number;
+  maxDraftM: number;
+  /** Length overall (metres). Added for the port LOA constraint check. */
+  loaM?: number;
+  /** Beam (metres). Added for port beam constraint checks. */
+  beamM?: number;
+}
+
+/**
+ * Port physical + operational spec for the constraint checks in
+ * {@link validatePortConstraints}. Shape lines up with the `ports`
+ * dimension (0020_ports) — the calculator is pure, so callers pull
+ * the row via PortRepository and pass the subset they care about.
+ */
+export interface PortSpec {
+  unlocode: string;
+  name: string;
+  maxDraftM?: number | null;
+  maxLoaM?: number | null;
+  maxBeamM?: number | null;
+  maxDwtMt?: number | null;
+  reeferCapable?: boolean;
+  /** "congestion_factor" on the migration. > 1.0 = slower than nominal. */
+  congestionFactor?: number | null;
+  /** Free-text; the product→keyword match looks for restriction verbs here. */
+  restrictedCargoNotes?: string | null;
+}
+
+/**
+ * Volume conversion: 1 USG ≈ 3.78541 L. tonnes = (USG × density_kg/L
+ * × 3.78541) / 1000. Used by computeFreightCost (rate × MT) and the
+ * utilization helper. Returns 0 when either input is non-positive.
+ */
+export function dealVolumeMt(volumeUsg: number, densityKgL: number): number {
+  if (!(volumeUsg > 0) || !(densityKgL > 0)) return 0;
+  return (volumeUsg * densityKgL * 3.78541) / 1000;
+}
+
+/**
+ * Vessel utilization as a fraction of DWT. Clamped to 0..1.05 since a
+ * slight overload (≤ 5%) is common for refined-products tankers when
+ * stowing high-density cargo. Returns null when either input is
+ * missing — UI surfaces "—" instead of a misleading 0%.
+ */
+export function computeVesselUtilization(
+  inputs: { volumeUsg: number; densityKgL: number },
+  vessel: VesselSpec,
+): number | null {
+  const volumeMt = dealVolumeMt(inputs.volumeUsg, inputs.densityKgL);
+  if (!(volumeMt > 0) || !(vessel.dwtMt > 0)) return null;
+  const ratio = volumeMt / vessel.dwtMt;
+  return Math.min(Math.max(ratio, 0), 1.05);
+}
+
+/**
+ * Freight cost from a USD/MT rate + deal volume. Returns null when the
+ * rate is missing or non-positive — the caller should fall back to the
+ * existing `freightPerUsg` input. The cost stack's effectiveFreight()
+ * helper already does this swap.
+ */
+export function computeFreightCost(
+  inputs: { volumeUsg: number; densityKgL: number },
+  rateUsdPerMt: number | undefined,
+): { totalUsd: number; perUsg: number; perMt: number } | null {
+  if (!rateUsdPerMt || rateUsdPerMt <= 0) return null;
+  const volumeMt = dealVolumeMt(inputs.volumeUsg, inputs.densityKgL);
+  if (volumeMt <= 0) return null;
+  const totalUsd = rateUsdPerMt * volumeMt;
+  return {
+    totalUsd,
+    perUsg: totalUsd / inputs.volumeUsg,
+    perMt: rateUsdPerMt,
+  };
+}
+
+/**
+ * Resolve the per-USG freight figure used by the cost stack. Order of
+ * preference:
+ *   1. Computed from `freightRateUsdPerMt` (USD/MT rate × volumeMt /
+ *      volumeUsg) — when the operator booked a rate.
+ *   2. The existing `freightPerUsg` input — fallback for callers that
+ *      haven't moved to the per-MT field yet.
+ */
+function effectiveFreight(inputs: FuelDealInputs): number {
+  const computed = computeFreightCost(inputs, inputs.freightRateUsdPerMt);
+  return computed?.perUsg ?? inputs.freightPerUsg;
+}
+
 export interface TradeFinanceInputs {
   type: PaymentTermsType;
   lcValueUsd?: number;
@@ -118,6 +238,33 @@ export interface FuelDealInputs {
   vtcVariableOpsPerUsg: number;
 
   vessel?: VesselInputs;
+  /**
+   * Hull particulars from the vessels dimension table (0019). Distinct
+   * from {@link VesselInputs} above. When present, drives utilization
+   * derivation and the freight_rate_missing warning.
+   */
+  vesselSpec?: VesselSpec;
+  /**
+   * Freight rate in USD/MT (e.g. as quoted in broker circulars or
+   * Worldscale flat rates). When present, takes precedence over
+   * `freightPerUsg` for the cost-stack freight line — the calculator
+   * converts via deal volumeMt. Leave undefined to fall back to the
+   * existing `freightPerUsg` per-USG entry.
+   */
+  freightRateUsdPerMt?: number;
+  /**
+   * Port specs from the ports dimension (0020_ports). Both optional —
+   * when present, {@link validatePortConstraints} runs draft / LOA /
+   * DWT / reefer / restricted-cargo / congestion checks and appends
+   * the findings to the main warnings array.
+   */
+  originPort?: PortSpec;
+  destinationPort?: PortSpec;
+  /**
+   * Food line-of-business flag. When true, ports touched by the deal
+   * must have reefer_capable = true or a critical warning fires.
+   */
+  coldChainRequired?: boolean;
   overheadAllocationUsd: number;
   tradeFinance: TradeFinanceInputs;
   counterpartyRiskScore: number;
@@ -341,11 +488,15 @@ export function calculateInsuranceCosts(inputs: FuelDealInputs): InsuranceCosts 
  */
 export function calculateUnitEconomics(inputs: FuelDealInputs): PerUsgEconomics {
   const insurance = calculateInsuranceCosts(inputs);
+  // T4-gap: when the operator booked a USD/MT freight rate, derive the
+  // per-USG equivalent from deal volumeMt. Falls back to the existing
+  // freightPerUsg entry so callers without the new field keep working.
+  const effectiveFreightPerUsg = effectiveFreight(inputs);
 
   const totalVariableCost =
     inputs.productCostPerUsg +
     inputs.productQualityPremiumPerUsg +
-    inputs.freightPerUsg +
+    effectiveFreightPerUsg +
     insurance.totalInsurancePerUsg +
     inputs.dischargeHandlingPerUsg +
     inputs.compliancePerUsg +
@@ -362,7 +513,7 @@ export function calculateUnitEconomics(inputs: FuelDealInputs): PerUsgEconomics 
     sellPrice: inputs.sellPricePerUsg,
     productCost: inputs.productCostPerUsg,
     qualityPremium: inputs.productQualityPremiumPerUsg,
-    freight: inputs.freightPerUsg,
+    freight: effectiveFreightPerUsg,
     insurance: insurance.totalInsurancePerUsg,
     dischargeHandling: inputs.dischargeHandlingPerUsg,
     compliance: inputs.compliancePerUsg,
@@ -674,7 +825,209 @@ export function calculateWarnings(
     });
   }
 
+  // --- Freight rate missing ----------------------------------------------
+  // T4-gap: when a vessel is on the deal but no freight rate has been
+  // booked (neither freightRateUsdPerMt nor freightPerUsg), surface as
+  // a caution so the desk knows to lock freight before laycan.
+  if (
+    inputs.vesselSpec &&
+    !(inputs.freightRateUsdPerMt && inputs.freightRateUsdPerMt > 0) &&
+    !(inputs.freightPerUsg > 0)
+  ) {
+    warnings.push({
+      code: "freight.rate_missing",
+      severity: "caution",
+      message:
+        `Vessel nominated but no freight rate booked. Lock a USD/MT rate (${inputs.vesselSpec.class}) ` +
+        `before laycan or freight will price at spot.`,
+      affectedField: "freightRateUsdPerMt",
+    });
+  }
+
+  // --- Port constraints (0020_ports) --------------------------------------
+  // Run whenever either port is linked. Draft / LOA / DWT checks
+  // require a vessel; reefer + restricted-cargo + congestion checks
+  // don't. Each hit becomes a DealWarning; severities mirror the spec.
+  for (const w of validatePortConstraints({
+    product: inputs.product,
+    coldChainRequired: inputs.coldChainRequired ?? false,
+    vessel: inputs.vesselSpec ?? null,
+    originPort: inputs.originPort ?? null,
+    destinationPort: inputs.destinationPort ?? null,
+  })) {
+    warnings.push(w);
+  }
+
   return warnings;
+}
+
+// ===========================================================================
+// Port constraint checks (0020_ports)
+// ===========================================================================
+
+/**
+ * Inputs the port-constraint checks read off a deal. Kept minimal so
+ * callers (the calculator + the port-intelligence agent) can run the
+ * checks without the full FuelDealInputs surface.
+ */
+export interface PortCheckDeal {
+  product: ProductType;
+  coldChainRequired: boolean;
+}
+
+/**
+ * Port-side validation. Runs six cuts per leg (origin + destination):
+ *
+ *   draft_exceeds_port_limit   critical  vessel.maxDraftM > port.maxDraftM
+ *   loa_exceeds_port_limit     critical  vessel.loaM > port.maxLoaM
+ *   dwt_exceeds_port_limit     caution   vessel.dwtMt > port.maxDwtMt
+ *   reefer_not_supported       critical  coldChainRequired && !port.reeferCapable
+ *   restricted_cargo           caution   product token + restriction verb in notes
+ *   congestion_elevated        caution   port.congestionFactor > 1.3
+ *
+ * `affectedField` is suffixed with `.origin` / `.destination` so the
+ * UI can dedupe across the two legs.
+ */
+export function validatePortConstraints(args: {
+  product: ProductType;
+  coldChainRequired: boolean;
+  vessel: VesselSpec | null;
+  originPort: PortSpec | null;
+  destinationPort: PortSpec | null;
+}): DealWarning[] {
+  const warnings: DealWarning[] = [];
+  const legs: Array<{ label: "origin" | "destination"; port: PortSpec | null }> = [
+    { label: "origin", port: args.originPort },
+    { label: "destination", port: args.destinationPort },
+  ];
+  for (const { label, port } of legs) {
+    if (!port) continue;
+
+    if (args.vessel) {
+      if (
+        port.maxDraftM !== null &&
+        port.maxDraftM !== undefined &&
+        args.vessel.maxDraftM > port.maxDraftM
+      ) {
+        warnings.push({
+          code: "port.draft_exceeds_port_limit",
+          severity: "critical",
+          message:
+            `${port.name}: vessel draft ${args.vessel.maxDraftM.toFixed(1)}m ` +
+            `exceeds port max ${port.maxDraftM.toFixed(1)}m.`,
+          affectedField: `port.${label}.maxDraftM`,
+        });
+      }
+      if (
+        args.vessel.loaM !== undefined &&
+        port.maxLoaM !== null &&
+        port.maxLoaM !== undefined &&
+        args.vessel.loaM > port.maxLoaM
+      ) {
+        warnings.push({
+          code: "port.loa_exceeds_port_limit",
+          severity: "critical",
+          message:
+            `${port.name}: vessel LOA ${args.vessel.loaM.toFixed(0)}m ` +
+            `exceeds port max ${port.maxLoaM.toFixed(0)}m.`,
+          affectedField: `port.${label}.maxLoaM`,
+        });
+      }
+      if (
+        port.maxDwtMt !== null &&
+        port.maxDwtMt !== undefined &&
+        args.vessel.dwtMt > port.maxDwtMt
+      ) {
+        warnings.push({
+          code: "port.dwt_exceeds_port_limit",
+          severity: "caution",
+          message:
+            `${port.name}: vessel DWT ${args.vessel.dwtMt.toLocaleString()} MT ` +
+            `exceeds port max ${port.maxDwtMt.toLocaleString()} MT.`,
+          affectedField: `port.${label}.maxDwtMt`,
+        });
+      }
+    }
+
+    if (args.coldChainRequired && port.reeferCapable === false) {
+      warnings.push({
+        code: "port.reefer_not_supported",
+        severity: "critical",
+        message:
+          `${port.name}: deal requires cold-chain handling but port is not reefer-capable.`,
+        affectedField: `port.${label}.reeferCapable`,
+      });
+    }
+
+    if (hasRestrictedCargoMatch(port.restrictedCargoNotes, args.product)) {
+      warnings.push({
+        code: "port.restricted_cargo",
+        severity: "caution",
+        message:
+          `${port.name}: restricted cargo note may apply to ${args.product} — ` +
+          `operator review required (${truncate(port.restrictedCargoNotes!, 80)}).`,
+        affectedField: `port.${label}.restrictedCargoNotes`,
+      });
+    }
+
+    if (
+      port.congestionFactor !== null &&
+      port.congestionFactor !== undefined &&
+      port.congestionFactor > 1.3
+    ) {
+      warnings.push({
+        code: "port.congestion_elevated",
+        severity: "caution",
+        message:
+          `${port.name}: congestion factor ${port.congestionFactor.toFixed(2)}× — ` +
+          `expect +${((port.congestionFactor - 1) * 100).toFixed(0)}% on port days.`,
+        affectedField: `port.${label}.congestionFactor`,
+      });
+    }
+  }
+  return warnings;
+}
+
+/**
+ * Product → keyword match for the `restricted_cargo` check. Hits when
+ * the port's free-text notes contain BOTH a product token AND a
+ * restriction verb. Tuned to be conservative — false positives create
+ * operator friction; false negatives are caught downstream by the
+ * agent / human review.
+ */
+const PRODUCT_RESTRICTION_TOKENS: Record<string, string[]> = {
+  ulsd: ["ulsd", "diesel"],
+  gasoline_87: ["gasoline", "mogas"],
+  gasoline_91: ["gasoline", "mogas"],
+  jet_a: ["jet", "aviation"],
+  jet_a1: ["jet", "aviation"],
+  avgas: ["avgas", "aviation"],
+  lfo: ["lfo", "light fuel"],
+  hfo: ["hfo", "heavy fuel", "sulfur", "sulphur"],
+  lng: ["lng", "liquefied natural"],
+  lpg: ["lpg", "propane", "butane"],
+  biodiesel_b20: ["biodiesel", "bio-diesel", "b20"],
+};
+
+const RESTRICTION_VERBS_RE =
+  /\b(no|not|prohibit|prohibited|restrict|restricted|ban|banned|disallow|disallowed|forbid|forbidden|only)\b/i;
+
+function hasRestrictedCargoMatch(
+  notes: string | null | undefined,
+  product: string,
+): boolean {
+  if (!notes) return false;
+  const tokens = PRODUCT_RESTRICTION_TOKENS[product];
+  if (!tokens || tokens.length === 0) return false;
+  const lower = notes.toLowerCase();
+  const matchedToken = tokens.some((t) => lower.includes(t));
+  if (!matchedToken) return false;
+  return RESTRICTION_VERBS_RE.test(notes);
+}
+
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s;
+  return `${s.slice(0, max - 1).trimEnd()}…`;
 }
 
 // ===========================================================================
@@ -1058,6 +1411,14 @@ export interface SensitivityOutputs {
   utilizationVsMargin: SensitivityGrid;
   /** EBITDA $, rows = productCost ±$0.15, cols = sellPrice ±$0.15. */
   productCostVsPrice: SensitivityGrid;
+  /**
+   * T4-gap freight-rate sweep. cols = -20% / -15% / -10% / -5% /
+   * 0% / +5% / +10% / +15% / +20% deltas from the current freight
+   * rate; rows = ["EBITDA $", "Peak cash $"]. highlightCol is fixed
+   * at the 0% baseline (index 4). Empty when neither
+   * freightRateUsdPerMt nor freightPerUsg is set on inputs.
+   */
+  freightRateSweep: SensitivityGrid;
 }
 
 /**
@@ -1213,10 +1574,61 @@ export function calculateSensitivityGrids(
     highlightCol: 2,
   };
 
+  // -------- Grid 5: freightRateSweep → EBITDA + peak cash -----------------
+  // 1-D sensitivity along the freight rate. Operates on whichever
+  // freight input is set (USD/MT preferred over per-USG); when both
+  // are zero the grid is empty so the UI can hide the panel.
+  const freightRateSweep = buildFreightRateSweep(inputs);
+
   return {
     priceVsVolume,
     priceVsFreight,
     utilizationVsMargin,
     productCostVsPrice,
+    freightRateSweep,
+  };
+}
+
+const FREIGHT_SWEEP_DELTAS = [-0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2];
+const FREIGHT_SWEEP_LABELS = FREIGHT_SWEEP_DELTAS.map(
+  (d) => `${d >= 0 ? "+" : ""}${(d * 100).toFixed(0)}%`,
+);
+
+function buildFreightRateSweep(inputs: FuelDealInputs): SensitivityGrid {
+  // Prefer the USD/MT axis when set; fall back to the per-USG axis.
+  const ratePerMt = inputs.freightRateUsdPerMt ?? null;
+  const perUsgBase = inputs.freightPerUsg;
+  const haveAxis =
+    (ratePerMt !== null && ratePerMt > 0) || perUsgBase > 0;
+  if (!haveAxis) {
+    return {
+      rowLabels: [],
+      colLabels: [],
+      values: [],
+      highlightRow: -1,
+      highlightCol: -1,
+    };
+  }
+
+  const ebitdaRow: number[] = [];
+  const peakCashRow: number[] = [];
+  for (const delta of FREIGHT_SWEEP_DELTAS) {
+    const cellInputs: FuelDealInputs =
+      ratePerMt !== null && ratePerMt > 0
+        ? { ...inputs, freightRateUsdPerMt: ratePerMt * (1 + delta) }
+        : { ...inputs, freightPerUsg: perUsgBase * (1 + delta) };
+    const perUsg = calculateUnitEconomics(cellInputs);
+    const totals = calculateTotals(cellInputs, perUsg);
+    ebitdaRow.push(totals.ebitdaUsd);
+    const cashflow = calculateCashflow(cellInputs);
+    peakCashRow.push(cashflow.peakExposureUsd);
+  }
+
+  return {
+    rowLabels: ["EBITDA $", "Peak cash $"],
+    colLabels: FREIGHT_SWEEP_LABELS,
+    values: [ebitdaRow, peakCashRow],
+    highlightRow: -1,
+    highlightCol: 4, // the 0% baseline
   };
 }

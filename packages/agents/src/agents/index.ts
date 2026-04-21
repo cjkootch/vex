@@ -15,3 +15,17 @@ export {
   ReactivationBatchAgent,
   type ReactivationBatchInput,
 } from "./reactivation.js";
+export {
+  OFACScreeningAgent,
+  sanctionsExposureRiskFor,
+  type OfacScreeningAgentInput,
+} from "./ofac-screening.js";
+export {
+  VesselIntelligenceAgent,
+  type VesselIntelligenceInput,
+} from "./vessel-intelligence.js";
+export { FreightMarketAgent } from "./freight-market.js";
+export {
+  PortIntelligenceAgent,
+  type PortIntelligenceInput,
+} from "./port-intelligence.js";
