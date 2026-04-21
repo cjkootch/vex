@@ -261,6 +261,16 @@ export class RetrievalService {
     // against. These land alongside other chunk-level items.
     const orgContactItems = await this.fetchContactsForOrgs(tx, scope.org_ids ?? []);
 
+    // Sprint 16 — also hydrate contacts the scope resolver matched by
+    // name alone ("Have Vex call Cole Kutschinski" — no org mentioned).
+    // Dedupe against ids already returned via the org fan-out so we
+    // don't duplicate rows for contacts whose org was also in scope.
+    const alreadyHydrated = new Set(orgContactItems.map((i) => i.object_id));
+    const extraContactIds = (scope.contact_ids ?? []).filter(
+      (id) => !alreadyHydrated.has(id),
+    );
+    const namedContactItems = await this.fetchContactsByIds(tx, extraContactIds);
+
     // Sprint M — list every campaign in the workspace so the agent
     // can pick an existing plan by name instead of inventing ids.
     // Campaigns go into a dedicated top-level field (rendered as its
@@ -283,6 +293,7 @@ export class RetrievalService {
     const allItems = [
       ...(items.length > 0 ? items : fallbackItems),
       ...orgContactItems,
+      ...namedContactItems,
       ...enrollmentItems,
       ...followUpItems,
       ...documentItems,
@@ -345,36 +356,44 @@ export class RetrievalService {
       )
       .limit(200);
 
-    return rows
-      .filter((r) => !r.optOutAt)
-      .map((r) => ({
-        chunk_id: `contact:${r.id}`,
-        object_type: "contact",
-        object_id: r.id,
-        chunk_text: [
-          `Contact ${r.id}`,
-          `  Name: ${r.fullName}`,
-          r.title ? `  Title: ${r.title}` : null,
-          `  Org id: ${r.orgId ?? "none"}`,
-          r.emails && r.emails.length > 0
-            ? `  Emails: ${r.emails.join(", ")}`
-            : null,
-          r.phones && r.phones.length > 0
-            ? `  Phones: ${r.phones.join(", ")}`
-            : null,
-        ]
-          .filter(Boolean)
-          .join("\n"),
-        source_ref: `contact ${r.id}`,
-        source_type: "hydration",
-        occurred_at: null,
-        freshness_hours: 0,
-        confidence_score: 0.75,
-        corroborated_by_count: 0,
-        permission_scope: "workspace",
-        raw_event_ref: null,
-        summary_version: null,
-      }) satisfies EvidenceItem);
+    return rows.filter((r) => !r.optOutAt).map(contactRowToEvidence);
+  }
+
+  /**
+   * Sprint 16 — hydrate contacts resolved by name via the scope
+   * resolver when the user names a person directly
+   * ("Have Vex call Cole Kutschinski") without referencing their org.
+   * Without this the scope resolver correctly matched `contact_ids`
+   * but downstream `fetchContactsForOrgs` skipped the row because
+   * `scope.org_ids` was empty, leaving the chat agent with no
+   * evidence item for the contact it was literally asked about.
+   */
+  private async fetchContactsByIds(
+    tx: Tx,
+    contactIds: readonly string[],
+  ): Promise<EvidenceItem[]> {
+    if (contactIds.length === 0) return [];
+    const rows = await tx
+      .select({
+        id: contacts.id,
+        orgId: contacts.orgId,
+        fullName: contacts.fullName,
+        title: contacts.title,
+        emails: contacts.emails,
+        phones: contacts.phones,
+        optOutAt: contacts.optOutAt,
+      })
+      .from(contacts)
+      .where(
+        and(
+          inArray(contacts.id, [...contactIds]),
+          eq(contacts.status, "active"),
+          isNull(contacts.mergedIntoContactId),
+        ),
+      )
+      .limit(contactIds.length);
+
+    return rows.filter((r) => !r.optOutAt).map(contactRowToEvidence);
   }
 
   /**
@@ -1401,6 +1420,40 @@ function dedupeAppend(
   const list = existing ?? [];
   if (list.includes(id)) return [...list];
   return [...list, id];
+}
+
+function contactRowToEvidence(r: {
+  id: string;
+  orgId: string | null;
+  fullName: string;
+  title: string | null;
+  emails: string[];
+  phones: string[];
+}): EvidenceItem {
+  return {
+    chunk_id: `contact:${r.id}`,
+    object_type: "contact",
+    object_id: r.id,
+    chunk_text: [
+      `Contact ${r.id}`,
+      `  Name: ${r.fullName}`,
+      r.title ? `  Title: ${r.title}` : null,
+      `  Org id: ${r.orgId ?? "none"}`,
+      r.emails.length > 0 ? `  Emails: ${r.emails.join(", ")}` : null,
+      r.phones.length > 0 ? `  Phones: ${r.phones.join(", ")}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    source_ref: `contact ${r.id}`,
+    source_type: "hydration",
+    occurred_at: null,
+    freshness_hours: 0,
+    confidence_score: 0.75,
+    corroborated_by_count: 0,
+    permission_scope: "workspace",
+    raw_event_ref: null,
+    summary_version: null,
+  };
 }
 
 function collectScopedIds(scope: ResolvedScope): string[] {
