@@ -806,6 +806,44 @@ export class DealsController {
     return { deal };
   }
 
+  /**
+   * Run validatePortConstraints for a deal + its linked vessel + ports.
+   * Returns only the critical warnings — the approval-request path
+   * uses this to block the T2 gate, cautions flow through the daily
+   * agent instead. Returns [] when no port is linked (nothing to
+   * check) or when the calculator finds no critical constraints.
+   */
+  private async runPortGate(
+    tx: Tx,
+    deal: {
+      id: string;
+      product: string;
+      coldChainRequired: boolean | null;
+      vesselId: string | null;
+      originPortId: string | null;
+      destinationPortId: string | null;
+    },
+  ): Promise<DealWarning[]> {
+    const originPort = deal.originPortId
+      ? await this.portsRepo.findById(tx, deal.originPortId)
+      : null;
+    const destPort = deal.destinationPortId
+      ? await this.portsRepo.findById(tx, deal.destinationPortId)
+      : null;
+    if (!originPort && !destPort) return [];
+    const vessel = deal.vesselId
+      ? await this.vesselsRepo.findById(tx, deal.vesselId)
+      : null;
+    const warnings = validatePortConstraints({
+      product: deal.product as FuelDealInputs["product"],
+      coldChainRequired: deal.coldChainRequired ?? false,
+      vessel: vessel ? vesselToSpec(vessel) : null,
+      originPort: originPort ? portToSpec(originPort) : null,
+      destinationPort: destPort ? portToSpec(destPort) : null,
+    });
+    return warnings.filter((w) => w.severity === "critical");
+  }
+
   @Post(":id/status/request")
   @HttpCode(201)
   async requestStatusChange(
@@ -826,6 +864,31 @@ export class DealsController {
         throw new BadRequestException(
           `deal is already in status '${targetStatus}'`,
         );
+      }
+
+      // Port-intelligence gate. Only fires for transitions to
+      // `approved` — that's the T2 action the deal evaluator flagged
+      // as "real money starts here". `cancelled` doesn't need a port
+      // check (nothing downstream gets blocked by bad port data).
+      // Any CRITICAL port warning refuses the approval request; the
+      // caller must re-examine vessel/port/cargo before re-requesting.
+      // Cautions are surfaced as signals via the daily agent + in the
+      // deal-creator dashboard; they don't block here.
+      if (targetStatus === "approved") {
+        const critical = await this.runPortGate(tx, deal);
+        if (critical.length > 0) {
+          throw new BadRequestException({
+            error: "port_constraints_blocking",
+            message:
+              `Deal ${deal.dealRef} has ${critical.length} critical port constraint${critical.length === 1 ? "" : "s"}. ` +
+              `Resolve before requesting approval.`,
+            criticalWarnings: critical.map((w) => ({
+              code: w.code,
+              message: w.message,
+              affectedField: w.affectedField,
+            })),
+          });
+        }
       }
 
       const approval = await this.approvals.create(tx, tenantId, {
