@@ -47,7 +47,8 @@ export type AgentJobKind =
   | "research"
   | "follow_up"
   | "lead_qualification"
-  | "reactivation_batch";
+  | "reactivation_batch"
+  | "ofac_screening";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;
@@ -245,6 +246,16 @@ export async function scheduleRecurringAgents(
     {
       repeat: { pattern: "0 */2 8-18 * * 1-5" },
       jobId: `recurring:follow_up:${workspaceId}`,
+    },
+  );
+  // Daily 07:00 — runs just after OFAC's overnight SDN publication so
+  // the team sees any new matches in the signals inbox at start of day.
+  await queue.add(
+    "ofac_screening",
+    { kind: "ofac_screening", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 7 * * *" },
+      jobId: `recurring:ofac_screening:${workspaceId}`,
     },
   );
 }

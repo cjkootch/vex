@@ -230,6 +230,20 @@ export class OrganizationRepository {
   }
 
   /**
+   * Every active organization in the tenant. Used by OFACScreeningAgent's
+   * batch mode — screens the whole book overnight. RLS scopes the query
+   * to the session tenant; the agent runs inside withTenant().
+   */
+  async listActive(tx: Tx, limit = 2000): Promise<Organization[]> {
+    return tx
+      .select()
+      .from(organizations)
+      .where(eq(organizations.status, "active"))
+      .orderBy(asc(organizations.legalName))
+      .limit(limit);
+  }
+
+  /**
    * Sprint O — append a tag (no-op if it's already on the row). The
    * distinct filter guards against concurrent writers adding the
    * same tag twice.

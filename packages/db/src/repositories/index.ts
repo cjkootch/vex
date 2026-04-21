@@ -83,3 +83,9 @@ export {
   OrganizationRelationshipRepository,
   type OrganizationRelationshipInsert,
 } from "./organization-relationship-repository.js";
+export {
+  OfacScreenRepository,
+  type OfacScreenClearInput,
+  type OfacScreenInsert,
+  type OfacScreenStatus,
+} from "./ofac-screen-repository.js";

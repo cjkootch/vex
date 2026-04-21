@@ -7,6 +7,7 @@ import { HealthTab } from "./health-tab";
 import { CostLedgerTab } from "./cost-ledger-tab";
 import { RolloutTab } from "./rollout-tab";
 import { EvalsTab } from "./evals-tab";
+import { OfacTab } from "./ofac-tab";
 
 export interface WorkspaceSettings {
   source_priority: string[];
@@ -17,7 +18,7 @@ export interface WorkspaceSettings {
   sharing_enabled?: boolean;
 }
 
-type TabKey = "agents" | "health" | "cost" | "rollout" | "evals";
+type TabKey = "agents" | "health" | "cost" | "rollout" | "evals" | "ofac";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "agents", label: "Agents" },
@@ -25,6 +26,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "cost", label: "Cost" },
   { key: "rollout", label: "Rollout" },
   { key: "evals", label: "Evals" },
+  { key: "ofac", label: "OFAC" },
 ];
 
 /**
@@ -148,6 +150,7 @@ export function AdminConsole() {
         <RolloutTab settings={settings} onPatch={patchSettings} />
       ) : null}
       {activeTab === "evals" ? <EvalsTab /> : null}
+      {activeTab === "ofac" ? <OfacTab /> : null}
     </main>
   );
 }

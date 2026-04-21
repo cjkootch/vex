@@ -18,6 +18,8 @@ import {
 import { count, desc, eq, or } from "drizzle-orm";
 import { z } from "zod";
 import { createId } from "@vex/domain";
+import type { Queue } from "bullmq";
+import { addAgentJob, type AgentJobData } from "@vex/agents";
 import type {
   EventRepository,
   OrganizationProductRepository,
@@ -46,6 +48,7 @@ export const ORGANIZATIONS_PRODUCTS_REPO = Symbol("ORGANIZATIONS_PRODUCTS_REPO")
 export const ORGANIZATIONS_RELATIONSHIPS_REPO = Symbol(
   "ORGANIZATIONS_RELATIONSHIPS_REPO",
 );
+export const ORGANIZATIONS_AGENTS_QUEUE = Symbol("ORGANIZATIONS_AGENTS_QUEUE");
 
 const CreateOrganizationBody = z.object({
   legalName: z.string().min(1).max(200),
@@ -125,6 +128,8 @@ export class OrganizationsController {
     private readonly orgProducts: OrganizationProductRepository,
     @Inject(ORGANIZATIONS_RELATIONSHIPS_REPO)
     private readonly orgRelationships: OrganizationRelationshipRepository,
+    @Inject(ORGANIZATIONS_AGENTS_QUEUE)
+    private readonly agentsQueue: Queue<AgentJobData>,
   ) {}
 
   @Get()
@@ -234,6 +239,26 @@ export class OrganizationsController {
     });
 
     this.log.log(`organization ${input.legalName} (${id}) created by ${userId}`);
+
+    // Fire-and-forget OFAC screen for the new counterparty so the
+    // buyer-intel card isn't "unscreened" in the deal creator. We don't
+    // await the write — if Redis is momentarily unavailable the daily
+    // 07:00 cron will still pick the org up. addAgentJob uses a
+    // dedupe key so a rapid re-POST can't pile duplicate jobs.
+    void addAgentJob(
+      this.agentsQueue,
+      {
+        kind: "ofac_screening",
+        workspace_id: tenantId,
+        input: { organization_id: organization.id },
+      },
+      `ofac_screen:${organization.id}:${dayBucket()}`,
+    ).catch((err) => {
+      this.log.warn(
+        `failed to enqueue OFAC screen for ${organization.id}: ${(err as Error).message}`,
+      );
+    });
+
     return {
       organization: {
         id: organization.id,
@@ -732,4 +757,10 @@ async function loadContactCounts(tx: Tx): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   for (const r of rows) out.set(r.orgId, Number(r.count));
   return out;
+}
+
+
+function dayBucket(): string {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }

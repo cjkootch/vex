@@ -48,6 +48,11 @@ export type { Event, NewEvent } from "./schema/events.js";
 export type { RawEvent, NewRawEvent } from "./schema/raw-events.js";
 export type { Summary, NewSummary } from "./schema/summaries.js";
 export type {
+  OfacScreen,
+  NewOfacScreen,
+  OfacMatchRecord,
+} from "./schema/ofac-screens.js";
+export type {
   EmbeddingChunk,
   NewEmbeddingChunk,
 } from "./schema/embedding-chunks.js";

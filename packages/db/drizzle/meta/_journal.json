@@ -127,6 +127,13 @@
       "when": 1777795200000,
       "tag": "0017_fuel_deal_participants",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1777881600000,
+      "tag": "0018_ofac_screening",
+      "breakpoints": true
     }
   ]
 }

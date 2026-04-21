@@ -22,6 +22,7 @@ import {
   FuelDealParticipantRepository,
   FuelDealRepository,
   FuelMarketRateRepository,
+  OfacScreenRepository,
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
   OrganizationRepository,
@@ -124,6 +125,7 @@ async function bootstrap(): Promise<void> {
   const fuelMarketRateRepository = new FuelMarketRateRepository();
   const fuelDealParticipantRepository = new FuelDealParticipantRepository();
   const counterpartyRiskRepository = new CounterpartyRiskRepository();
+  const ofacScreenRepository = new OfacScreenRepository();
   const campaignRepository = new CampaignRepository();
   const campaignStepRepository = new CampaignStepRepository();
   const campaignEnrollmentRepository = new CampaignEnrollmentRepository();
@@ -300,6 +302,7 @@ async function bootstrap(): Promise<void> {
         events: eventRepository,
         orgProducts: organizationProductRepository,
         orgRelationships: organizationRelationshipRepository,
+        agentsQueue: queues.agents,
       }),
       search: SearchModule.register({ db }),
       admin: AdminModule.register({
@@ -379,6 +382,9 @@ async function bootstrap(): Promise<void> {
               "Public URL Twilio + Resend webhooks hit. Required for voice + recording callbacks.",
           },
         ],
+        ofacScreens: ofacScreenRepository,
+        organizations: organizationRepository,
+        agentsQueue: queues.agents,
       }),
       ...(twilio && twilioVerifier
         ? {

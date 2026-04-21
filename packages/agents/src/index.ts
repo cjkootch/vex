@@ -102,13 +102,16 @@ export {
   ResearchAgent,
   CallPrepAgent,
   LeadQualificationAgent,
+  OFACScreeningAgent,
   ReactivationBatchAgent,
+  sanctionsExposureRiskFor,
   type AgentContext,
   type AgentOutput,
   type IAgent,
   type ResearchAgentInput,
   type CallPrepAgentInput,
   type LeadQualificationInput,
+  type OfacScreeningAgentInput,
   type ReactivationBatchInput,
 } from "./agents/index.js";
 export {

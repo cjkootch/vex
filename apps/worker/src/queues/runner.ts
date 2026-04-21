@@ -5,6 +5,7 @@ import {
   DailyBriefAgent,
   FollowUpAgent,
   LeadQualificationAgent,
+  OFACScreeningAgent,
   ReactivationBatchAgent,
   ResearchAgent,
   backpressureEngaged,
@@ -474,6 +475,14 @@ function buildAgentProcessor(
               : {}),
             ...(typeof rationale === "string" ? { rationale } : {}),
           }),
+          { workspaceId: data.workspace_id },
+        );
+      }
+      case "ofac_screening": {
+        const orgIdRaw = data.input?.["organization_id"];
+        const orgId = typeof orgIdRaw === "string" ? orgIdRaw : undefined;
+        return runner.run(
+          new OFACScreeningAgent(orgId ? { orgId } : {}),
           { workspaceId: data.workspace_id },
         );
       }

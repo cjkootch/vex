@@ -49,6 +49,18 @@ export const organizations = pgTable(
      * the vocabulary can evolve without a migration.
      */
     kind: text("kind"),
+    /**
+     * OFAC SDN screening state (0018_ofac_screening). Distinct from the
+     * per-deal `ofac_screening_status` enum on fuel_deals — this is the
+     * counterparty-level gate. Text (not enum) so the OFACScreeningAgent
+     * can add new states (e.g. "stale") without a schema bump. Allowed
+     * values: unscreened, clear, potential_match, confirmed_match,
+     * cleared_by_operator. Defaults to 'unscreened' so new counterparties
+     * are visibly ungated.
+     */
+    ofacStatus: text("ofac_status").notNull().default("unscreened"),
+    ofacScreenedAt: timestamp("ofac_screened_at", { withTimezone: true }),
+    ofacHighestScore: doublePrecision("ofac_highest_score"),
     status: recordStatusEnum("status").notNull().default("active"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

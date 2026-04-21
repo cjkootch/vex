@@ -15,3 +15,8 @@ export {
   ReactivationBatchAgent,
   type ReactivationBatchInput,
 } from "./reactivation.js";
+export {
+  OFACScreeningAgent,
+  sanctionsExposureRiskFor,
+  type OfacScreeningAgentInput,
+} from "./ofac-screening.js";
