@@ -28,10 +28,13 @@ import type {
   ApprovalRepository,
   CounterpartyRiskRepository,
   EventRepository,
+  FreightRateRepository,
   FuelDealParticipantRepository,
   FuelDealRepository,
   FuelMarketRateRepository,
   OrganizationRepository,
+  Vessel,
+  VesselRepository,
 } from "@vex/db";
 import {
   calculateFuelDeal,
@@ -63,6 +66,8 @@ export const DEALS_ORGS_REPO = Symbol("DEALS_ORGS_REPO");
 export const DEALS_MARKET_RATE_REPO = Symbol("DEALS_MARKET_RATE_REPO");
 export const DEALS_PARTICIPANT_REPO = Symbol("DEALS_PARTICIPANT_REPO");
 export const DEALS_COUNTERPARTY_REPO = Symbol("DEALS_COUNTERPARTY_REPO");
+export const DEALS_VESSEL_REPO = Symbol("DEALS_VESSEL_REPO");
+export const DEALS_FREIGHT_RATE_REPO = Symbol("DEALS_FREIGHT_RATE_REPO");
 
 /**
  * Status transitions that require a T2 approval instead of applying
@@ -395,6 +400,10 @@ export class DealsController {
     private readonly participants: FuelDealParticipantRepository,
     @Inject(DEALS_COUNTERPARTY_REPO)
     private readonly counterparty: CounterpartyRiskRepository,
+    @Inject(DEALS_VESSEL_REPO)
+    private readonly vesselsRepo: VesselRepository,
+    @Inject(DEALS_FREIGHT_RATE_REPO)
+    private readonly freightRates: FreightRateRepository,
   ) {}
 
   @Get()
@@ -975,6 +984,227 @@ export class DealsController {
     };
   }
 
+  /**
+   * GET /deals/:id/vessel — bundles everything the deal-overview
+   * VesselPanel needs in a single call: the linked vessel record,
+   * computed utilization vs DWT, the freight rate booked on the deal,
+   * today's market rate for the inferred lane, and the % deviation.
+   * Returns nulls cleanly when no vessel is linked yet so the UI can
+   * render the empty state without a separate request.
+   */
+  @Get(":id/vessel")
+  async getVessel(@Param("id") id: string): Promise<{
+    deal: { id: string; dealRef: string; volumeUsg: number; volumeMt: number | null };
+    vessel: Vessel | null;
+    utilization: {
+      pctOfDwt: number | null;
+      pctOnDeal: number | null;
+    };
+    freightRate: {
+      bookedUsdPerMt: number | null;
+      lockedAt: string | null;
+      source: string | null;
+      marketAtLock: number | null;
+      demurrageRateUsdPerDay: number | null;
+      ballastBonusUsd: number | null;
+      charterType: string | null;
+    };
+    marketRate: {
+      currentUsdPerMt: number | null;
+      asOfDate: string | null;
+      source: string | null;
+      lane: {
+        originRegion: string;
+        destinationRegion: string;
+        productCategory: string;
+      } | null;
+    };
+    deviationPct: number | null;
+  }> {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      const vessel = deal.vesselId
+        ? await this.vesselsRepo.findById(tx, deal.vesselId)
+        : null;
+
+      // Utilization — prefer the explicit column the operator can
+      // override; fall back to volumeMt / DWT when the vessel and a
+      // computable volumeMt are both present.
+      const pctOnDeal =
+        deal.vesselUtilizationPct !== null &&
+        deal.vesselUtilizationPct !== undefined
+          ? deal.vesselUtilizationPct
+          : null;
+      const pctOfDwt =
+        vessel && vessel.dwtMt && vessel.dwtMt > 0 && deal.volumeMt
+          ? Math.min(deal.volumeMt / vessel.dwtMt, 1.05)
+          : null;
+
+      // Lane — only computable when we know origin + destination
+      // countries. Today's heuristic (US→USGC, JM/DO/TT/...→Caribs)
+      // mirrors the agents; broaden it as new lanes onboard.
+      const lane =
+        vessel && deal.originCountry && deal.destinationCountry
+          ? buildLaneForDealVessel(deal, vessel)
+          : null;
+      const marketLatest = lane
+        ? await this.freightRates.getLatest(tx, lane)
+        : null;
+
+      const deviationPct =
+        deal.freightRateUsdPerMt &&
+        deal.freightRateUsdPerMt > 0 &&
+        marketLatest &&
+        marketLatest.rateUsdPerMt > 0
+          ? (deal.freightRateUsdPerMt - marketLatest.rateUsdPerMt) /
+            marketLatest.rateUsdPerMt
+          : null;
+
+      return {
+        deal: {
+          id: deal.id,
+          dealRef: deal.dealRef,
+          volumeUsg: deal.volumeUsg,
+          volumeMt: deal.volumeMt,
+        },
+        vessel,
+        utilization: { pctOfDwt, pctOnDeal },
+        freightRate: {
+          bookedUsdPerMt: deal.freightRateUsdPerMt,
+          lockedAt: deal.freightRateLockedAt
+            ? deal.freightRateLockedAt.toISOString()
+            : null,
+          source: deal.freightRateSource,
+          marketAtLock: deal.freightMarketRateAtLock,
+          demurrageRateUsdPerDay: deal.demurrageRateUsdPerDay,
+          ballastBonusUsd: deal.ballastBonusUsd,
+          charterType: deal.charterType,
+        },
+        marketRate: {
+          currentUsdPerMt: marketLatest?.rateUsdPerMt ?? null,
+          asOfDate:
+            typeof marketLatest?.rateDate === "string"
+              ? marketLatest.rateDate
+              : (marketLatest?.rateDate as Date | undefined)?.toISOString().slice(0, 10) ?? null,
+          source: marketLatest?.source ?? null,
+          lane,
+        },
+        deviationPct,
+      };
+    });
+  }
+
+  /**
+   * PATCH /deals/:id/vessel — link / relink a vessel to the deal and
+   * record the freight terms. Stamps freight_rate_locked_at to now()
+   * when a fresh rate lands so the FreightMarketAgent has a benchmark
+   * to deviation-check against. Snapshots today's market rate into
+   * freight_market_rate_at_lock when computable.
+   */
+  @Patch(":id/vessel")
+  async patchVessel(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ ok: true; freightMarketRateAtLock: number | null }> {
+    const parsed = PatchDealVesselBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const patch = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    return withTenant(this.db, tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      // Validate the new vessel id when the caller is changing it —
+      // RLS will already filter cross-tenant ids, so an empty result
+      // means the caller passed something bogus.
+      let vesselForLane: Vessel | null = null;
+      if (patch.vesselId !== undefined && patch.vesselId !== null) {
+        vesselForLane = await this.vesselsRepo.findById(tx, patch.vesselId);
+        if (!vesselForLane) {
+          throw new NotFoundException(
+            `vessel ${patch.vesselId} not found in this workspace`,
+          );
+        }
+      } else if (patch.vesselId === undefined && deal.vesselId) {
+        vesselForLane = await this.vesselsRepo.findById(tx, deal.vesselId);
+      }
+
+      // Snapshot today's market rate when we get a fresh booked rate +
+      // can compute a lane. Drives the FreightMarketAgent's
+      // deviation-from-lock detection.
+      let marketRateAtLock: number | null = null;
+      const newBookedRate =
+        patch.freightRateUsdPerMt !== undefined
+          ? patch.freightRateUsdPerMt
+          : deal.freightRateUsdPerMt;
+      if (
+        vesselForLane &&
+        deal.originCountry &&
+        deal.destinationCountry &&
+        newBookedRate &&
+        newBookedRate > 0
+      ) {
+        const lane = buildLaneForDealVessel(deal, vesselForLane);
+        if (lane) {
+          const market = await this.freightRates.getLatest(tx, lane);
+          if (market) marketRateAtLock = market.rateUsdPerMt;
+        }
+      }
+
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      if (patch.vesselId !== undefined) set["vesselId"] = patch.vesselId;
+      if (patch.charterType !== undefined) set["charterType"] = patch.charterType;
+      if (patch.freightRateUsdPerMt !== undefined) {
+        set["freightRateUsdPerMt"] = patch.freightRateUsdPerMt;
+        set["freightRateLockedAt"] = new Date();
+        if (marketRateAtLock !== null) {
+          set["freightMarketRateAtLock"] = marketRateAtLock;
+        }
+      }
+      if (patch.vesselUtilizationPct !== undefined) {
+        set["vesselUtilizationPct"] = patch.vesselUtilizationPct;
+      }
+      if (patch.demurrageRateUsdPerDay !== undefined) {
+        set["demurrageRateUsdPerDay"] = patch.demurrageRateUsdPerDay;
+      }
+      if (patch.ballastBonusUsd !== undefined) {
+        set["ballastBonusUsd"] = patch.ballastBonusUsd;
+      }
+      if (patch.freightRateSource !== undefined) {
+        set["freightRateSource"] = patch.freightRateSource;
+      }
+
+      await tx
+        .update(schema.fuelDeals)
+        .set(set)
+        .where(eq(schema.fuelDeals.id, id));
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.vessel_linked",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "vessel",
+        objectId: patch.vesselId ?? deal.vesselId ?? "unknown",
+        occurredAt: new Date(),
+        idempotencyKey: `deal.vessel_linked:${id}:${Date.now()}`,
+        metadata: {
+          deal_ref: deal.dealRef,
+          vessel_id: patch.vesselId ?? deal.vesselId ?? null,
+          freight_rate_usd_per_mt: patch.freightRateUsdPerMt ?? null,
+          charter_type: patch.charterType ?? null,
+          market_rate_at_lock: marketRateAtLock,
+        },
+      });
+
+      return { ok: true, freightMarketRateAtLock: marketRateAtLock };
+    });
+  }
+
   @Get(":id")
   async detail(@Param("id") id: string): Promise<{ deal: DealDetail }> {
     const deal = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
@@ -1213,4 +1443,66 @@ async function loadDealDetail(tx: Tx, id: string): Promise<DealDetail | null> {
         }
       : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Vessel patch + lane derivation
+// ---------------------------------------------------------------------------
+
+const PatchDealVesselBody = z
+  .object({
+    /** Pass null to unlink. */
+    vesselId: z.string().min(1).nullable().optional(),
+    charterType: z.enum(["voyage", "time", "spot"]).nullable().optional(),
+    freightRateUsdPerMt: z.number().nonnegative().optional(),
+    freightRateSource: z.string().max(120).nullable().optional(),
+    vesselUtilizationPct: z.number().min(0).max(1.05).optional(),
+    demurrageRateUsdPerDay: z.number().nonnegative().optional(),
+    ballastBonusUsd: z.number().nonnegative().optional(),
+  })
+  .strict();
+
+/**
+ * Coarse country-to-region heuristic mirroring the agents — keeps the
+ * lane derivation deterministic across the API + agent paths so a
+ * deal that gets a market-at-lock snapshot via PATCH lines up with
+ * the deviation detection in FreightMarketAgent.
+ */
+function buildLaneForDealVessel(
+  deal: { originCountry: string | null; destinationCountry: string | null; product: string },
+  vessel: Vessel,
+): { originRegion: string; destinationRegion: string; vesselClass: Vessel["vesselClass"]; productCategory: string } | null {
+  const origin = regionForCountry(deal.originCountry);
+  const destination = regionForCountry(deal.destinationCountry);
+  if (!origin || !destination) return null;
+  return {
+    originRegion: origin,
+    destinationRegion: destination,
+    vesselClass: vessel.vesselClass,
+    productCategory: productCategoryForProduct(deal.product),
+  };
+}
+
+function regionForCountry(country: string | null): string | null {
+  if (!country) return null;
+  const c = country.toUpperCase();
+  if (c === "US" || c === "USA") return "USGC";
+  if (
+    c === "JM" || c === "DO" || c === "TT" || c === "BB" ||
+    c === "GT" || c === "CR" || c === "PA" || c === "BS" || c === "HT"
+  ) return "Caribs";
+  if (c === "MX") return "ECCA";
+  return null;
+}
+
+function productCategoryForProduct(product: string): string {
+  if (
+    product === "ulsd" || product === "gasoline_87" || product === "gasoline_91" ||
+    product === "jet_a" || product === "jet_a1" || product === "avgas" ||
+    product === "lfo" || product === "biodiesel_b20"
+  ) return "clean_products";
+  if (product === "hfo") return "dirty";
+  if (product === "lng") return "lng";
+  if (product === "lpg") return "lpg";
+  return "clean_products";
 }

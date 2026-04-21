@@ -19,10 +19,12 @@ import {
   SignalRepository,
   EventRepository,
   CounterpartyRiskRepository,
+  FreightRateRepository,
   FuelDealParticipantRepository,
   FuelDealRepository,
   FuelMarketRateRepository,
   OfacScreenRepository,
+  VesselRepository,
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
   OrganizationRepository,
@@ -68,6 +70,7 @@ import { CallsService } from "./calls/calls.service.js";
 import { VoiceStreamServer } from "./calls/voice-stream-server.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
+import { VesselsModule } from "./vessels/vessels.module.js";
 import { LeadsModule } from "./leads/leads.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { MarketingModule } from "./marketing/marketing.module.js";
@@ -126,6 +129,8 @@ async function bootstrap(): Promise<void> {
   const fuelDealParticipantRepository = new FuelDealParticipantRepository();
   const counterpartyRiskRepository = new CounterpartyRiskRepository();
   const ofacScreenRepository = new OfacScreenRepository();
+  const vesselRepository = new VesselRepository();
+  const freightRateRepository = new FreightRateRepository();
   const campaignRepository = new CampaignRepository();
   const campaignStepRepository = new CampaignStepRepository();
   const campaignEnrollmentRepository = new CampaignEnrollmentRepository();
@@ -283,7 +288,10 @@ async function bootstrap(): Promise<void> {
         marketRates: fuelMarketRateRepository,
         participants: fuelDealParticipantRepository,
         counterparty: counterpartyRiskRepository,
+        vessels: vesselRepository,
+        freightRates: freightRateRepository,
       }),
+      vessels: VesselsModule.register({ db, vessels: vesselRepository }),
       leads: LeadsModule.register({ db }),
       events: EventsModule.register({ db }),
       marketing: MarketingModule.register({

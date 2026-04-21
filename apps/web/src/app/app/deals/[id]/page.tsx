@@ -8,6 +8,7 @@ import { DealStatusMenu } from "@/components/crm/deal-status-menu";
 import { QuickActions } from "@/components/crm/quick-actions";
 import { SignalsPanel } from "@/components/signals/signals-panel";
 import { EditDealForm } from "@/components/crm/edit-deal-form";
+import { VesselPanel } from "@/components/deals/vessel-panel";
 import { Tabs } from "@/components/ui/tabs";
 import { buildAskVexHref } from "@/lib/ask-vex";
 
@@ -211,6 +212,7 @@ function OverviewTab({ deal }: { deal: DealDetail }) {
   return (
     <div className="flex flex-col gap-4">
       <PulseCard deal={deal} />
+      <VesselPanel dealId={deal.id} />
       <RelatedRecordsCard deal={deal} />
       <Card title="Terms">
         <Field label="Incoterm" value={deal.incoterm.toUpperCase()} />

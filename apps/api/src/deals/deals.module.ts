@@ -4,20 +4,24 @@ import type {
   CounterpartyRiskRepository,
   Db,
   EventRepository,
+  FreightRateRepository,
   FuelDealParticipantRepository,
   FuelDealRepository,
   FuelMarketRateRepository,
   OrganizationRepository,
+  VesselRepository,
 } from "@vex/db";
 import {
   DEALS_APPROVAL_REPO,
   DEALS_COUNTERPARTY_REPO,
   DEALS_DB_CLIENT,
   DEALS_EVENT_REPO,
+  DEALS_FREIGHT_RATE_REPO,
   DEALS_MARKET_RATE_REPO,
   DEALS_ORGS_REPO,
   DEALS_PARTICIPANT_REPO,
   DEALS_REPO,
+  DEALS_VESSEL_REPO,
   DealsController,
 } from "./deals.controller.js";
 
@@ -30,6 +34,8 @@ export interface DealsModuleConfig {
   marketRates: FuelMarketRateRepository;
   participants: FuelDealParticipantRepository;
   counterparty: CounterpartyRiskRepository;
+  vessels: VesselRepository;
+  freightRates: FreightRateRepository;
 }
 
 /**
@@ -55,6 +61,8 @@ export class DealsModule {
         { provide: DEALS_MARKET_RATE_REPO, useFactory: () => config.marketRates },
         { provide: DEALS_PARTICIPANT_REPO, useFactory: () => config.participants },
         { provide: DEALS_COUNTERPARTY_REPO, useFactory: () => config.counterparty },
+        { provide: DEALS_VESSEL_REPO, useFactory: () => config.vessels },
+        { provide: DEALS_FREIGHT_RATE_REPO, useFactory: () => config.freightRates },
       ],
     };
   }
