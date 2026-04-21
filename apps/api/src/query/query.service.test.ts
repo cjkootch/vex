@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { enforceAiModeWhenVexIsTheCaller } from "./query.service.js";
-import type { ProposedAction } from "@vex/agents";
+import type { ProposedAction } from "@vex/integrations";
 
 function outboundCall(
   payload: Record<string, unknown> = {},
