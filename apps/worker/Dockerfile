@@ -38,6 +38,17 @@ RUN pnpm --filter @vex/worker --prod deploy /out
 # ---- runtime ----
 FROM node:20-bookworm-slim AS runtime
 ENV NODE_ENV=production
+# Temporal's Rust SDK-core (NativeConnection in @temporalio/worker) uses
+# rustls + rustls-native-certs, which reads /etc/ssl/certs. The slim base
+# image doesn't guarantee a populated CA bundle, so TLS to Temporal Cloud
+# fails with InvalidCertificate(UnknownIssuer). Install ca-certificates
+# and point OpenSSL/rustls at it explicitly so the worker can connect.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && update-ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_DIR=/etc/ssl/certs
 WORKDIR /app
 COPY --from=build /out/package.json ./
 COPY --from=build /out/node_modules ./node_modules
