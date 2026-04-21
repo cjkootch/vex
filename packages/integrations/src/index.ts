@@ -52,8 +52,10 @@ export {
 } from "./voice-bridge.js";
 export {
   createResendClient,
+  fetchResendInboundBody,
   type ResendDeps,
   type SendEmailRequest,
+  type InboundEmailBody,
 } from "./resend.js";
 export {
   createTavilyClient,

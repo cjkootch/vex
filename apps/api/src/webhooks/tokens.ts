@@ -7,6 +7,13 @@ export const RAW_EVENT_REPO = Symbol("RAW_EVENT_REPO");
 export const NORMALIZATION_QUEUE = Symbol("NORMALIZATION_QUEUE");
 export const RESEND_VERIFIER = Symbol("RESEND_VERIFIER");
 export const RESEND_INBOUND_VERIFIER = Symbol("RESEND_INBOUND_VERIFIER");
+/**
+ * Resend REST API key (not the webhook signing secret). Used by the
+ * inbound webhook handler to fetch the parsed email body — Resend's
+ * webhook payload is metadata-only, the body lives behind GET /emails/:id.
+ * Null when RESEND_API_KEY isn't set; inbound then stores metadata only.
+ */
+export const RESEND_API_KEY = Symbol("RESEND_API_KEY");
 export const TWILIO_VERIFIER = Symbol("TWILIO_VERIFIER");
 export const WEBSITE_CHAT_VERIFIER = Symbol("WEBSITE_CHAT_VERIFIER");
 export const WEBHOOK_TENANT_RESOLVER = Symbol("WEBHOOK_TENANT_RESOLVER");

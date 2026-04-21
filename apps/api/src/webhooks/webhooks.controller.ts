@@ -15,6 +15,25 @@ import { createHash } from "node:crypto";
 import type { Queue } from "bullmq";
 import { addNormalizationJob, type NormalizationJobData } from "@vex/agents";
 import { withTenant, type Db, type RawEventRepository } from "@vex/db";
+import { fetchResendInboundBody } from "@vex/integrations";
+
+/**
+ * Pull `email_id` out of Resend's webhook payload regardless of
+ * whether fields arrive wrapped in the Svix `{type, data}` envelope
+ * or flat at the top level. The translator's own fallback logic
+ * already papers over this inconsistency for canonical fields;
+ * mirror it here so the REST-API body fetch works either way.
+ */
+function extractResendEmailId(
+  payload: Record<string, unknown>,
+): string | null {
+  const data =
+    typeof payload["data"] === "object" && payload["data"] !== null
+      ? (payload["data"] as Record<string, unknown>)
+      : payload;
+  const emailId = data["email_id"];
+  return typeof emailId === "string" && emailId.length > 0 ? emailId : null;
+}
 import type { ResendVerifier } from "./resend-verifier.js";
 import type { TwilioVerifier } from "./twilio-verifier.js";
 import type { WebsiteChatVerifier } from "./website-chat-verifier.js";
@@ -23,6 +42,7 @@ import {
   DB_CLIENT,
   NORMALIZATION_QUEUE,
   RAW_EVENT_REPO,
+  RESEND_API_KEY,
   RESEND_INBOUND_VERIFIER,
   RESEND_VERIFIER,
   TWILIO_VERIFIER,
@@ -44,6 +64,8 @@ export class WebhooksController {
     @Inject(RESEND_VERIFIER) private readonly resend: ResendVerifier,
     @Inject(RESEND_INBOUND_VERIFIER)
     private readonly resendInbound: ResendVerifier,
+    @Inject(RESEND_API_KEY)
+    private readonly resendApiKey: string | null,
     @Inject(TWILIO_VERIFIER) private readonly twilio: TwilioVerifier,
     @Inject(WEBSITE_CHAT_VERIFIER)
     private readonly websiteChat: WebsiteChatVerifier,
@@ -164,6 +186,31 @@ export class WebhooksController {
     if ("error" in translated) {
       this.log.warn(`resend-inbound translation failed: ${translated.error}`);
       throw new BadRequestException(translated.error);
+    }
+
+    // Resend's inbound webhook delivers metadata only — no text/html
+    // body. Fetch the parsed body via the Resend REST API using the
+    // email_id the webhook carried. Best-effort: a network hiccup
+    // falls back to a metadata-only row (preview shown in inbox list,
+    // "(preview only)" tag in the detail view).
+    const emailId = extractResendEmailId(resendPayload);
+    if (
+      this.resendApiKey &&
+      emailId &&
+      translated.text === null &&
+      translated.html === null
+    ) {
+      const body = await fetchResendInboundBody(this.resendApiKey, emailId, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (body) {
+        translated.text = body.text;
+        translated.html = body.html;
+      } else {
+        this.log.warn(
+          `resend-inbound body fetch returned null for email_id=${emailId}`,
+        );
+      }
     }
 
     const tenantId = this.resolveTenant("resend_inbound", translated);

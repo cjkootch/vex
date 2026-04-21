@@ -238,6 +238,7 @@ async function bootstrap(): Promise<void> {
         ...(env.RESEND_INBOUND_WEBHOOK_SECRET
           ? { resendInboundSecret: env.RESEND_INBOUND_WEBHOOK_SECRET }
           : {}),
+        ...(env.RESEND_API_KEY ? { resendApiKey: env.RESEND_API_KEY } : {}),
         twilioAuthToken: env.TWILIO_AUTH_TOKEN,
         websiteChatSecret: env.WEBSITE_CHAT_WEBHOOK_SECRET,
         resolveTenant: () => "01HSEEDWRK0000000000000001",
