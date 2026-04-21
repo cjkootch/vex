@@ -218,6 +218,13 @@ export const EnvSchema = z.object({
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
   TEMPORAL_NAMESPACE: z.string().default("default"),
   TEMPORAL_TASK_QUEUE: z.string().default("vex-workers"),
+  /**
+   * Temporal Cloud API key. Unset for local dev (temporalite, no TLS);
+   * set on Fly to `tmprl_*` to authenticate against Temporal Cloud.
+   * When present, both the Temporal Client (apps/api) and Worker
+   * (apps/worker) flip to TLS + Bearer-token auth automatically.
+   */
+  TEMPORAL_API_KEY: z.string().optional(),
 
   // Observability
   OTEL_EXPORTER_OTLP_ENDPOINT: z.string().url().optional(),

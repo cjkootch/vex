@@ -196,6 +196,7 @@ async function bootstrap(): Promise<void> {
       createTemporalClient({
         address: env.TEMPORAL_ADDRESS,
         namespace: env.TEMPORAL_NAMESPACE,
+        ...(env.TEMPORAL_API_KEY ? { apiKey: env.TEMPORAL_API_KEY } : {}),
       }),
       new Promise<never>((_, reject) =>
         setTimeout(

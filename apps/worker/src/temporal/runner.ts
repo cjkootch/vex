@@ -40,6 +40,11 @@ export interface TemporalRunnerOptions {
   address: string;
   namespace: string;
   taskQueue: string;
+  /**
+   * Optional Temporal Cloud API key. When set, NativeConnection.connect
+   * uses TLS + Bearer-token auth. Unset for local temporalite.
+   */
+  apiKey?: string | undefined;
   db: Db;
   anthropic: AnthropicAdapter;
   costLedger: CostLedger;
@@ -58,7 +63,16 @@ export interface TemporalRunnerOptions {
 export async function startTemporalWorker(
   options: TemporalRunnerOptions,
 ): Promise<TemporalWorker> {
-  const connection = await NativeConnection.connect({ address: options.address });
+  const connection = await NativeConnection.connect({
+    address: options.address,
+    ...(options.apiKey
+      ? {
+          tls: true,
+          apiKey: options.apiKey,
+          metadata: { "temporal-namespace": options.namespace },
+        }
+      : {}),
+  });
 
   const repos = {
     organizations: new OrganizationRepository(),
