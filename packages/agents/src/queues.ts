@@ -345,6 +345,32 @@ export function createNormalizationWorker(
     }
   });
 
+  // Loud stdout logging on every failure (including non-terminal
+  // attempts) — the DLQ handler above only fires on the final retry,
+  // so without this the first two zod/DB errors vanished into thin
+  // air. Combined with `active`, this gives operators a full trace
+  // of the normalization pipeline per incoming webhook.
+  worker.on("active", (job) => {
+    console.log(
+      `[bullmq] queue=${QueueName.Normalization} job=${job.id} active (attempt ${job.attemptsMade + 1}/${job.opts?.attempts ?? 1})`,
+    );
+  });
+  worker.on("failed", (job, err) => {
+    const jobId = job?.id ?? "<unknown>";
+    const attemptsMade = job?.attemptsMade ?? 0;
+    const attemptsMax = job?.opts?.attempts ?? 1;
+    console.error(
+      `[bullmq] queue=${QueueName.Normalization} job=${jobId} failed (attempt ${attemptsMade}/${attemptsMax}): ${err.message}`,
+      { stack: err.stack, data: job?.data },
+    );
+  });
+  worker.on("error", (err) => {
+    console.error(
+      `[bullmq] queue=${QueueName.Normalization} worker error: ${err.message}`,
+      { stack: err.stack },
+    );
+  });
+
   return worker;
 }
 
