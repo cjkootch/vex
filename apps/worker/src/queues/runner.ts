@@ -270,6 +270,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       campaignSteps: repos.campaignSteps,
       campaignEnrollments: repos.campaignEnrollments,
       touchpoints: repos.touchpoints,
+      activities: repos.activities,
       followUps: repos.followUps,
       events: repos.events,
       orgProducts: repos.orgProducts,
@@ -488,6 +489,7 @@ export interface ApprovalExecutorDeps {
   campaignSteps: CampaignStepRepository;
   campaignEnrollments: CampaignEnrollmentRepository;
   touchpoints: TouchpointRepository;
+  activities: ActivityRepository;
   followUps: FollowUpRepository;
   events: EventRepository;
   orgProducts: OrganizationProductRepository;
@@ -985,6 +987,50 @@ async function applyOutboundCall(
         statusCallback,
         recordingStatusCallback,
       });
+
+      // Inner approval — mirrors the Temporal path's row so
+      // CallsService.getStatus (findByWorkflowId) resolves this
+      // call. Without it the /app/calls/<id> detail page 404s.
+      const innerApproval = await deps.approvals.create(tx, tenantId, {
+        agentRunId: agentRun.id,
+        actionType: "outbound_call",
+        proposedPayload: {
+          tier: "T3",
+          workflow_id: workflowId,
+          contact_id: contactId,
+          org_id: orgId,
+          to_number: toNumber,
+          initiated_by: "chat_agent",
+          chat_approval_id: approval.id,
+          twilio_call_sid: callSid,
+          fallback: "direct_twilio_no_temporal",
+        },
+      });
+      await deps.approvals.decide(tx, innerApproval.id, "approved", "chat_agent");
+
+      // voice_call activity row — what the Inbox timeline queries
+      // to surface in-progress calls. Temporal's call-activities
+      // writes this on dispatch; the fallback has to do it inline.
+      await deps.activities.insert(tx, tenantId, {
+        type: "voice_call",
+        relatedObjectIds: {
+          contact_id: contactId,
+          org_id: orgId,
+          agent_run_id: agentRun.id,
+          approval_id: approval.id,
+        },
+        occurredAt: new Date(),
+        metadata: {
+          session_id: workflowId,
+          call_sid: callSid,
+          status,
+          workflow_id: workflowId,
+          direction: "outbound",
+          to_number: toNumber,
+          fallback: "direct_twilio_no_temporal",
+        },
+      });
+
       await deps.approvals.markApplied(tx, approval.id, callSid);
       await deps.events.insertIfNotExists(tx, tenantId, {
         verb: "approval.executor.applied",
@@ -1000,6 +1046,7 @@ async function applyOutboundCall(
           action_type: "outbound_call",
           workflow_id: workflowId,
           agent_run_id: agentRun.id,
+          inner_approval_id: innerApproval.id,
           twilio_call_sid: callSid,
           twilio_status: status,
           fallback: "direct_twilio_no_temporal",
