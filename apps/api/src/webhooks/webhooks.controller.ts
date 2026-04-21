@@ -178,6 +178,16 @@ export class WebhooksController {
     // Source-type = email_inbound so the existing EmailInboundNormalizer
     // handles it. provider_event_id = message_id keeps the raw_events
     // idempotency in lockstep with the normalizer's event-layer key.
+    // We persist the canonical translated shape (so the normalizer's
+    // existing zod parser works unchanged) AND keep the original Resend
+    // payload nested under `_raw_resend_payload` so missing fields can
+    // be diagnosed without re-asking Resend to redeliver. Zod strips
+    // unknown keys by default, so the extra payload doesn't leak into
+    // the normalizer's parsed shape — it just sits on the raw row.
+    const stored: Record<string, unknown> = {
+      ...translated,
+      _raw_resend_payload: resendPayload,
+    };
     const result = await withTenant(this.db, tenantId, async (tx) =>
       this.rawEvents.insertIfNotExists(
         tx,
@@ -185,7 +195,7 @@ export class WebhooksController {
         "email_inbound",
         translated.message_id,
         headersForStorage,
-        translated as unknown as Record<string, unknown>,
+        stored,
         checksum,
       ),
     );
