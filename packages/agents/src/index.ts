@@ -102,6 +102,7 @@ export {
   ResearchAgent,
   CallPrepAgent,
   LeadQualificationAgent,
+  FreightMarketAgent,
   OFACScreeningAgent,
   ReactivationBatchAgent,
   VesselIntelligenceAgent,

@@ -4,6 +4,7 @@ import {
   AgentRunner,
   DailyBriefAgent,
   FollowUpAgent,
+  FreightMarketAgent,
   LeadQualificationAgent,
   OFACScreeningAgent,
   ReactivationBatchAgent,
@@ -486,6 +487,10 @@ function buildAgentProcessor(
           { workspaceId: data.workspace_id },
         );
       }
+      case "freight_market":
+        return runner.run(new FreightMarketAgent(), {
+          workspaceId: data.workspace_id,
+        });
       default:
         throw new Error(`unknown agent kind: ${(data as { kind: string }).kind}`);
     }

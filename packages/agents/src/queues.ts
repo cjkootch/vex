@@ -48,7 +48,8 @@ export type AgentJobKind =
   | "follow_up"
   | "lead_qualification"
   | "reactivation_batch"
-  | "ofac_screening";
+  | "ofac_screening"
+  | "freight_market";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;
@@ -256,6 +257,16 @@ export async function scheduleRecurringAgents(
     {
       repeat: { pattern: "0 7 * * *" },
       jobId: `recurring:ofac_screening:${workspaceId}`,
+    },
+  );
+  // Daily 06:00 — ingests freight rates + flags shifted/missing rates
+  // before the desk's 07:00 daily brief so freight context is fresh.
+  await queue.add(
+    "freight_market",
+    { kind: "freight_market", workspace_id: workspaceId },
+    {
+      repeat: { pattern: "0 6 * * *" },
+      jobId: `recurring:freight_market:${workspaceId}`,
     },
   );
 }
