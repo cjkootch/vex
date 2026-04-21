@@ -1,18 +1,26 @@
-import { pgTable, uuid, text, bigint, timestamp, index } from "drizzle-orm/pg-core";
-import { tenants } from "./tenants.js";
+import { bigint, index, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 /**
- * Append-only Postgres-backed CostLedger. Mirrors the CostEntry type in
- * @vex/telemetry. `idempotency_key` is unique so retries don't double-charge.
+ * Append-only ledger of every chargeable operation. Mirrors the
+ * CostEntry type in @vex/telemetry.
+ *
+ * Stored here (not @vex/telemetry) so the Drizzle migrator picks it
+ * up. The CostLedger interface stays adapter-ignorant in telemetry;
+ * the concrete Postgres implementation in cost-ledger-repository.ts
+ * binds the two.
+ *
+ * `idempotency_key` is unique so retries (and at-least-once queue
+ * semantics) don't double-charge.
+ *
+ * Using `text` for ids instead of uuid to match the ULID convention
+ * the rest of the system uses for tenant / agent-run references.
  */
 export const costLedger = pgTable(
   "cost_ledger",
   {
-    id: uuid("id").primaryKey().defaultRandom(),
-    tenantId: uuid("tenant_id")
-      .notNull()
-      .references(() => tenants.id, { onDelete: "cascade" }),
-    agentRunId: uuid("agent_run_id"),
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id").notNull(),
+    agentRunId: text("agent_run_id"),
     idempotencyKey: text("idempotency_key").notNull().unique(),
     operation: text("operation").notNull(),
     provider: text("provider").notNull(),
@@ -30,3 +38,6 @@ export const costLedger = pgTable(
     ),
   }),
 );
+
+export type CostLedgerRow = typeof costLedger.$inferSelect;
+export type NewCostLedgerRow = typeof costLedger.$inferInsert;
