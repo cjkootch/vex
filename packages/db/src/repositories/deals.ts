@@ -69,7 +69,11 @@ export interface FuelDealCreate {
   incoterm: NewFuelDeal["incoterm"];
   pricingBasis: NewFuelDeal["pricingBasis"];
   volumeUsg: number;
-  densityKgL: number;
+  /**
+   * Fuel deals require a positive density. Food deals set it to null —
+   * the column was made nullable in 0011_food_line_of_business.
+   */
+  densityKgL: number | null;
   paymentTerms: PaymentTermsType;
   buyerOrgId: string;
   status?: DealStatus;
@@ -79,6 +83,20 @@ export interface FuelDealCreate {
   /** Operator-defined cadence in days when dealFrequency === "custom". */
   dealFrequencyIntervalDays?: number | null;
   dealFrequencyNotes?: string | null;
+  /**
+   * Line-of-business discriminator (0011_food_line_of_business).
+   * "fuel" (default) or "food" — food deals hide density, freight-per-
+   * USG math, and vessel-class constraints, but still ride the same
+   * approval / signals / port intelligence rails.
+   */
+  lineOfBusiness?: "fuel" | "food";
+  /** Unit the `volume_usg` column is denominated in. "usg" for fuel,
+   *  "mt" / "lbs" / "kg" for food. Defaults to "usg". */
+  volumeUnit?: string;
+  /** Food-specific: weeks between PO and shipment (protein / processed). */
+  productionLeadTimeWeeks?: number | null;
+  /** Food-specific: does the cargo need a reefer? */
+  coldChainRequired?: boolean;
   productGrade?: string | null;
   productSpecNotes?: string | null;
   originCountry?: string | null;
@@ -150,6 +168,16 @@ export class FuelDealRepository {
         dealFrequency: data.dealFrequency ?? "one_off",
         dealFrequencyIntervalDays: data.dealFrequencyIntervalDays ?? null,
         dealFrequencyNotes: data.dealFrequencyNotes ?? null,
+        ...(data.lineOfBusiness !== undefined
+          ? { lineOfBusiness: data.lineOfBusiness }
+          : {}),
+        ...(data.volumeUnit !== undefined
+          ? { volumeUnit: data.volumeUnit }
+          : {}),
+        productionLeadTimeWeeks: data.productionLeadTimeWeeks ?? null,
+        ...(data.coldChainRequired !== undefined
+          ? { coldChainRequired: data.coldChainRequired }
+          : {}),
         product: data.product,
         productGrade: data.productGrade ?? null,
         productSpecNotes: data.productSpecNotes ?? null,
