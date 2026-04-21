@@ -52,6 +52,9 @@ export type {
   NewOfacScreen,
   OfacMatchRecord,
 } from "./schema/ofac-screens.js";
+export type { Vessel, NewVessel } from "./schema/vessels.js";
+export type { FreightRate, NewFreightRate } from "./schema/freight-rates.js";
+export type { VesselClass } from "./schema/enums.js";
 export type {
   EmbeddingChunk,
   NewEmbeddingChunk,

@@ -134,6 +134,13 @@
       "when": 1777881600000,
       "tag": "0018_ofac_screening",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1777968000000,
+      "tag": "0019_vessels",
+      "breakpoints": true
     }
   ]
 }

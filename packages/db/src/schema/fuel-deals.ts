@@ -20,6 +20,7 @@ import {
 } from "./enums.js";
 import { organizations } from "./organizations.js";
 import { contacts } from "./contacts.js";
+import { vessels } from "./vessels.js";
 import { leads } from "./leads.js";
 import { campaigns } from "./campaigns.js";
 import { users } from "./users.js";
@@ -168,6 +169,28 @@ export const fuelDeals = pgTable(
     countryRiskScore: doublePrecision("country_risk_score"),
     politicalRiskInsured: boolean("political_risk_insured").notNull().default(false),
 
+    /**
+     * Vessel intelligence (0019_vessels). Each fuel deal can pin to a
+     * physical hull and carry the freight terms actually booked. The
+     * lock-time market rate gives the evaluator the delta between
+     * what we paid and what the spot looked like at lock — surfaces
+     * good (or bad) timing inside the calculator's freight line.
+     */
+    vesselId: text("vessel_id").references(() => vessels.id, {
+      onDelete: "set null",
+    }),
+    vesselUtilizationPct: doublePrecision("vessel_utilization_pct"),
+    freightRateUsdPerMt: doublePrecision("freight_rate_usd_per_mt"),
+    freightRateLockedAt: timestamp("freight_rate_locked_at", {
+      withTimezone: true,
+    }),
+    freightRateSource: text("freight_rate_source"),
+    freightMarketRateAtLock: doublePrecision("freight_market_rate_at_lock"),
+    demurrageRateUsdPerDay: doublePrecision("demurrage_rate_usd_per_day"),
+    ballastBonusUsd: doublePrecision("ballast_bonus_usd"),
+    /** "voyage" | "time" | "spot". Text — CP terminology varies. */
+    charterType: text("charter_type"),
+
     notes: text("notes"),
     internalNotes: text("internal_notes"),
     createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
@@ -183,6 +206,7 @@ export const fuelDeals = pgTable(
     laycanIdx: index("fuel_deals_laycan_idx").on(t.laycanStart),
     createdAtIdx: index("fuel_deals_created_at_idx").on(t.createdAt),
     dealRefIdx: index("fuel_deals_deal_ref_idx").on(t.tenantId, t.dealRef),
+    vesselIdx: index("fuel_deals_vessel_idx").on(t.vesselId),
   }),
 );
 

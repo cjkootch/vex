@@ -31,4 +31,6 @@ export * from "./fuel-deal-counterparty-scores.js";
 export * from "./fuel-deal-documents.js";
 export * from "./fuel-deal-participants.js";
 export * from "./fuel-market-rates.js";
+export * from "./freight-rates.js";
+export * from "./vessels.js";
 export * from "./ofac-screens.js";
