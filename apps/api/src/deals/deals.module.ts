@@ -9,6 +9,7 @@ import type {
   FuelDealRepository,
   FuelMarketRateRepository,
   OrganizationRepository,
+  PortRepository,
   VesselRepository,
 } from "@vex/db";
 import {
@@ -20,6 +21,7 @@ import {
   DEALS_MARKET_RATE_REPO,
   DEALS_ORGS_REPO,
   DEALS_PARTICIPANT_REPO,
+  DEALS_PORT_REPO,
   DEALS_REPO,
   DEALS_VESSEL_REPO,
   DealsController,
@@ -36,6 +38,7 @@ export interface DealsModuleConfig {
   counterparty: CounterpartyRiskRepository;
   vessels: VesselRepository;
   freightRates: FreightRateRepository;
+  ports: PortRepository;
 }
 
 /**
@@ -63,6 +66,7 @@ export class DealsModule {
         { provide: DEALS_COUNTERPARTY_REPO, useFactory: () => config.counterparty },
         { provide: DEALS_VESSEL_REPO, useFactory: () => config.vessels },
         { provide: DEALS_FREIGHT_RATE_REPO, useFactory: () => config.freightRates },
+        { provide: DEALS_PORT_REPO, useFactory: () => config.ports },
       ],
     };
   }

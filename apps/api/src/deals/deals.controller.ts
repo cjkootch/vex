@@ -33,13 +33,20 @@ import type {
   FuelDealRepository,
   FuelMarketRateRepository,
   OrganizationRepository,
+  Port,
+  PortEvent,
+  PortRepository,
   Vessel,
   VesselRepository,
 } from "@vex/db";
 import {
   calculateFuelDeal,
+  validatePortConstraints,
+  type DealWarning,
   type FuelDealInputs,
   type FuelDealResults,
+  type PortSpec,
+  type VesselSpec,
 } from "@vex/db";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { schema, withTenant, type Db, type Tx } from "@vex/db";
@@ -68,6 +75,7 @@ export const DEALS_PARTICIPANT_REPO = Symbol("DEALS_PARTICIPANT_REPO");
 export const DEALS_COUNTERPARTY_REPO = Symbol("DEALS_COUNTERPARTY_REPO");
 export const DEALS_VESSEL_REPO = Symbol("DEALS_VESSEL_REPO");
 export const DEALS_FREIGHT_RATE_REPO = Symbol("DEALS_FREIGHT_RATE_REPO");
+export const DEALS_PORT_REPO = Symbol("DEALS_PORT_REPO");
 
 /**
  * Status transitions that require a T2 approval instead of applying
@@ -404,6 +412,8 @@ export class DealsController {
     private readonly vesselsRepo: VesselRepository,
     @Inject(DEALS_FREIGHT_RATE_REPO)
     private readonly freightRates: FreightRateRepository,
+    @Inject(DEALS_PORT_REPO)
+    private readonly portsRepo: PortRepository,
   ) {}
 
   @Get()
@@ -1269,6 +1279,158 @@ export class DealsController {
     });
   }
 
+  /**
+   * GET /deals/:id/ports — bundle for the deal-overview PortPanel.
+   * Returns both resolved ports (when *_port_id is set), any active
+   * port_events at either leg, the full constraint-warning list from
+   * validatePortConstraints, and a `resolution` hint when a legacy
+   * text port (deal.origin_port / destination_port) looks like a
+   * UNLOCODE but hasn't been linked yet. The "Resolve port" CTA on
+   * the panel uses that hint to confirm + PATCH.
+   */
+  @Get(":id/ports")
+  async getPorts(@Param("id") id: string): Promise<{
+    deal: { id: string; dealRef: string; product: string };
+    originPort: Port | null;
+    destinationPort: Port | null;
+    originEvents: PortEvent[];
+    destinationEvents: PortEvent[];
+    warnings: DealWarning[];
+    resolution: {
+      origin: { suggested: Port | null; fromText: string | null } | null;
+      destination: { suggested: Port | null; fromText: string | null } | null;
+    };
+  }> {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      const originPort = deal.originPortId
+        ? await this.portsRepo.findById(tx, deal.originPortId)
+        : null;
+      const destPort = deal.destinationPortId
+        ? await this.portsRepo.findById(tx, deal.destinationPortId)
+        : null;
+
+      const originEvents = originPort
+        ? await this.portsRepo.listActiveEvents(tx, originPort.id)
+        : [];
+      const destinationEvents = destPort
+        ? await this.portsRepo.listActiveEvents(tx, destPort.id)
+        : [];
+
+      const vessel = deal.vesselId
+        ? await this.vesselsRepo.findById(tx, deal.vesselId)
+        : null;
+
+      const warnings = validatePortConstraints({
+        product: deal.product,
+        coldChainRequired: deal.coldChainRequired ?? false,
+        vessel: vessel ? vesselToSpec(vessel) : null,
+        originPort: originPort ? portToSpec(originPort) : null,
+        destinationPort: destPort ? portToSpec(destPort) : null,
+      });
+
+      // Resolution hints — when a leg's port_id is null but the legacy
+      // text column looks like a UNLOCODE, suggest the matching port
+      // row so the UI can offer a one-click "Link this" action.
+      const origResolution = await maybeResolveText(
+        tx,
+        this.portsRepo,
+        deal.originPortId,
+        deal.originPort,
+      );
+      const destResolution = await maybeResolveText(
+        tx,
+        this.portsRepo,
+        deal.destinationPortId,
+        deal.destinationPort,
+      );
+
+      return {
+        deal: { id: deal.id, dealRef: deal.dealRef, product: deal.product },
+        originPort,
+        destinationPort: destPort,
+        originEvents,
+        destinationEvents,
+        warnings,
+        resolution: {
+          origin: origResolution,
+          destination: destResolution,
+        },
+      };
+    });
+  }
+
+  /**
+   * PATCH /deals/:id/ports — link / unlink origin or destination port.
+   * Pass null to unlink. Emits a deal.ports_updated event so the
+   * audit trail survives.
+   */
+  @Patch(":id/ports")
+  async patchPorts(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ ok: true }> {
+    const parsed = PatchDealPortsBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const patch = parsed.data;
+    const { tenantId, userId } = this.tenant;
+
+    await withTenant(this.db, tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      // Validate new port IDs belong to this tenant. RLS filters
+      // cross-tenant rows, so an empty result means bogus id.
+      if (patch.originPortId) {
+        const p = await this.portsRepo.findById(tx, patch.originPortId);
+        if (!p)
+          throw new NotFoundException(
+            `originPortId ${patch.originPortId} not found in this workspace`,
+          );
+      }
+      if (patch.destinationPortId) {
+        const p = await this.portsRepo.findById(tx, patch.destinationPortId);
+        if (!p)
+          throw new NotFoundException(
+            `destinationPortId ${patch.destinationPortId} not found in this workspace`,
+          );
+      }
+
+      const set: Record<string, unknown> = { updatedAt: new Date() };
+      if (patch.originPortId !== undefined)
+        set["originPortId"] = patch.originPortId;
+      if (patch.destinationPortId !== undefined)
+        set["destinationPortId"] = patch.destinationPortId;
+
+      await tx
+        .update(schema.fuelDeals)
+        .set(set)
+        .where(eq(schema.fuelDeals.id, id));
+
+      await this.events.insertIfNotExists(tx, tenantId, {
+        verb: "deal.ports_updated",
+        subjectType: "fuel_deal",
+        subjectId: id,
+        actorType: "user",
+        actorId: userId,
+        objectType: "fuel_deal",
+        objectId: id,
+        occurredAt: new Date(),
+        idempotencyKey: `deal.ports_updated:${id}:${Date.now()}`,
+        metadata: {
+          deal_ref: deal.dealRef,
+          origin_port_id: patch.originPortId ?? deal.originPortId ?? null,
+          destination_port_id:
+            patch.destinationPortId ?? deal.destinationPortId ?? null,
+        },
+      });
+    });
+
+    return { ok: true };
+  }
+
   @Get(":id")
   async detail(@Param("id") id: string): Promise<{ deal: DealDetail }> {
     const deal = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
@@ -1576,4 +1738,68 @@ function productCategoryForProduct(product: string): string {
   if (product === "lng") return "lng";
   if (product === "lpg") return "lpg";
   return "clean_products";
+}
+
+// ---------------------------------------------------------------------------
+// Port patch + resolution helpers
+// ---------------------------------------------------------------------------
+
+const PatchDealPortsBody = z
+  .object({
+    /** Pass null to unlink, undefined to leave unchanged. */
+    originPortId: z.string().min(1).nullable().optional(),
+    destinationPortId: z.string().min(1).nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.originPortId !== undefined || v.destinationPortId !== undefined,
+    { message: "at least one of originPortId / destinationPortId required" },
+  );
+
+function vesselToSpec(v: Vessel): VesselSpec {
+  const spec: VesselSpec = {
+    class: v.vesselClass,
+    dwtMt: v.dwtMt ?? 0,
+    maxDraftM: v.maxDraftM ?? 0,
+  };
+  if (v.loaM !== null && v.loaM !== undefined) spec.loaM = v.loaM;
+  if (v.beamM !== null && v.beamM !== undefined) spec.beamM = v.beamM;
+  return spec;
+}
+
+function portToSpec(p: Port): PortSpec {
+  return {
+    unlocode: p.unlocode,
+    name: p.name,
+    maxDraftM: p.maxDraftM,
+    maxLoaM: p.maxLoaM,
+    maxBeamM: p.maxBeamM,
+    maxDwtMt: p.maxDwtMt,
+    reeferCapable: p.reeferCapable,
+    congestionFactor: p.congestionFactor ?? null,
+    restrictedCargoNotes: p.restrictedCargoNotes,
+  };
+}
+
+/**
+ * Suggest a port for a leg that's still holding the legacy text
+ * column but hasn't been linked via *_port_id. Fires only when the
+ * text parses as a UNLOCODE; returns null when the leg is already
+ * linked (no suggestion needed) or the text can't be interpreted.
+ */
+async function maybeResolveText(
+  tx: Tx,
+  ports: PortRepository,
+  portId: string | null,
+  legacyText: string | null,
+): Promise<{ suggested: Port | null; fromText: string | null } | null> {
+  if (portId) return null;
+  if (!legacyText) return null;
+  const trimmed = legacyText.trim().toUpperCase();
+  if (!/^[A-Z]{2}[A-Z0-9]{3}$/.test(trimmed)) {
+    return { suggested: null, fromText: legacyText };
+  }
+  const hit = await ports.findByUnlocode(tx, trimmed);
+  return { suggested: hit, fromText: legacyText };
 }

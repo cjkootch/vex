@@ -24,6 +24,7 @@ import {
   FuelDealRepository,
   FuelMarketRateRepository,
   OfacScreenRepository,
+  PortRepository,
   VesselRepository,
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
@@ -131,6 +132,7 @@ async function bootstrap(): Promise<void> {
   const ofacScreenRepository = new OfacScreenRepository();
   const vesselRepository = new VesselRepository();
   const freightRateRepository = new FreightRateRepository();
+  const portRepository = new PortRepository();
   const campaignRepository = new CampaignRepository();
   const campaignStepRepository = new CampaignStepRepository();
   const campaignEnrollmentRepository = new CampaignEnrollmentRepository();
@@ -290,6 +292,7 @@ async function bootstrap(): Promise<void> {
         counterparty: counterpartyRiskRepository,
         vessels: vesselRepository,
         freightRates: freightRateRepository,
+        ports: portRepository,
       }),
       vessels: VesselsModule.register({ db, vessels: vesselRepository }),
       leads: LeadsModule.register({ db }),
