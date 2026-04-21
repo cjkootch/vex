@@ -61,6 +61,102 @@ export interface VesselInputs {
   canalTransitUsd: number;
 }
 
+/**
+ * Vessel particulars (T4-gap of the vessel intelligence build). Distinct
+ * from {@link VesselInputs} above — that one carries per-deal economics
+ * (capacity, utilization, lump-sum freight, demurrage). This one carries
+ * the hull's identity + dimensions, sourced from the vessels dimension
+ * table (0019_vessels). Used to:
+ *   - derive utilization from volumeMt / dwtMt when the operator hasn't
+ *     entered an explicit utilization,
+ *   - drive the `freight_rate_missing` warning when a vessel is on the
+ *     deal but no freight rate has been locked.
+ *
+ * Kept distinct from `VesselInputs` so existing calculator callers keep
+ * working unchanged — both fields are optional.
+ */
+export type VesselClass =
+  | "handysize"
+  | "handymax"
+  | "panamax"
+  | "aframax"
+  | "suezmax"
+  | "vlcc"
+  | "mr_tanker"
+  | "lr1"
+  | "lr2"
+  | "coastal"
+  | "barge"
+  | "container"
+  | "reefer"
+  | "bulk_carrier";
+
+export interface VesselSpec {
+  class: VesselClass;
+  dwtMt: number;
+  maxDraftM: number;
+}
+
+/**
+ * Volume conversion: 1 USG ≈ 3.78541 L. tonnes = (USG × density_kg/L
+ * × 3.78541) / 1000. Used by computeFreightCost (rate × MT) and the
+ * utilization helper. Returns 0 when either input is non-positive.
+ */
+export function dealVolumeMt(volumeUsg: number, densityKgL: number): number {
+  if (!(volumeUsg > 0) || !(densityKgL > 0)) return 0;
+  return (volumeUsg * densityKgL * 3.78541) / 1000;
+}
+
+/**
+ * Vessel utilization as a fraction of DWT. Clamped to 0..1.05 since a
+ * slight overload (≤ 5%) is common for refined-products tankers when
+ * stowing high-density cargo. Returns null when either input is
+ * missing — UI surfaces "—" instead of a misleading 0%.
+ */
+export function computeVesselUtilization(
+  inputs: { volumeUsg: number; densityKgL: number },
+  vessel: VesselSpec,
+): number | null {
+  const volumeMt = dealVolumeMt(inputs.volumeUsg, inputs.densityKgL);
+  if (!(volumeMt > 0) || !(vessel.dwtMt > 0)) return null;
+  const ratio = volumeMt / vessel.dwtMt;
+  return Math.min(Math.max(ratio, 0), 1.05);
+}
+
+/**
+ * Freight cost from a USD/MT rate + deal volume. Returns null when the
+ * rate is missing or non-positive — the caller should fall back to the
+ * existing `freightPerUsg` input. The cost stack's effectiveFreight()
+ * helper already does this swap.
+ */
+export function computeFreightCost(
+  inputs: { volumeUsg: number; densityKgL: number },
+  rateUsdPerMt: number | undefined,
+): { totalUsd: number; perUsg: number; perMt: number } | null {
+  if (!rateUsdPerMt || rateUsdPerMt <= 0) return null;
+  const volumeMt = dealVolumeMt(inputs.volumeUsg, inputs.densityKgL);
+  if (volumeMt <= 0) return null;
+  const totalUsd = rateUsdPerMt * volumeMt;
+  return {
+    totalUsd,
+    perUsg: totalUsd / inputs.volumeUsg,
+    perMt: rateUsdPerMt,
+  };
+}
+
+/**
+ * Resolve the per-USG freight figure used by the cost stack. Order of
+ * preference:
+ *   1. Computed from `freightRateUsdPerMt` (USD/MT rate × volumeMt /
+ *      volumeUsg) — when the operator booked a rate.
+ *   2. The existing `freightPerUsg` input — fallback for callers that
+ *      haven't moved to the per-MT field yet.
+ */
+function effectiveFreight(inputs: FuelDealInputs): number {
+  const computed = computeFreightCost(inputs, inputs.freightRateUsdPerMt);
+  return computed?.perUsg ?? inputs.freightPerUsg;
+}
+
 export interface TradeFinanceInputs {
   type: PaymentTermsType;
   lcValueUsd?: number;
@@ -118,6 +214,20 @@ export interface FuelDealInputs {
   vtcVariableOpsPerUsg: number;
 
   vessel?: VesselInputs;
+  /**
+   * Hull particulars from the vessels dimension table (0019). Distinct
+   * from {@link VesselInputs} above. When present, drives utilization
+   * derivation and the freight_rate_missing warning.
+   */
+  vesselSpec?: VesselSpec;
+  /**
+   * Freight rate in USD/MT (e.g. as quoted in broker circulars or
+   * Worldscale flat rates). When present, takes precedence over
+   * `freightPerUsg` for the cost-stack freight line — the calculator
+   * converts via deal volumeMt. Leave undefined to fall back to the
+   * existing `freightPerUsg` per-USG entry.
+   */
+  freightRateUsdPerMt?: number;
   overheadAllocationUsd: number;
   tradeFinance: TradeFinanceInputs;
   counterpartyRiskScore: number;
@@ -341,11 +451,15 @@ export function calculateInsuranceCosts(inputs: FuelDealInputs): InsuranceCosts 
  */
 export function calculateUnitEconomics(inputs: FuelDealInputs): PerUsgEconomics {
   const insurance = calculateInsuranceCosts(inputs);
+  // T4-gap: when the operator booked a USD/MT freight rate, derive the
+  // per-USG equivalent from deal volumeMt. Falls back to the existing
+  // freightPerUsg entry so callers without the new field keep working.
+  const effectiveFreightPerUsg = effectiveFreight(inputs);
 
   const totalVariableCost =
     inputs.productCostPerUsg +
     inputs.productQualityPremiumPerUsg +
-    inputs.freightPerUsg +
+    effectiveFreightPerUsg +
     insurance.totalInsurancePerUsg +
     inputs.dischargeHandlingPerUsg +
     inputs.compliancePerUsg +
@@ -362,7 +476,7 @@ export function calculateUnitEconomics(inputs: FuelDealInputs): PerUsgEconomics 
     sellPrice: inputs.sellPricePerUsg,
     productCost: inputs.productCostPerUsg,
     qualityPremium: inputs.productQualityPremiumPerUsg,
-    freight: inputs.freightPerUsg,
+    freight: effectiveFreightPerUsg,
     insurance: insurance.totalInsurancePerUsg,
     dischargeHandling: inputs.dischargeHandlingPerUsg,
     compliance: inputs.compliancePerUsg,
@@ -671,6 +785,25 @@ export function calculateWarnings(
         1,
       )}% of pipeline — concentration risk`,
       affectedField: "buyerConcentrationShare",
+    });
+  }
+
+  // --- Freight rate missing ----------------------------------------------
+  // T4-gap: when a vessel is on the deal but no freight rate has been
+  // booked (neither freightRateUsdPerMt nor freightPerUsg), surface as
+  // a caution so the desk knows to lock freight before laycan.
+  if (
+    inputs.vesselSpec &&
+    !(inputs.freightRateUsdPerMt && inputs.freightRateUsdPerMt > 0) &&
+    !(inputs.freightPerUsg > 0)
+  ) {
+    warnings.push({
+      code: "freight.rate_missing",
+      severity: "caution",
+      message:
+        `Vessel nominated but no freight rate booked. Lock a USD/MT rate (${inputs.vesselSpec.class}) ` +
+        `before laycan or freight will price at spot.`,
+      affectedField: "freightRateUsdPerMt",
     });
   }
 
@@ -1058,6 +1191,14 @@ export interface SensitivityOutputs {
   utilizationVsMargin: SensitivityGrid;
   /** EBITDA $, rows = productCost ±$0.15, cols = sellPrice ±$0.15. */
   productCostVsPrice: SensitivityGrid;
+  /**
+   * T4-gap freight-rate sweep. cols = -20% / -15% / -10% / -5% /
+   * 0% / +5% / +10% / +15% / +20% deltas from the current freight
+   * rate; rows = ["EBITDA $", "Peak cash $"]. highlightCol is fixed
+   * at the 0% baseline (index 4). Empty when neither
+   * freightRateUsdPerMt nor freightPerUsg is set on inputs.
+   */
+  freightRateSweep: SensitivityGrid;
 }
 
 /**
@@ -1213,10 +1354,61 @@ export function calculateSensitivityGrids(
     highlightCol: 2,
   };
 
+  // -------- Grid 5: freightRateSweep → EBITDA + peak cash -----------------
+  // 1-D sensitivity along the freight rate. Operates on whichever
+  // freight input is set (USD/MT preferred over per-USG); when both
+  // are zero the grid is empty so the UI can hide the panel.
+  const freightRateSweep = buildFreightRateSweep(inputs);
+
   return {
     priceVsVolume,
     priceVsFreight,
     utilizationVsMargin,
     productCostVsPrice,
+    freightRateSweep,
+  };
+}
+
+const FREIGHT_SWEEP_DELTAS = [-0.2, -0.15, -0.1, -0.05, 0, 0.05, 0.1, 0.15, 0.2];
+const FREIGHT_SWEEP_LABELS = FREIGHT_SWEEP_DELTAS.map(
+  (d) => `${d >= 0 ? "+" : ""}${(d * 100).toFixed(0)}%`,
+);
+
+function buildFreightRateSweep(inputs: FuelDealInputs): SensitivityGrid {
+  // Prefer the USD/MT axis when set; fall back to the per-USG axis.
+  const ratePerMt = inputs.freightRateUsdPerMt ?? null;
+  const perUsgBase = inputs.freightPerUsg;
+  const haveAxis =
+    (ratePerMt !== null && ratePerMt > 0) || perUsgBase > 0;
+  if (!haveAxis) {
+    return {
+      rowLabels: [],
+      colLabels: [],
+      values: [],
+      highlightRow: -1,
+      highlightCol: -1,
+    };
+  }
+
+  const ebitdaRow: number[] = [];
+  const peakCashRow: number[] = [];
+  for (const delta of FREIGHT_SWEEP_DELTAS) {
+    const cellInputs: FuelDealInputs =
+      ratePerMt !== null && ratePerMt > 0
+        ? { ...inputs, freightRateUsdPerMt: ratePerMt * (1 + delta) }
+        : { ...inputs, freightPerUsg: perUsgBase * (1 + delta) };
+    const perUsg = calculateUnitEconomics(cellInputs);
+    const totals = calculateTotals(cellInputs, perUsg);
+    ebitdaRow.push(totals.ebitdaUsd);
+    const cashflow = calculateCashflow(cellInputs);
+    peakCashRow.push(cashflow.peakExposureUsd);
+  }
+
+  return {
+    rowLabels: ["EBITDA $", "Peak cash $"],
+    colLabels: FREIGHT_SWEEP_LABELS,
+    values: [ebitdaRow, peakCashRow],
+    highlightRow: -1,
+    highlightCol: 4, // the 0% baseline
   };
 }
