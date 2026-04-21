@@ -246,6 +246,40 @@ export class CommunicationsController {
       relatedObjectIds: (row.relatedObjectIds ?? {}) as Record<string, unknown>,
     };
   }
+
+  /**
+   * GET /communications/touchpoints/:id — drill-in payload for an
+   * email / sms / whatsapp touchpoint. Returns channel + actor +
+   * contact/org linkage + full metadata (subject, from, to, body_text,
+   * body_html). The inbox detail page reads this so operators can see
+   * the full email body, not just the 240-char preview.
+   */
+  @Get("touchpoints/:id")
+  async touchpoint(@Param("id") id: string): Promise<{
+    id: string;
+    channel: string;
+    actor: string | null;
+    occurredAt: string;
+    contactId: string | null;
+    orgId: string | null;
+    campaignId: string | null;
+    metadata: Record<string, unknown>;
+  }> {
+    const row = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.touchpoints.findById(tx, id),
+    );
+    if (!row) throw new NotFoundException();
+    return {
+      id: row.id,
+      channel: row.channel,
+      actor: row.actor,
+      occurredAt: row.occurredAt.toISOString(),
+      contactId: row.contactId,
+      orgId: row.orgId,
+      campaignId: row.campaignId,
+      metadata: (row.metadata ?? {}) as Record<string, unknown>,
+    };
+  }
 }
 
 function parseChannels(raw: string | string[] | undefined): ChannelFilter[] {

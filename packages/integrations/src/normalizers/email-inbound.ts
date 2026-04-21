@@ -39,6 +39,14 @@ const EmailInboundPayload = z.object({
 
 /** First-N chars of the plain-text body, used for list views. */
 const PREVIEW_CHARS = 240;
+/**
+ * Cap on the stored body copy inside touchpoint metadata. Full,
+ * un-truncated bodies remain in raw_events.payload; this copy is a
+ * convenience for the inbox drill-in render path so it doesn't need
+ * a second query. 64KB covers >99% of real email bodies; anything
+ * longer is truncated with a visible `…` marker on the reader side.
+ */
+const BODY_CAP = 64_000;
 
 export class EmailInboundNormalizer {
   constructor(private readonly deps: NormalizerDeps) {}
@@ -57,6 +65,11 @@ export class EmailInboundNormalizer {
 
     const body = payload.text ?? payload.html ?? "";
     const preview = body.slice(0, PREVIEW_CHARS).trim();
+    // Cap the stored body at BODY_CAP to keep touchpoint rows sane —
+    // the full body lives in raw_events.payload anyway; this copy is
+    // for the inbox drill-in render without a raw_events fetch.
+    const bodyText = payload.text ? payload.text.slice(0, BODY_CAP) : null;
+    const bodyHtml = payload.html ? payload.html.slice(0, BODY_CAP) : null;
     const occurredAt = payload.received_at
       ? new Date(payload.received_at)
       : raw.receivedAt;
@@ -70,6 +83,8 @@ export class EmailInboundNormalizer {
       ...(payload.in_reply_to ? { in_reply_to: payload.in_reply_to } : {}),
       ...(payload.subject ? { subject: payload.subject } : {}),
       ...(preview ? { preview } : {}),
+      ...(bodyText ? { body_text: bodyText } : {}),
+      ...(bodyHtml ? { body_html: bodyHtml } : {}),
     };
 
     await this.deps.touchpoints.insert(this.deps.tx, raw.tenantId, {
