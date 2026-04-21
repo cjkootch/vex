@@ -1205,6 +1205,70 @@ export class DealsController {
     });
   }
 
+  /**
+   * GET /deals/:id/vessel/freight-history?days=90 — time series of
+   * market freight rates for the deal's lane over the last N days.
+   * Returns an empty `points` array when the lane can't be derived
+   * (no vessel linked, or origin/destination country can't be mapped
+   * to a region slug). Sparkline-shaped: ascending date order, one
+   * point per published rate row (no resampling).
+   */
+  @Get(":id/vessel/freight-history")
+  async freightHistory(
+    @Param("id") id: string,
+    @Query("days") daysRaw?: string,
+  ): Promise<{
+    lane: {
+      originRegion: string;
+      destinationRegion: string;
+      vesselClass: string;
+      productCategory: string;
+    } | null;
+    points: Array<{ date: string; rateUsdPerMt: number; source: string }>;
+  }> {
+    const days = clampDays(daysRaw);
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+      const vessel = deal.vesselId
+        ? await this.vesselsRepo.findById(tx, deal.vesselId)
+        : null;
+      if (
+        !vessel ||
+        !deal.originCountry ||
+        !deal.destinationCountry
+      ) {
+        return { lane: null, points: [] };
+      }
+      const lane = buildLaneForDealVessel(deal, vessel);
+      if (!lane) return { lane: null, points: [] };
+
+      const to = new Date();
+      const from = new Date(to);
+      from.setUTCDate(from.getUTCDate() - days);
+      const fromIso = from.toISOString().slice(0, 10);
+      const toIso = to.toISOString().slice(0, 10);
+
+      const rows = await this.freightRates.getRange(tx, lane, fromIso, toIso);
+      return {
+        lane: {
+          originRegion: lane.originRegion,
+          destinationRegion: lane.destinationRegion,
+          vesselClass: lane.vesselClass,
+          productCategory: lane.productCategory,
+        },
+        points: rows.map((r) => ({
+          date:
+            typeof r.rateDate === "string"
+              ? r.rateDate
+              : (r.rateDate as Date).toISOString().slice(0, 10),
+          rateUsdPerMt: r.rateUsdPerMt,
+          source: r.source,
+        })),
+      };
+    });
+  }
+
   @Get(":id")
   async detail(@Param("id") id: string): Promise<{ deal: DealDetail }> {
     const deal = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
@@ -1296,6 +1360,13 @@ function clampLimit(raw: string | undefined, fallback: number, max: number): num
   const parsed = raw ? Number.parseInt(raw, 10) : fallback;
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.min(parsed, max);
+}
+
+/** Days window for the freight-history endpoint. Default 90, max 365. */
+function clampDays(raw: string | undefined): number {
+  const parsed = raw ? Number.parseInt(raw, 10) : 90;
+  if (!Number.isFinite(parsed) || parsed <= 0) return 90;
+  return Math.min(parsed, 365);
 }
 
 function toListRow(row: {

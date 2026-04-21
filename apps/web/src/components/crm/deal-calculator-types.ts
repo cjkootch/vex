@@ -54,12 +54,32 @@ export interface CashflowResults {
   daysToBreakEven: number;
 }
 
+export interface SensitivityGrid {
+  rowLabels: string[];
+  colLabels: string[];
+  values: number[][];
+  highlightRow: number;
+  highlightCol: number;
+}
+
+export interface SensitivityOutputs {
+  priceVsVolume: SensitivityGrid;
+  priceVsFreight: SensitivityGrid;
+  utilizationVsMargin: SensitivityGrid;
+  productCostVsPrice: SensitivityGrid;
+  /** 1-D freight-rate sweep ±20% in 5% steps. Two rows (EBITDA $,
+   *  Peak cash $) × 9 cols. highlightCol = 4 (the 0% baseline) when
+   *  populated; -1 when no freight axis is set. */
+  freightRateSweep: SensitivityGrid;
+}
+
 export interface FuelDealResults {
   perUsg: PerUsgEconomics;
   totals: DealTotals;
   warnings: DealWarning[];
   scorecard: DealScorecard;
   cashflow: CashflowResults;
+  sensitivity?: SensitivityOutputs;
 }
 
 export interface CalculatorResponse {

@@ -79,14 +79,27 @@ const CHARTER_OPTIONS = [
   { value: "spot", label: "Spot" },
 ];
 
+interface FreightHistoryPoint {
+  date: string;
+  rateUsdPerMt: number;
+  source: string;
+}
+
+interface FreightHistory {
+  lane: { originRegion: string; destinationRegion: string } | null;
+  points: FreightHistoryPoint[];
+}
+
 interface Props {
   dealId: string;
 }
 
 export function VesselPanel({ dealId }: Props) {
   const [bundle, setBundle] = useState<VesselBundle | null>(null);
+  const [history, setHistory] = useState<FreightHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [refreshIdx, setRefreshIdx] = useState(0);
 
   const reload = useCallback(() => setRefreshIdx((i) => i + 1), []);
@@ -109,6 +122,27 @@ export function VesselPanel({ dealId }: Props) {
       cancelled = true;
     };
   }, [dealId, refreshIdx]);
+
+  // Lazy-load freight history only when the operator expands the
+  // section — most deal-detail visits don't drill into the chart.
+  useEffect(() => {
+    if (!historyOpen || history) return;
+    let cancelled = false;
+    fetch(`/api/deals/${dealId}/vessel/freight-history?days=90`, {
+      cache: "no-store",
+    })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const body = (await r.json()) as FreightHistory;
+        if (!cancelled) setHistory(body);
+      })
+      .catch(() => {
+        if (!cancelled) setHistory({ lane: null, points: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [dealId, historyOpen, history]);
 
   return (
     <section className="rounded-lg border border-line bg-muted/20 p-4">
@@ -136,7 +170,12 @@ export function VesselPanel({ dealId }: Props) {
       ) : !bundle.vessel ? (
         <EmptyState onLink={() => setPickerOpen(true)} />
       ) : (
-        <LinkedState bundle={bundle} />
+        <LinkedState
+          bundle={bundle}
+          history={history}
+          historyOpen={historyOpen}
+          onToggleHistory={() => setHistoryOpen((o) => !o)}
+        />
       )}
 
       <VesselPicker
@@ -170,7 +209,17 @@ function EmptyState({ onLink }: { onLink: () => void }) {
   );
 }
 
-function LinkedState({ bundle }: { bundle: VesselBundle }) {
+function LinkedState({
+  bundle,
+  history,
+  historyOpen,
+  onToggleHistory,
+}: {
+  bundle: VesselBundle;
+  history: FreightHistory | null;
+  historyOpen: boolean;
+  onToggleHistory: () => void;
+}) {
   const v = bundle.vessel!;
   const u =
     bundle.utilization.pctOnDeal ?? bundle.utilization.pctOfDwt ?? null;
@@ -234,6 +283,184 @@ function LinkedState({ bundle }: { bundle: VesselBundle }) {
             footnote="rate × 2 days"
           />
         )}
+      </div>
+
+      <FreightHistorySection
+        history={history}
+        open={historyOpen}
+        onToggle={onToggleHistory}
+        bookedRate={fr.bookedUsdPerMt}
+      />
+    </div>
+  );
+}
+
+/**
+ * 90-day freight-rate history. Collapsed by default; loads lazily when
+ * the operator expands. Inline SVG sparkline — keeps the panel free of
+ * a chart-lib dependency. The booked rate (when present) is rendered
+ * as a horizontal reference line so the deal's mark sits visually
+ * against the published market.
+ */
+function FreightHistorySection({
+  history,
+  open,
+  onToggle,
+  bookedRate,
+}: {
+  history: FreightHistory | null;
+  open: boolean;
+  onToggle: () => void;
+  bookedRate: number | null;
+}) {
+  return (
+    <div className="rounded-md border border-line bg-canvas/40">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs text-white/70 hover:text-white"
+      >
+        <span>
+          Freight history{" "}
+          <span className="text-[10px] text-white/40">90 days</span>
+        </span>
+        <span className="text-[10px] text-white/40">
+          {open ? "Hide" : "Show"}
+        </span>
+      </button>
+      {open && (
+        <div className="border-t border-line/60 px-3 py-2">
+          {!history ? (
+            <p className="text-xs text-white/50">Loading…</p>
+          ) : history.points.length === 0 ? (
+            <p className="text-xs text-white/50">
+              {history.lane
+                ? "No published rates on file for this lane in the window."
+                : "Lane can't be derived for this deal — link a vessel and confirm origin/destination countries."}
+            </p>
+          ) : (
+            <FreightSparkline
+              points={history.points}
+              bookedRate={bookedRate}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FreightSparkline({
+  points,
+  bookedRate,
+}: {
+  points: FreightHistoryPoint[];
+  bookedRate: number | null;
+}) {
+  // Layout — fixed viewBox so the SVG scales with its container.
+  const W = 320;
+  const H = 90;
+  const pad = { top: 6, right: 6, bottom: 14, left: 32 };
+  const innerW = W - pad.left - pad.right;
+  const innerH = H - pad.top - pad.bottom;
+
+  const rates = points.map((p) => p.rateUsdPerMt);
+  const allValues = bookedRate !== null ? [...rates, bookedRate] : rates;
+  const min = Math.min(...allValues);
+  const max = Math.max(...allValues);
+  const span = max - min || 1;
+
+  const xFor = (i: number) =>
+    pad.left + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
+  const yFor = (v: number) =>
+    pad.top + innerH - ((v - min) / span) * innerH;
+
+  const linePath = points
+    .map((p, i) => `${i === 0 ? "M" : "L"} ${xFor(i).toFixed(1)} ${yFor(p.rateUsdPerMt).toFixed(1)}`)
+    .join(" ");
+
+  const last = points[points.length - 1]!;
+  const first = points[0]!;
+  const trendPct = first.rateUsdPerMt > 0
+    ? ((last.rateUsdPerMt - first.rateUsdPerMt) / first.rateUsdPerMt) * 100
+    : 0;
+  const trendTone =
+    trendPct >= 5 ? "text-bad" : trendPct <= -5 ? "text-good" : "text-white/70";
+
+  return (
+    <div className="flex flex-col gap-1">
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        className="h-24 w-full"
+        role="img"
+        aria-label={`Freight rate history ${first.date} to ${last.date}`}
+      >
+        {/* Y axis ticks (min + max) */}
+        <text x={2} y={pad.top + 4} className="fill-white/40" fontSize="9">
+          {`$${max.toFixed(1)}`}
+        </text>
+        <text x={2} y={pad.top + innerH} className="fill-white/40" fontSize="9">
+          {`$${min.toFixed(1)}`}
+        </text>
+        {/* Booked-rate reference line */}
+        {bookedRate !== null && bookedRate >= min && bookedRate <= max && (
+          <>
+            <line
+              x1={pad.left}
+              x2={pad.left + innerW}
+              y1={yFor(bookedRate)}
+              y2={yFor(bookedRate)}
+              className="stroke-accent/60"
+              strokeDasharray="3 3"
+              strokeWidth="1"
+            />
+            <text
+              x={pad.left + innerW - 2}
+              y={yFor(bookedRate) - 2}
+              textAnchor="end"
+              className="fill-accent"
+              fontSize="9"
+            >
+              booked ${bookedRate.toFixed(2)}
+            </text>
+          </>
+        )}
+        {/* Spark line */}
+        <path
+          d={linePath}
+          className="fill-none stroke-white"
+          strokeWidth="1.5"
+        />
+        {/* Last-point marker */}
+        <circle
+          cx={xFor(points.length - 1)}
+          cy={yFor(last.rateUsdPerMt)}
+          r={2.5}
+          className="fill-white"
+        />
+        {/* X axis ticks (first + last date) */}
+        <text x={pad.left} y={H - 2} className="fill-white/40" fontSize="9">
+          {first.date.slice(5)}
+        </text>
+        <text
+          x={pad.left + innerW}
+          y={H - 2}
+          textAnchor="end"
+          className="fill-white/40"
+          fontSize="9"
+        >
+          {last.date.slice(5)}
+        </text>
+      </svg>
+      <div className="flex items-center justify-between text-[10px] text-white/50">
+        <span>
+          {points.length} {points.length === 1 ? "point" : "points"} ·{" "}
+          {points[0]!.source}
+        </span>
+        <span className={`tabular-nums ${trendTone}`}>
+          {trendPct >= 0 ? "+" : ""}
+          {trendPct.toFixed(1)}% over window
+        </span>
       </div>
     </div>
   );

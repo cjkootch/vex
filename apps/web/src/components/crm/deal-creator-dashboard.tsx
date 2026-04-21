@@ -6,6 +6,7 @@ import type {
   DealRecommendation,
   DealWarningSeverity,
   MarketRate,
+  SensitivityGrid,
 } from "@/components/crm/deal-calculator-types";
 import {
   commissionPerUsg,
@@ -129,6 +130,11 @@ export function DealCreatorDashboard({
       {results && results.warnings.length > 0 && (
         <WarningsList warnings={results.warnings} />
       )}
+
+      {results?.sensitivity?.freightRateSweep &&
+        results.sensitivity.freightRateSweep.values.length > 0 && (
+          <FreightSweepCard grid={results.sensitivity.freightRateSweep} />
+        )}
 
       {!results && !loading && (
         <p className="text-xs text-white/50">
@@ -510,6 +516,94 @@ function formatIntelUsd(value: number): string {
     return `$${(value / 1_000).toFixed(0)}k`;
   }
   return `$${value.toFixed(0)}`;
+}
+
+function FreightSweepCard({ grid }: { grid: SensitivityGrid }) {
+  // 2 rows: EBITDA, Peak cash. 9 cols: -20% .. +20% in 5% steps.
+  const [ebitdaRow, peakCashRow] = grid.values;
+  if (!ebitdaRow || !peakCashRow) return null;
+  const baselineIdx = grid.highlightCol >= 0 ? grid.highlightCol : 4;
+  const ebitdaBase = ebitdaRow[baselineIdx] ?? 0;
+  const peakBase = peakCashRow[baselineIdx] ?? 0;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-line bg-canvas/40 px-3 py-2 text-xs">
+      <div className="flex items-center justify-between text-white/60">
+        <span className="text-[10px] uppercase tracking-wide">
+          Freight ±20% sensitivity
+        </span>
+        <span className="text-[10px] text-white/40">vs baseline</span>
+      </div>
+
+      <SweepRow
+        label="EBITDA"
+        cells={ebitdaRow}
+        baseline={ebitdaBase}
+        labels={grid.colLabels}
+        baselineIdx={baselineIdx}
+        // EBITDA falling is bad — flip the polarity so red = bad.
+        invertPolarity={false}
+      />
+      <SweepRow
+        label="Peak cash"
+        cells={peakCashRow}
+        baseline={peakBase}
+        labels={grid.colLabels}
+        baselineIdx={baselineIdx}
+        // Peak cash going up = bigger exposure = bad. Same polarity.
+        invertPolarity
+      />
+    </div>
+  );
+}
+
+function SweepRow({
+  label,
+  cells,
+  baseline,
+  labels,
+  baselineIdx,
+  invertPolarity,
+}: {
+  label: string;
+  cells: number[];
+  baseline: number;
+  labels: string[];
+  baselineIdx: number;
+  /** When true, an INCREASE vs baseline is treated as bad (e.g. peak cash). */
+  invertPolarity: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <div className="text-[10px] uppercase tracking-wide text-white/40">
+        {label}
+      </div>
+      <div className="flex items-stretch gap-px overflow-hidden rounded">
+        {cells.map((value, i) => {
+          const delta = baseline !== 0 ? (value - baseline) / Math.abs(baseline) : 0;
+          const adjusted = invertPolarity ? -delta : delta;
+          const tone =
+            i === baselineIdx
+              ? "bg-white/20 text-white"
+              : adjusted >= 0.05
+                ? "bg-good/20 text-good"
+                : adjusted <= -0.05
+                  ? "bg-bad/20 text-bad"
+                  : "bg-canvas/60 text-white/70";
+          return (
+            <div
+              key={i}
+              className={`flex flex-1 flex-col items-center px-1 py-1 text-[10px] tabular-nums ${tone}`}
+              title={`${labels[i]}: ${formatUsd(value)}`}
+            >
+              <span className="opacity-60">{labels[i]}</span>
+              <span className="font-semibold">{formatUsd(value)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function ParticipantBreakdown({
