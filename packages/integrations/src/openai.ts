@@ -1,13 +1,15 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import type { CostLedger } from "@vex/telemetry";
 import type { TenantId } from "@vex/domain";
-import { pricing, tokensToUsdMicros } from "./pricing.js";
+import { pricing, tokensToUsdMicros, unitsToUsdMicros } from "./pricing.js";
 
 export interface OpenAIDeps {
   apiKey: string;
   embeddingModel?: keyof typeof pricing.openai;
   /** Pinned realtime model. Defaults to the Sprint 9 target. */
   realtimeModel?: keyof typeof pricing.openaiRealtime;
+  /** Pinned transcribe model. Whisper-1 is the current default. */
+  transcribeModel?: keyof typeof pricing.openaiTranscribe;
   costLedger: CostLedger;
 }
 
@@ -49,12 +51,14 @@ export class OpenAIAdapter {
   private readonly apiKey: string;
   private readonly embeddingModel: keyof typeof pricing.openai;
   private readonly realtimeModel: keyof typeof pricing.openaiRealtime;
+  private readonly transcribeModel: keyof typeof pricing.openaiTranscribe;
 
   constructor(private readonly deps: OpenAIDeps) {
     this.client = new OpenAI({ apiKey: deps.apiKey });
     this.apiKey = deps.apiKey;
     this.embeddingModel = deps.embeddingModel ?? "text-embedding-3-small";
     this.realtimeModel = deps.realtimeModel ?? "gpt-4o-realtime-preview-2024-12-17";
+    this.transcribeModel = deps.transcribeModel ?? "whisper-1";
   }
 
   get realtimeModelId(): string {
@@ -205,6 +209,45 @@ export class OpenAIAdapter {
     }
 
     return (audioIn + audioOut + textIn + textOut) / 1_000_000;
+  }
+
+  /**
+   * Transcribe a short audio clip (e.g. chat voice-input) with Whisper.
+   * Returns the transcript + the duration OpenAI measured, and records
+   * the per-minute cost against the ledger.
+   */
+  async transcribe(args: {
+    tenantId: TenantId;
+    idempotencyKey: string;
+    audio: Buffer;
+    filename: string;
+    mimeType: string;
+  }): Promise<{ text: string; durationSeconds: number }> {
+    const file = await toFile(args.audio, args.filename, { type: args.mimeType });
+    const response = await this.client.audio.transcriptions.create({
+      model: this.transcribeModel,
+      file,
+      response_format: "verbose_json",
+    });
+    // verbose_json attaches a `duration` (seconds) field; the SDK's
+    // Transcription type doesn't surface it on the default union, so
+    // narrow through unknown.
+    const raw = response as unknown as { duration?: number };
+    const durationSeconds = typeof raw.duration === "number" ? raw.duration : 0;
+    const minutes = durationSeconds / 60;
+    const prices = pricing.openaiTranscribe[this.transcribeModel];
+    await this.deps.costLedger.record({
+      idempotencyKey: args.idempotencyKey,
+      tenantId: args.tenantId,
+      operation: "stt",
+      provider: "openai",
+      model: this.transcribeModel,
+      units: Math.max(1, Math.round(durationSeconds)),
+      unitKind: "audio_seconds",
+      costUsdMicros: unitsToUsdMicros(minutes, prices.usdPerMinute),
+      occurredAt: new Date(),
+    });
+    return { text: response.text, durationSeconds };
   }
 }
 

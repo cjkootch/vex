@@ -30,6 +30,13 @@ export const pricing = {
       textOutputUsdPerMillion: 20,
     },
   },
+  /** Whisper — metered per minute of audio transcribed. */
+  openaiTranscribe: {
+    "whisper-1": {
+      /** USD per minute. OpenAI bills in 0.1s increments. */
+      usdPerMinute: 0.006,
+    },
+  },
   /**
    * Third-party per-unit pricing. USD per unit (not per 1M). Used by
    * integrations that meter per message / minute / call / search

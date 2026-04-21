@@ -1,12 +1,15 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Inject,
   Param,
   Post,
+  Req,
   UseGuards,
 } from "@nestjs/common";
+import type { FastifyRequest } from "fastify";
 import { z } from "zod";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import { VoiceService } from "./voice.service.js";
@@ -87,6 +90,41 @@ export class VoiceController {
         : {}),
     });
     return { session_id: result.sessionId, status: result.status };
+  }
+
+  /**
+   * POST /voice/transcribe — one-shot Whisper transcription for short
+   * clips recorded in the chat composer's mic button. Accepts a single
+   * audio part via multipart/form-data; returns { text, duration_seconds }.
+   */
+  @Post("transcribe")
+  async transcribe(@Req() req: FastifyRequest): Promise<{
+    text: string;
+    duration_seconds: number;
+  }> {
+    if (!req.isMultipart()) {
+      throw new BadRequestException("expected multipart/form-data");
+    }
+    let body: Buffer | null = null;
+    let filename = "clip.webm";
+    let mimeType = "audio/webm";
+    for await (const part of req.parts()) {
+      if (part.type === "file" && part.fieldname === "audio") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of part.file) chunks.push(chunk as Buffer);
+        body = Buffer.concat(chunks);
+        if (part.filename) filename = part.filename;
+        if (part.mimetype) mimeType = part.mimetype;
+      }
+    }
+    if (!body) throw new BadRequestException("missing audio part");
+    const result = await this.voice.transcribe({
+      tenantId: this.tenant.tenantId,
+      audio: body,
+      filename,
+      mimeType,
+    });
+    return { text: result.text, duration_seconds: result.durationSeconds };
   }
 
   @Get("sessions/:id")
