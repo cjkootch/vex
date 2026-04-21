@@ -198,6 +198,17 @@ export const EnvSchema = z.object({
   RESEND_WEBHOOK_SECRET: z.string().min(1).optional(),
 
   /**
+   * Svix secret for the Resend Inbound webhook (replies + fresh
+   * inbound email parsed out of the MX-backed domain). Each Resend
+   * endpoint gets its own secret in the dashboard — distinct from
+   * RESEND_WEBHOOK_SECRET which signs outbound delivery events.
+   * Falls back to RESEND_WEBHOOK_SECRET at the module boundary when
+   * unset, so operators can reuse one secret across endpoints
+   * temporarily while they configure the Resend side.
+   */
+  RESEND_INBOUND_WEBHOOK_SECRET: z.string().min(1).optional(),
+
+  /**
    * HMAC-SHA256 shared secret for the VTC marketing-site chat webhook.
    * The website signs `${timestamp}.${rawBody}` with this secret and
    * delivers the hex digest in `X-VTC-Signature` + unix seconds in

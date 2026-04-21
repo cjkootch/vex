@@ -18,10 +18,12 @@ import { withTenant, type Db, type RawEventRepository } from "@vex/db";
 import type { ResendVerifier } from "./resend-verifier.js";
 import type { TwilioVerifier } from "./twilio-verifier.js";
 import type { WebsiteChatVerifier } from "./website-chat-verifier.js";
+import { translateResendInbound } from "./resend-inbound-translator.js";
 import {
   DB_CLIENT,
   NORMALIZATION_QUEUE,
   RAW_EVENT_REPO,
+  RESEND_INBOUND_VERIFIER,
   RESEND_VERIFIER,
   TWILIO_VERIFIER,
   WEBHOOK_TENANT_RESOLVER,
@@ -40,6 +42,8 @@ export class WebhooksController {
     @Inject(NORMALIZATION_QUEUE)
     private readonly queue: Queue<NormalizationJobData>,
     @Inject(RESEND_VERIFIER) private readonly resend: ResendVerifier,
+    @Inject(RESEND_INBOUND_VERIFIER)
+    private readonly resendInbound: ResendVerifier,
     @Inject(TWILIO_VERIFIER) private readonly twilio: TwilioVerifier,
     @Inject(WEBSITE_CHAT_VERIFIER)
     private readonly websiteChat: WebsiteChatVerifier,
@@ -106,6 +110,82 @@ export class WebhooksController {
         svixId,
         headersForStorage,
         payload,
+        checksum,
+      ),
+    );
+
+    if (result.isNew) {
+      await addNormalizationJob(this.queue, {
+        raw_event_id: result.id,
+        tenant_id: tenantId,
+      });
+    }
+
+    void reply;
+  }
+
+  /**
+   * POST /webhooks/resend-inbound — replies + fresh inbound emails from
+   * the Resend Inbound route. Same Svix signing as /webhooks/resend
+   * (different secret — each Resend endpoint has its own). Translates
+   * Resend's native shape to the canonical `email.received` payload
+   * the provider-agnostic EmailInboundNormalizer already consumes, so
+   * touchpoint/event writes flow through the same pipeline as the
+   * generic /webhooks/email-inbound endpoint. Source-typed as
+   * `email_inbound` so the normalizer registry picks it up without
+   * needing a Resend-specific branch.
+   */
+  @Post("resend-inbound")
+  @HttpCode(204)
+  async resendInboundWebhook(
+    @Req() req: RawBodyRequest<FastifyRequest>,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<void> {
+    const rawBody = req.rawBody;
+    if (!rawBody) throw new BadRequestException("missing_body");
+
+    const verdict = this.resendInbound.verify(req.headers, rawBody);
+    if (!verdict.ok) {
+      this.log.warn(`resend-inbound webhook rejected: ${verdict.reason}`);
+      throw new BadRequestException("invalid_signature");
+    }
+
+    let resendPayload: Record<string, unknown>;
+    try {
+      resendPayload = JSON.parse(rawBody.toString("utf8")) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      throw new BadRequestException("invalid_json");
+    }
+
+    const translated = translateResendInbound(resendPayload);
+    if ("error" in translated) {
+      this.log.warn(`resend-inbound translation failed: ${translated.error}`);
+      throw new BadRequestException(translated.error);
+    }
+
+    const tenantId = this.resolveTenant("resend_inbound", translated);
+    const checksum = sha256Hex(rawBody);
+    const headersForStorage = pickHeaders(req.headers, [
+      "svix-id",
+      "svix-timestamp",
+      "svix-signature",
+      "content-type",
+    ]);
+
+    // Source-type = email_inbound so the existing EmailInboundNormalizer
+    // handles it. provider_event_id = message_id keeps the raw_events
+    // idempotency in lockstep with the normalizer's event-layer key.
+    const result = await withTenant(this.db, tenantId, async (tx) =>
+      this.rawEvents.insertIfNotExists(
+        tx,
+        tenantId,
+        "email_inbound",
+        translated.message_id,
+        headersForStorage,
+        translated as unknown as Record<string, unknown>,
         checksum,
       ),
     );
