@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { loadEnv } from "@vex/config";
 import { createId } from "@vex/domain";
 import * as schema from "./schema/index.js";
+import { caribbeanPortSeed } from "./seed-caribbean-ports.js";
 import {
   calculateFuelDeal,
   type FuelDealInputs,
@@ -115,6 +116,8 @@ async function main(): Promise<void> {
     await reset("fuel_deal_counterparty_scores");
     await reset("fuel_deals");
     await reset("fuel_market_rates");
+    await reset("port_events");
+    await reset("ports");
     await reset("touchpoints");
     await reset("summaries");
     await reset("events");
@@ -661,6 +664,15 @@ async function main(): Promise<void> {
         metadata: { from_raw_event: SEED_RAW_EVENT_IDS[i] },
       })),
     );
+
+    // -----------------------------------------------------------------------
+    // 0020_ports — Caribbean + US-gulf port seed. Hand-curated specs
+    // for the 17 ports VTC trades most often. Inserted before fuel
+    // deals so origin_port_id / destination_port_id FKs can resolve.
+    // Row shape lives in seed-caribbean-ports.ts (callable helper) so
+    // the seed data is testable in isolation.
+    // -----------------------------------------------------------------------
+    await db.insert(schema.ports).values(caribbeanPortSeed(tenantId));
 
     // -----------------------------------------------------------------------
     // Sprint 11 — Deal 1 (VTC-2026-001)

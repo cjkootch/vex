@@ -55,6 +55,8 @@ export type {
 export type { Vessel, NewVessel } from "./schema/vessels.js";
 export type { FreightRate, NewFreightRate } from "./schema/freight-rates.js";
 export type { VesselClass } from "./schema/enums.js";
+export type { Port, NewPort } from "./schema/ports.js";
+export type { PortEvent, NewPortEvent } from "./schema/port-events.js";
 export type {
   EmbeddingChunk,
   NewEmbeddingChunk,

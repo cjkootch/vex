@@ -21,6 +21,7 @@ import {
 import { organizations } from "./organizations.js";
 import { contacts } from "./contacts.js";
 import { vessels } from "./vessels.js";
+import { ports } from "./ports.js";
 import { leads } from "./leads.js";
 import { campaigns } from "./campaigns.js";
 import { users } from "./users.js";
@@ -191,6 +192,19 @@ export const fuelDeals = pgTable(
     /** "voyage" | "time" | "spot". Text — CP terminology varies. */
     charterType: text("charter_type"),
 
+    /**
+     * Port intelligence (0020_ports). ULID-linked origin + destination
+     * ports. Coexist with the legacy text `originPort` / `destinationPort`
+     * columns so the migration from free-text strings can roll forward
+     * gradually.
+     */
+    originPortId: text("origin_port_id").references(() => ports.id, {
+      onDelete: "set null",
+    }),
+    destinationPortId: text("destination_port_id").references(() => ports.id, {
+      onDelete: "set null",
+    }),
+
     notes: text("notes"),
     internalNotes: text("internal_notes"),
     createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
@@ -207,6 +221,10 @@ export const fuelDeals = pgTable(
     createdAtIdx: index("fuel_deals_created_at_idx").on(t.createdAt),
     dealRefIdx: index("fuel_deals_deal_ref_idx").on(t.tenantId, t.dealRef),
     vesselIdx: index("fuel_deals_vessel_idx").on(t.vesselId),
+    originPortIdx: index("fuel_deals_origin_port_idx").on(t.originPortId),
+    destinationPortIdx: index("fuel_deals_destination_port_idx").on(
+      t.destinationPortId,
+    ),
   }),
 );
 
