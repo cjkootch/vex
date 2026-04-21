@@ -24,6 +24,9 @@ import {
   type EventRepository,
   type OfacScreenRepository,
   type OrganizationRepository,
+  type Port,
+  type PortEvent,
+  type PortRepository,
 } from "@vex/db";
 import { JwtAuthGuard, RequireRole, RolesGuard, TenantContext } from "../auth/index.js";
 import { AdminService } from "./admin.service.js";
@@ -34,6 +37,7 @@ import {
   ADMIN_INTEGRATIONS_STATUS,
   ADMIN_OFAC_SCREENS_REPO,
   ADMIN_ORGANIZATIONS_REPO,
+  ADMIN_PORTS_REPO,
 } from "./tokens.js";
 import type { IntegrationStatus } from "./admin.module.js";
 
@@ -70,6 +74,8 @@ export class AdminController {
     private readonly organizations: OrganizationRepository,
     @Inject(ADMIN_AGENTS_QUEUE)
     private readonly agentsQueue: Queue<AgentJobData>,
+    @Inject(ADMIN_PORTS_REPO)
+    private readonly portsRepo: PortRepository,
   ) {}
 
   @Get("settings")
@@ -408,8 +414,243 @@ export class AdminController {
     });
     return { ok: true };
   }
+
+  // ===========================================================================
+  // Ports admin (0020_ports — T7)
+  // ===========================================================================
+
+  /**
+   * GET /admin/ports — every port in the tenant, alphabetical. Feeds
+   * the Admin → Ports tab table.
+   */
+  @Get("ports")
+  async listPorts(): Promise<{ ports: Port[] }> {
+    const rows = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.portsRepo.listAll(tx),
+    );
+    return { ports: rows };
+  }
+
+  /**
+   * POST /admin/ports — create a new port. Idempotent by
+   * (tenant, unlocode) — a duplicate throws a clean BadRequest so
+   * the UI can surface "already exists" without a 500.
+   */
+  @Post("ports")
+  @HttpCode(201)
+  async createPort(@Body() raw: unknown): Promise<{ port: Port }> {
+    const parsed = CreatePortBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const input = parsed.data;
+    // Normalise: Zod's nullable().optional() yields T | null | undefined
+    // but PortCreate wants T | null. Convert undefined → null across
+    // the nullable fields so the repo's explicit shape checks pass.
+    const create = {
+      unlocode: input.unlocode,
+      name: input.name,
+      countryCode: input.countryCode,
+      region: input.region,
+      lat: input.lat ?? null,
+      lng: input.lng ?? null,
+      maxDraftM: input.maxDraftM ?? null,
+      maxLoaM: input.maxLoaM ?? null,
+      maxBeamM: input.maxBeamM ?? null,
+      maxDwtMt: input.maxDwtMt ?? null,
+      customsClearanceDaysMedian: input.customsClearanceDaysMedian ?? null,
+      portDaysMedian: input.portDaysMedian ?? null,
+      tariffNotes: input.tariffNotes ?? null,
+      restrictedCargoNotes: input.restrictedCargoNotes ?? null,
+      workingHours: input.workingHours ?? null,
+      localAgentOrgId: input.localAgentOrgId ?? null,
+      ...(input.fuelTerminal !== undefined
+        ? { fuelTerminal: input.fuelTerminal }
+        : {}),
+      ...(input.containerTerminal !== undefined
+        ? { containerTerminal: input.containerTerminal }
+        : {}),
+      ...(input.bulkTerminal !== undefined
+        ? { bulkTerminal: input.bulkTerminal }
+        : {}),
+      ...(input.reeferCapable !== undefined
+        ? { reeferCapable: input.reeferCapable }
+        : {}),
+      ...(input.congestionFactor !== undefined
+        ? { congestionFactor: input.congestionFactor }
+        : {}),
+      ...(input.pilotageRequired !== undefined
+        ? { pilotageRequired: input.pilotageRequired }
+        : {}),
+    };
+    const port = await withTenant(
+      this.db,
+      this.tenant.tenantId,
+      async (tx) => {
+        const existing = await this.portsRepo.findByUnlocode(tx, input.unlocode);
+        if (existing) {
+          throw new BadRequestException(
+            `port with UNLOCODE ${input.unlocode} already exists`,
+          );
+        }
+        return this.portsRepo.create(tx, this.tenant.tenantId, create);
+      },
+    );
+    return { port };
+  }
+
+  @Get("ports/:id")
+  async getPort(@Param("id") id: string): Promise<{
+    port: Port;
+    events: PortEvent[];
+  }> {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const port = await this.portsRepo.findById(tx, id);
+      if (!port) throw new NotFoundException(`port ${id} not found`);
+      const events = await this.portsRepo.listActiveEvents(tx, id);
+      return { port, events };
+    });
+  }
+
+  @Patch("ports/:id")
+  async updatePort(
+    @Param("id") id: string,
+    @Body() raw: unknown,
+  ): Promise<{ port: Port }> {
+    const parsed = UpdatePortBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    // Strip undefineds so PortRepository.update doesn't overwrite
+    // untouched columns. lastVerifiedAt is bumped when the payload
+    // includes it or the caller explicitly opts in via verify=true.
+    const patchRaw = parsed.data;
+    const patch: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(patchRaw)) {
+      if (k === "verify") continue;
+      if (v !== undefined) patch[k] = v;
+    }
+    if (patchRaw.verify === true) {
+      patch["lastVerifiedAt"] = new Date();
+    }
+    const port = await withTenant(
+      this.db,
+      this.tenant.tenantId,
+      async (tx) => this.portsRepo.update(tx, id, patch),
+    );
+    return { port };
+  }
+
+  @Get("port-events")
+  async listPortEvents(
+    @Query("active") activeRaw?: string,
+  ): Promise<{ events: PortEvent[] }> {
+    const activeOnly = activeRaw !== "false";
+    const events = await withTenant(
+      this.db,
+      this.tenant.tenantId,
+      async (tx) =>
+        activeOnly
+          ? this.portsRepo.listActiveEvents(tx)
+          : this.portsRepo.listActiveEvents(tx), // only active for now; extend later
+    );
+    return { events };
+  }
+
+  @Post("port-events")
+  @HttpCode(201)
+  async createPortEvent(
+    @Body() raw: unknown,
+  ): Promise<{ event: PortEvent }> {
+    const parsed = CreatePortEventBody.safeParse(raw);
+    if (!parsed.success) throw new BadRequestException(parsed.error.message);
+    const input = parsed.data;
+    const event = await withTenant(
+      this.db,
+      this.tenant.tenantId,
+      async (tx) => {
+        const port = await this.portsRepo.findById(tx, input.portId);
+        if (!port)
+          throw new NotFoundException(`port ${input.portId} not found`);
+        return this.portsRepo.insertEvent(tx, this.tenant.tenantId, {
+          portId: input.portId,
+          eventType: input.eventType,
+          severity: input.severity ?? "info",
+          startsAt: new Date(input.startsAt),
+          endsAt: input.endsAt ? new Date(input.endsAt) : null,
+          title: input.title,
+          body: input.body ?? null,
+          sourceUrl: input.sourceUrl ?? null,
+        });
+      },
+    );
+    return { event };
+  }
 }
 
 const OfacClearBody = z.object({
   reason: z.string().min(1).max(1000),
+});
+
+// ---------------------------------------------------------------------------
+// Ports admin — Zod bodies
+// ---------------------------------------------------------------------------
+
+const UNLOCODE_RE = /^[A-Z]{2}[A-Z0-9]{3}$/;
+
+const PortCommonFields = {
+  name: z.string().min(1).max(200),
+  countryCode: z.string().length(2).toUpperCase(),
+  region: z.string().min(1).max(60),
+  lat: z.number().min(-90).max(90).nullable().optional(),
+  lng: z.number().min(-180).max(180).nullable().optional(),
+  maxDraftM: z.number().positive().nullable().optional(),
+  maxLoaM: z.number().positive().nullable().optional(),
+  maxBeamM: z.number().positive().nullable().optional(),
+  maxDwtMt: z.number().positive().nullable().optional(),
+  fuelTerminal: z.boolean().optional(),
+  containerTerminal: z.boolean().optional(),
+  bulkTerminal: z.boolean().optional(),
+  reeferCapable: z.boolean().optional(),
+  customsClearanceDaysMedian: z.number().nonnegative().nullable().optional(),
+  portDaysMedian: z.number().nonnegative().nullable().optional(),
+  congestionFactor: z.number().positive().max(5).optional(),
+  tariffNotes: z.string().max(2000).nullable().optional(),
+  restrictedCargoNotes: z.string().max(2000).nullable().optional(),
+  workingHours: z.string().max(60).nullable().optional(),
+  pilotageRequired: z.boolean().optional(),
+  localAgentOrgId: z.string().min(1).nullable().optional(),
+} as const;
+
+const CreatePortBody = z.object({
+  unlocode: z
+    .string()
+    .transform((v) => v.trim().toUpperCase())
+    .refine((v) => UNLOCODE_RE.test(v), {
+      message: "unlocode must match [A-Z]{2}[A-Z0-9]{3}",
+    }),
+  ...PortCommonFields,
+});
+
+const UpdatePortBody = z
+  .object({
+    ...PortCommonFields,
+    /** Bump lastVerifiedAt on save. */
+    verify: z.boolean().optional(),
+  })
+  .partial();
+
+const CreatePortEventBody = z.object({
+  portId: z.string().min(1),
+  eventType: z.enum([
+    "closure",
+    "congestion",
+    "strike",
+    "tariff_change",
+    "regulatory",
+  ]),
+  severity: z.enum(["info", "warn", "critical"]).optional(),
+  /** ISO-8601 timestamp. */
+  startsAt: z.string().min(1),
+  /** ISO-8601 timestamp; omit for ongoing. */
+  endsAt: z.string().min(1).nullable().optional(),
+  title: z.string().min(1).max(200),
+  body: z.string().max(4000).nullable().optional(),
+  sourceUrl: z.string().url().nullable().optional(),
 });

@@ -395,6 +395,7 @@ async function bootstrap(): Promise<void> {
         ],
         ofacScreens: ofacScreenRepository,
         organizations: organizationRepository,
+        ports: portRepository,
         agentsQueue: queues.agents,
       }),
       ...(twilio && twilioVerifier

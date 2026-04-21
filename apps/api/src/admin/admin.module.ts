@@ -6,6 +6,7 @@ import type {
   EventRepository,
   OfacScreenRepository,
   OrganizationRepository,
+  PortRepository,
   WorkspaceRepository,
 } from "@vex/db";
 import { AdminController } from "./admin.controller.js";
@@ -18,6 +19,7 @@ import {
   ADMIN_INTEGRATIONS_STATUS,
   ADMIN_OFAC_SCREENS_REPO,
   ADMIN_ORGANIZATIONS_REPO,
+  ADMIN_PORTS_REPO,
   ADMIN_WORKSPACES_REPO,
 } from "./tokens.js";
 
@@ -43,6 +45,7 @@ export interface AdminModuleConfig {
   integrations: IntegrationStatus[];
   ofacScreens: OfacScreenRepository;
   organizations: OrganizationRepository;
+  ports: PortRepository;
   agentsQueue: Queue<AgentJobData>;
 }
 
@@ -73,6 +76,7 @@ export class AdminModule {
           provide: ADMIN_AGENTS_QUEUE,
           useFactory: () => config.agentsQueue,
         },
+        { provide: ADMIN_PORTS_REPO, useFactory: () => config.ports },
         AdminService,
       ],
     };

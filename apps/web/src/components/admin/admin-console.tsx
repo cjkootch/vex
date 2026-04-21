@@ -8,6 +8,7 @@ import { CostLedgerTab } from "./cost-ledger-tab";
 import { RolloutTab } from "./rollout-tab";
 import { EvalsTab } from "./evals-tab";
 import { OfacTab } from "./ofac-tab";
+import { PortsTab } from "./ports-tab";
 
 export interface WorkspaceSettings {
   source_priority: string[];
@@ -18,7 +19,7 @@ export interface WorkspaceSettings {
   sharing_enabled?: boolean;
 }
 
-type TabKey = "agents" | "health" | "cost" | "rollout" | "evals" | "ofac";
+type TabKey = "agents" | "health" | "cost" | "rollout" | "evals" | "ofac" | "ports";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "agents", label: "Agents" },
@@ -27,6 +28,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "rollout", label: "Rollout" },
   { key: "evals", label: "Evals" },
   { key: "ofac", label: "OFAC" },
+  { key: "ports", label: "Ports" },
 ];
 
 /**
@@ -151,6 +153,7 @@ export function AdminConsole() {
       ) : null}
       {activeTab === "evals" ? <EvalsTab /> : null}
       {activeTab === "ofac" ? <OfacTab /> : null}
+      {activeTab === "ports" ? <PortsTab /> : null}
     </main>
   );
 }
