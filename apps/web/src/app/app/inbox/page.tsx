@@ -314,34 +314,33 @@ function TouchpointRow({
     <li
       data-testid="inbox-row"
       data-kind="touchpoint"
-      className="flex items-center justify-between gap-3 rounded-lg border border-line bg-muted/20 px-3 py-2.5"
     >
-      <div className="flex min-w-0 items-center gap-3">
-        <ChannelIcon group={item.channelGroup} />
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm text-white">
-            <span className="capitalize">{item.channelGroup}</span>
-            {item.direction && <DirectionArrow direction={item.direction} />}
-            {verb && <StatusBadge status={verb} />}
-          </div>
-          {item.preview && (
-            <div className="mt-0.5 truncate text-xs text-white/60">
-              {item.preview}
+      <Link
+        href={`/app/inbox/t/${item.id}`}
+        className="flex items-center justify-between gap-3 rounded-lg border border-line bg-muted/20 px-3 py-2.5 hover:bg-muted/40"
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <ChannelIcon group={item.channelGroup} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm text-white">
+              <span className="capitalize">{item.channelGroup}</span>
+              {item.direction && <DirectionArrow direction={item.direction} />}
+              {verb && <StatusBadge status={verb} />}
             </div>
-          )}
+            {item.preview && (
+              <div className="mt-0.5 truncate text-xs text-white/60">
+                {item.preview}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
-      <div className="flex flex-shrink-0 items-center gap-3 text-xs text-white/50">
-        <span>{relTime(item.occurredAt)}</span>
-        {item.contactId && (
-          <Link
-            href={`/app/contacts/${item.contactId}`}
-            className="rounded-md border border-line px-2 py-1 text-white/70 hover:bg-muted/40"
-          >
-            Contact
-          </Link>
-        )}
-      </div>
+        <div className="flex flex-shrink-0 items-center gap-3 text-xs text-white/50">
+          <span>{relTime(item.occurredAt)}</span>
+          <span className="rounded-md border border-line px-2 py-1 text-white/70">
+            Open →
+          </span>
+        </div>
+      </Link>
     </li>
   );
 }

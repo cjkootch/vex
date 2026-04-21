@@ -35,6 +35,16 @@ export class TouchpointRepository {
     return row;
   }
 
+  /**
+   * Single-row lookup by id. Used by the inbox drill-in view so
+   * operators can read the full email body / sms payload for a row
+   * they opened from the list. RLS scopes to the active tenant.
+   */
+  async findById(tx: Tx, id: string): Promise<Touchpoint | null> {
+    const rows = await tx.select().from(touchpoints).where(eq(touchpoints.id, id));
+    return rows[0] ?? null;
+  }
+
   /** Touchpoints with `occurred_at >= since`. Used by DailyBriefAgent. */
   async listSince(tx: Tx, since: Date, limit = 200): Promise<Touchpoint[]> {
     return tx
