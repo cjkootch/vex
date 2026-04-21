@@ -319,25 +319,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      - name: Run eval suite against the PR branch
-        if: ${{ needs.preflight.outputs.has_anthropic == 'true' }}
-        # Advisory: the eval runner's own comment notes ~11 fixtures
-        # are meta/behavioral with retrieval hit-rate at zero, so the
-        # 0.55 gate fails by design today. Don't fail the whole
-        # create-and-migrate job on it — the branch + migrations were
-        # the real correctness check. Eval result still surfaces in
-        # logs.
-        continue-on-error: true
-        env:
-          APPLICATION_DATABASE_URL: ${{ env.APPLICATION_DATABASE_URL }}
-          MIGRATION_DATABASE_URL: ${{ env.MIGRATION_DATABASE_URL }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          REDIS_URL: redis://localhost:6379
-          S3_BUCKET: vex-eval
-          S3_ACCESS_KEY_ID: test
-          S3_SECRET_ACCESS_KEY: test
-        run: pnpm eval:run
+      # Eval suite deliberately removed from this job — ci.yml already
+      # runs it once per PR against NEON_DEV_URL. Running it a second
+      # time here doubled Claude-token spend on heavy-merge days
+      # (~15M tokens/day on peak) for zero added signal, since the
+      # eval is advisory anyway (gate is 0.55 and ~11 fixtures are
+      # broken by design). If we want per-PR-branch eval back, gate
+      # it with a workflow_dispatch trigger instead of firing on
+      # every PR sync.
 
       - name: Comment branch info on PR
         uses: actions/github-script@v7
