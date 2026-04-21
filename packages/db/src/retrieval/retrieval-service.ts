@@ -1,4 +1,15 @@
-import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import {
   approxTokens,
   packTokens,
@@ -325,6 +336,11 @@ export class RetrievalService {
         and(
           inArray(contacts.orgId, [...orgIds]),
           eq(contacts.status, "active"),
+          // Merged tombstones flip status to 'archived' on merge,
+          // so status='active' alone catches most of them — but
+          // the explicit null check guards against any row where
+          // the merge skipped the status flip.
+          isNull(contacts.mergedIntoContactId),
         ),
       )
       .limit(200);
@@ -1134,10 +1150,25 @@ export class RetrievalService {
           : Promise.resolve([]),
       patterns.length > 0 && !mentionsContacts
         ? contactQuery
-            .where(or(...patterns.map((p) => ilike(contacts.fullName, p))))
+            // Active + not-merged: operator-removed / merged-away
+            // contacts shouldn't leak back through the name-match
+            // fallback. Scope resolution applies the same filters.
+            .where(
+              and(
+                eq(contacts.status, "active"),
+                isNull(contacts.mergedIntoContactId),
+                or(...patterns.map((p) => ilike(contacts.fullName, p))),
+              ),
+            )
             .limit(contactLimit)
         : mentionsContacts
           ? contactQuery
+              .where(
+                and(
+                  eq(contacts.status, "active"),
+                  isNull(contacts.mergedIntoContactId),
+                ),
+              )
               .orderBy(desc(contacts.updatedAt))
               .limit(contactLimit)
           : Promise.resolve([]),

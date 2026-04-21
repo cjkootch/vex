@@ -1,4 +1,4 @@
-import { ilike, or } from "drizzle-orm";
+import { and, eq, ilike, isNull, or } from "drizzle-orm";
 import type { Tx } from "../client.js";
 import { organizations } from "../schema/organizations.js";
 import { contacts } from "../schema/contacts.js";
@@ -27,17 +27,40 @@ export class ScopeResolver {
     const scope: ResolvedScope = {};
 
     if (tokens.length > 0) {
+      // Orgs — active only. Archived / inactive orgs that happen to
+      // match the tokens shouldn't surface in chat scope; operators
+      // archive for a reason.
       const orgRows = await tx
         .select({ id: organizations.id })
         .from(organizations)
-        .where(or(...tokens.map((t) => ilike(organizations.legalName, `%${t}%`))))
+        .where(
+          and(
+            eq(organizations.status, "active"),
+            or(
+              ...tokens.map((t) =>
+                ilike(organizations.legalName, `%${t}%`),
+              ),
+            ),
+          ),
+        )
         .limit(20);
       if (orgRows.length > 0) scope.org_ids = orgRows.map((r) => r.id);
 
+      // Contacts — active AND not merged. Tombstoned rows (status =
+      // archived, mergedIntoContactId set) from the contact.merge
+      // action must not leak back into the chat disambiguation list.
       const contactRows = await tx
         .select({ id: contacts.id })
         .from(contacts)
-        .where(or(...tokens.map((t) => ilike(contacts.fullName, `%${t}%`))))
+        .where(
+          and(
+            eq(contacts.status, "active"),
+            isNull(contacts.mergedIntoContactId),
+            or(
+              ...tokens.map((t) => ilike(contacts.fullName, `%${t}%`)),
+            ),
+          ),
+        )
         .limit(20);
       if (contactRows.length > 0) scope.contact_ids = contactRows.map((r) => r.id);
 
