@@ -89,3 +89,9 @@ export {
   type OfacScreenInsert,
   type OfacScreenStatus,
 } from "./ofac-screen-repository.js";
+export {
+  VesselRepository,
+  type VesselCreate,
+  type VesselListFilter,
+  type VesselUpdate,
+} from "./vessel-repository.js";
