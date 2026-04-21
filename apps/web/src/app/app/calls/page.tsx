@@ -362,7 +362,7 @@ function ActiveRow({ run }: { run: AgentRunItem }) {
         {run.status}
       </span>
       <Link
-        href={`/app/calls/${encodeURIComponent(run.id)}`}
+        href={`/app/calls/${encodeURIComponent(`outbound-call-${run.id}`)}`}
         className="text-xs text-white/60 hover:text-white"
       >
         Details →
