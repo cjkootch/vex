@@ -73,7 +73,12 @@ export class EmailInboundNormalizer {
     };
 
     await this.deps.touchpoints.insert(this.deps.tx, raw.tenantId, {
-      channel: "email",
+      // Mirror the outbound naming (`email.sent`) so the Inbox
+      // channelGroupFor classifier and timeline status-badge split
+      // work identically on inbound + outbound rows. A bare "email"
+      // fell through to `channelGroup = "other"` in the inbox UI
+      // because the classifier keys off `startsWith("email.")`.
+      channel: "email.received",
       actor: "email_inbound",
       occurredAt,
       contactId: contact?.id ?? null,
@@ -94,10 +99,15 @@ export class EmailInboundNormalizer {
         objectId: payload.message_id,
         occurredAt,
         idempotencyKey: `email.received:${payload.message_id}`,
+        // preview + from land in the event metadata so the contact
+        // Activity tab can render subject/preview/from inline without
+        // a separate touchpoint fetch — the ActivityTimeline only
+        // reads events, not touchpoints.
         metadata: {
           from: fromAddress,
           ...(payload.in_reply_to ? { in_reply_to: payload.in_reply_to } : {}),
           ...(payload.subject ? { subject: payload.subject } : {}),
+          ...(preview ? { preview } : {}),
           matched_contact: contact?.id ?? null,
         },
       },
