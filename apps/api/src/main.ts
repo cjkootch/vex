@@ -72,6 +72,7 @@ import { VoiceStreamServer } from "./calls/voice-stream-server.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
 import { VesselsModule } from "./vessels/vessels.module.js";
+import { PortsModule } from "./ports/ports.module.js";
 import { LeadsModule } from "./leads/leads.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { MarketingModule } from "./marketing/marketing.module.js";
@@ -302,6 +303,7 @@ async function bootstrap(): Promise<void> {
         ports: portRepository,
       }),
       vessels: VesselsModule.register({ db, vessels: vesselRepository }),
+      ports: PortsModule.register({ db, ports: portRepository }),
       leads: LeadsModule.register({ db }),
       events: EventsModule.register({ db }),
       marketing: MarketingModule.register({
