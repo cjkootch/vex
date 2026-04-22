@@ -141,7 +141,8 @@ const ITEM_STRATEGY: NavItem = {
   href: "/app/strategy",
   label: "Strategy",
   matchKey: "/app/strategy",
-  iconPath: "M12 2l4 4-4 4M12 22l-4-4 4-4M2 12l4-4 4 4M22 12l-4 4-4-4",
+  iconPath:
+    "M12 21a9 9 0 100-18 9 9 0 000 18zM15.5 8.5l-2 5-5 2 2-5 5-2z",
 };
 const ITEM_ADMIN: NavItem = {
   // Sprint-13 admin console. Non-owners get a 403-style denied page
