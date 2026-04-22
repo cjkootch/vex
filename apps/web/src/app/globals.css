@@ -4,20 +4,128 @@
 
 :root {
   color-scheme: dark;
+  /* ---------------------------------------------------------------
+   * Base typography. Kept small and deliberate — we use Tailwind
+   * tokens (`text-display`, `text-title`, `text-eyebrow`) for every
+   * heading so the scale is authored, not ad-hoc. The numeric
+   * variants let dense data tables feel authored without wrapping
+   * every value in a component.
+   * ------------------------------------------------------------- */
+  --ff-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  --ff-mono: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
 }
 
 html,
 body {
-  background: #0a0a0c;
+  background: #07080b;
   color: #f5f5f7;
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    "Helvetica Neue",
-    Arial,
-    sans-serif;
+  font-family: var(--ff-sans);
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings:
+    "cv11" on,
+    /* single-story a */ "ss01" on,
+    /* alternate 1 / 4 for legibility in dense numerics */ "calt" on;
+}
+
+/* -----------------------------------------------------------------
+ * Numeric value utility — tabular, monospace-ish presentation for
+ * deal refs, volumes, timestamps, prices. Readers can scan a column
+ * of these without the proportional-jitter that Inter gives
+ * numbers by default.
+ * --------------------------------------------------------------- */
+@layer utilities {
+  .num {
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .num-mono {
+    font-family: var(--ff-mono);
+    font-variant-numeric: tabular-nums slashed-zero;
+    letter-spacing: 0;
+  }
+
+  /* Reserved AI-content surface. Subtle violet wash plus a soft
+   * top-edge to suggest "this came from Vex" without tilting into
+   * decoration. Paired with border-intel/30 most of the time. */
+  .surface-intel {
+    background:
+      linear-gradient(
+        135deg,
+        rgba(124, 92, 255, 0.1) 0%,
+        rgba(124, 92, 255, 0.02) 45%,
+        rgba(22, 24, 31, 0.9) 100%
+      ),
+      #16181f;
+    border: 1px solid rgba(124, 92, 255, 0.25);
+  }
+
+  /* Quiet hairline separator between rows inside the same surface.
+   * Lighter than the default `line` token so an operator reads the
+   * group as one unit, not a list of framed boxes. */
+  .hairline-b {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+  .hairline-t {
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  /* Hover lift for cards — a 1px translate + shadow upgrade. Calm,
+   * not bouncy. Use sparingly; lists of 20 cards do NOT get this. */
+  .hover-lift {
+    transition:
+      transform 160ms cubic-bezier(0.25, 1, 0.5, 1),
+      box-shadow 160ms cubic-bezier(0.25, 1, 0.5, 1),
+      border-color 160ms cubic-bezier(0.25, 1, 0.5, 1);
+  }
+  .hover-lift:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 1px 0 0 rgba(255, 255, 255, 0.05) inset,
+      0 6px 16px -6px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* -----------------------------------------------------------------
+ * Scrollbar styling. On macOS the default is fine; Windows / Linux
+ * gets a dark narrow bar so tables don't bleed a chrome-gray strip.
+ * --------------------------------------------------------------- */
+@media (pointer: fine) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.12);
+    background-clip: padding-box;
+  }
+}
+
+/* -----------------------------------------------------------------
+ * Focus ring. One canonical treatment across every button, link,
+ * and input: 2px accent-tinted glow + no layout shift.
+ * --------------------------------------------------------------- */
+:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px #07080b,
+    0 0 0 4px rgba(124, 92, 255, 0.55);
+  border-radius: inherit;
+}
+
+/* -----------------------------------------------------------------
+ * Selection. Accent, legible, operator-safe.
+ * --------------------------------------------------------------- */
+::selection {
+  background: rgba(124, 92, 255, 0.45);
+  color: #ffffff;
 }

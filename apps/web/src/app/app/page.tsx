@@ -274,17 +274,20 @@ function AppHomeInner() {
 function Hero({ brief }: { brief: DailyBrief }) {
   const generatedAt = new Date(brief.generatedAt);
   return (
-    <section className="flex flex-wrap items-start justify-between gap-6">
+    <section className="flex flex-wrap items-end justify-between gap-6 border-b border-line-soft pb-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-white">
+        <div className="text-eyebrow text-accent-strong">Morning brief</div>
+        <h1 className="mt-1 text-display text-text-primary">
           {brief.greeting}
         </h1>
-        <p className="mt-1 text-xs text-white/40">
+        <p className="mt-1.5 text-sm text-text-muted">
           Updated{" "}
-          {generatedAt.toLocaleTimeString(undefined, {
-            hour: "numeric",
-            minute: "2-digit",
-          })}
+          <span className="num-mono text-text-secondary">
+            {generatedAt.toLocaleTimeString(undefined, {
+              hour: "numeric",
+              minute: "2-digit",
+            })}
+          </span>
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -310,11 +313,11 @@ function StatPill({
 }) {
   const toneClass =
     tone === "warning"
-      ? "border-amber-500/60 bg-amber-500/10 text-amber-200"
-      : "border-line bg-muted/40 text-white/70";
+      ? "border-amber-500/50 bg-amber-500/10 text-amber-200"
+      : "border-line-soft bg-surface-2/80 text-text-secondary";
   return (
     <span
-      className={`rounded-full border px-3 py-1 text-xs ${toneClass}`}
+      className={`num rounded-full border px-3 py-1 text-xs ${toneClass}`}
     >
       {label}
     </span>
@@ -340,16 +343,14 @@ function Section({
       : tone === "warning"
         ? "text-amber-300"
         : dim
-          ? "text-white/40"
-          : "text-white";
+          ? "text-text-muted"
+          : "text-text-primary";
   return (
     <section>
       <header className="mb-3 flex items-baseline gap-2">
-        <h2 className={`text-sm font-semibold uppercase tracking-wider ${headerTone}`}>
-          {title}
-        </h2>
+        <h2 className={`text-eyebrow ${headerTone}`}>{title}</h2>
         {typeof count === "number" && (
-          <span className="text-xs text-white/40">· {count}</span>
+          <span className="num text-xs text-text-muted">· {count}</span>
         )}
       </header>
       {children}
@@ -369,13 +370,22 @@ function FocusBand({ focus }: { focus: string }) {
   return (
     <Link
       href={`/app/chat?ask=${encodeURIComponent(ask)}`}
-      className="flex items-start gap-3 rounded-lg border border-teal-400/40 bg-teal-400/10 px-5 py-4 text-sm text-white/90 transition-colors hover:bg-teal-400/15"
+      className="group hover-lift flex items-start gap-4 overflow-hidden rounded-lg surface-intel shadow-intel-glow px-5 py-4 text-sm text-text-primary"
     >
-      <span className="mt-0.5 flex-shrink-0 rounded bg-teal-400/25 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-teal-100">
+      <span className="mt-0.5 flex-shrink-0 rounded bg-accent/20 px-2 py-0.5 text-eyebrow text-accent-strong">
+        <span
+          aria-hidden="true"
+          className="mr-1.5 inline-block h-1 w-1 -translate-y-0.5 rounded-full bg-accent align-middle shadow-[0_0_6px_currentColor]"
+        />
         Focus
       </span>
-      <span className="flex-1 leading-snug">{focus}</span>
-      <span className="mt-0.5 flex-shrink-0 text-teal-300">→</span>
+      <span className="flex-1 leading-snug text-text-primary/95">{focus}</span>
+      <span
+        aria-hidden="true"
+        className="mt-0.5 flex-shrink-0 text-accent-strong transition-transform group-hover:translate-x-0.5"
+      >
+        →
+      </span>
     </Link>
   );
 }
@@ -393,12 +403,10 @@ function TopActionsStrip({
   priorities: BriefPriority[];
 }) {
   return (
-    <section aria-label="Top actions" className="flex flex-col gap-2">
+    <section aria-label="Top actions" className="flex flex-col gap-3">
       <div className="flex items-baseline gap-2">
-        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-white/60">
-          Do first
-        </h2>
-        <span className="text-xs text-white/40">
+        <h2 className="text-eyebrow text-text-secondary">Do first</h2>
+        <span className="num text-xs text-text-muted">
           · {priorities.length} quick action{priorities.length === 1 ? "" : "s"}
         </span>
       </div>
@@ -420,10 +428,16 @@ function TopActionPill({
 }) {
   const toneBorder =
     priority.urgency === "high"
-      ? "border-red-500/60 bg-red-500/5"
+      ? "border-red-500/50 bg-red-500/[0.04]"
       : priority.urgency === "medium"
-        ? "border-amber-500/60 bg-amber-500/5"
-        : "border-line bg-muted/30";
+        ? "border-amber-500/50 bg-amber-500/[0.04]"
+        : "border-line-soft bg-surface-1/60";
+  const toneDigit =
+    priority.urgency === "high"
+      ? "bg-red-500/15 text-red-300 border-red-500/30"
+      : priority.urgency === "medium"
+        ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
+        : "bg-surface-2 text-text-secondary border-line-soft";
   const href = priority.approvalId
     ? `/app/approvals/${priority.approvalId}`
     : priority.objectType === "deal"
@@ -439,16 +453,18 @@ function TopActionPill({
     <li>
       <Link
         href={href}
-        className={`flex h-full items-start gap-3 rounded-lg border px-3 py-2 transition-colors hover:bg-white/5 ${toneBorder}`}
+        className={`hover-lift flex h-full items-start gap-3 rounded-lg border px-3.5 py-3 ${toneBorder}`}
       >
-        <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border border-white/20 bg-canvas/60 font-mono text-[10px] text-white/60">
+        <span
+          className={`num-mono mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold ${toneDigit}`}
+        >
           {index}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-white">
+          <div className="truncate text-sm font-medium text-text-primary">
             {priority.title}
           </div>
-          <div className="mt-0.5 truncate text-xs text-white/50">
+          <div className="mt-0.5 truncate text-xs text-text-muted">
             {priority.reason}
           </div>
         </div>
