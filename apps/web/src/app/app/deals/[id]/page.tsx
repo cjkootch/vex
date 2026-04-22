@@ -108,22 +108,30 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
     <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-6">
       <Breadcrumb dealRef={deal.dealRef} />
 
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="font-mono text-2xl text-white">{deal.dealRef}</h1>
-            <StatusPill status={deal.status} />
-            <ReadinessPill dealId={deal.id} />
-            {deal.complianceHold && (
-              <span className="rounded bg-bad/20 px-2 py-0.5 text-xs text-bad">
-                compliance hold
-              </span>
-            )}
+      <header className="flex flex-col gap-4 border-b border-line-soft pb-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <div className="text-eyebrow text-text-muted">Deal</div>
+            <div className="mt-1 flex flex-wrap items-center gap-3">
+              <h1 className="num-mono text-title text-text-primary">
+                {deal.dealRef}
+              </h1>
+              <StatusPill status={deal.status} />
+              <ReadinessPill dealId={deal.id} />
+              {deal.complianceHold && (
+                <span className="rounded-md border border-bad/40 bg-bad/10 px-2 py-0.5 text-xs font-medium text-bad">
+                  Compliance hold
+                </span>
+              )}
+            </div>
+            <p className="mt-2 text-sm text-text-secondary">
+              {PRODUCT_LABELS[deal.product] ?? deal.product}
+              <span className="mx-2 text-text-muted">·</span>
+              <span className="num">{formatVolume(deal.volumeUsg)}</span>
+              <span className="mx-2 text-text-muted">·</span>
+              <span>{deal.buyerName ?? deal.buyerOrgId}</span>
+            </p>
           </div>
-          <p className="mt-1 text-sm text-white/60">
-            {PRODUCT_LABELS[deal.product] ?? deal.product} · {formatVolume(deal.volumeUsg)} · {deal.buyerName ?? deal.buyerOrgId}
-          </p>
-        </div>
 
         <div className="flex items-center gap-2">
           <DealStatusMenu
@@ -138,7 +146,7 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
           <button
             type="button"
             onClick={() => setEditOpen(true)}
-            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
+            className="rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-sm text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary"
           >
             Edit
           </button>
@@ -172,6 +180,7 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
               },
             ]}
           />
+        </div>
         </div>
       </header>
 

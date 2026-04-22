@@ -429,19 +429,25 @@ function TopBar({
   const chipType = CONTEXT_TYPE_MAP[config.contextType] ?? "none";
   const onClear = mode !== WorkspaceMode.Global ? resetMode : undefined;
   return (
-    <header className="flex h-12 flex-shrink-0 items-center gap-2 border-b border-line bg-muted/40 px-3 md:px-4">
+    <header className="relative flex h-12 flex-shrink-0 items-center gap-2 border-b border-line-soft bg-surface-1/80 px-3 backdrop-blur-xl md:px-4">
+      {/* 1px top highlight — premium surfaces always have a kiss of
+          specular on the top edge. */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/[0.08] to-transparent"
+      />
       <button
         type="button"
         onClick={onOpenMobileNav}
         aria-label="Open navigation"
-        className="-ml-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-white/70 hover:bg-white/5 hover:text-white md:hidden"
+        className="-ml-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary md:hidden"
       >
         <Icon path="M4 6h16M4 12h16M4 18h16" />
       </button>
       <Link
         href="/app"
         aria-label="Vex home"
-        className="flex flex-shrink-0 items-center text-white hover:text-white/80"
+        className="flex flex-shrink-0 items-center text-text-primary transition-opacity hover:opacity-80"
       >
         <VexLogo className="h-6 w-9" />
       </Link>
@@ -461,7 +467,7 @@ function TopBar({
         <ApprovalBadge count={pending} />
         <div
           aria-label={vexCopy.navigation.exit_workspace}
-          className="h-8 w-8 flex-shrink-0 rounded-full bg-white/10"
+          className="h-8 w-8 flex-shrink-0 rounded-full border border-line-soft bg-surface-2"
         />
       </div>
     </header>
@@ -570,15 +576,15 @@ function SideRail({
 
   return (
     <aside
-      className={`${collapsed ? "w-14" : "w-60"} hidden flex-shrink-0 flex-col border-r border-line bg-muted/20 transition-[width] md:flex`}
+      className={`${collapsed ? "w-14" : "w-60"} hidden flex-shrink-0 flex-col border-r border-line-soft bg-surface-1/70 backdrop-blur-xl transition-[width] duration-200 ease-out-quart md:flex`}
     >
-      <nav className="flex-1 overflow-y-auto p-2" aria-label="Primary">
-        {NAV_GROUPS.map((group) => {
+      <nav className="flex-1 overflow-y-auto px-2 pt-3" aria-label="Primary">
+        {NAV_GROUPS.map((group, i) => {
           // A group with no id renders its items at the top level
           // without a header (Brief + Chat — the daily-driver pair).
           if (group.id === null) {
             return (
-              <div key="__top" className="mb-2">
+              <div key="__top" className="mb-4">
                 {group.items.map((item) => (
                   <NavLink
                     key={item.href}
@@ -598,17 +604,23 @@ function SideRail({
           // collapsed flag wins.
           const open = hasActive || !collapsedGroups.has(group.id);
           return (
-            <div key={group.id} className="mb-2">
+            <div
+              key={group.id}
+              className={`mb-3 ${i > 0 ? "" : ""}`}
+            >
               {!collapsed && (
                 <button
                   type="button"
                   onClick={() => toggleGroup(group.id!)}
                   aria-expanded={open}
-                  className="flex w-full items-center justify-between rounded-md px-2 py-1 text-[10px] uppercase tracking-wider text-white/40 transition hover:text-white/70"
+                  className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-eyebrow text-text-muted transition-colors hover:text-text-secondary"
                 >
                   <span>{group.label}</span>
-                  <span aria-hidden="true" className="opacity-60">
-                    {open ? "▾" : "▸"}
+                  <span
+                    aria-hidden="true"
+                    className={`text-[9px] text-text-muted transition-transform duration-150 ${open ? "" : "-rotate-90"}`}
+                  >
+                    ▾
                   </span>
                 </button>
               )}
@@ -631,7 +643,7 @@ function SideRail({
         type="button"
         onClick={onToggle}
         aria-label={collapsed ? "Expand side rail" : "Collapse side rail"}
-        className="border-t border-line py-2 text-center text-xs text-white/40 transition hover:bg-white/5 hover:text-white"
+        className="border-t border-line-soft py-2 text-center text-xs text-text-muted transition-colors hover:bg-white/[0.03] hover:text-text-primary"
       >
         {collapsed ? "›" : "‹"}
       </button>
@@ -666,20 +678,27 @@ function NavLink({
       href={item.href}
       aria-current={active ? "page" : undefined}
       {...(onClick ? { onClick } : {})}
-      className={`mb-0.5 flex items-center gap-3 rounded-md px-2 py-2 text-sm transition ${
+      className={`group relative mb-0.5 flex items-center gap-3 rounded-md px-2 py-1.5 text-sm transition-colors duration-150 ${
         active
-          ? "bg-white/10 text-white"
-          : "text-white/60 hover:bg-white/5 hover:text-white"
+          ? "bg-surface-2 text-text-primary"
+          : "text-text-secondary hover:bg-white/[0.04] hover:text-text-primary"
       }`}
     >
+      {/* Accent left bar on active — quiet, legible, premium. */}
+      <span
+        aria-hidden="true"
+        className={`absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-accent transition-opacity duration-150 ${
+          active ? "opacity-100" : "opacity-0"
+        }`}
+      />
       <Icon path={item.iconPath} />
-      {collapsed ? null : <span>{item.label}</span>}
+      {collapsed ? null : <span className="truncate">{item.label}</span>}
       {!collapsed && badge !== null ? (
         <span
-          className={`ml-auto rounded-full px-1.5 py-0.5 text-xs ${
+          className={`num ml-auto rounded-full px-1.5 py-0.5 text-[11px] font-medium ${
             badgeTone === "bad"
-              ? "bg-red-500/20 text-red-300"
-              : "bg-amber-400/20 text-amber-300"
+              ? "bg-red-500/15 text-red-300"
+              : "bg-amber-400/15 text-amber-300"
           }`}
         >
           {badge}
@@ -801,20 +820,26 @@ function AutonomyRail({
 }) {
   return (
     <aside
-      className={`${open ? "w-80" : "w-9"} hidden flex-shrink-0 flex-col border-l border-line bg-muted/20 transition-[width] lg:flex`}
+      className={`${open ? "w-80" : "w-9"} hidden flex-shrink-0 flex-col border-l border-line-soft bg-surface-1/70 backdrop-blur-xl transition-[width] duration-200 ease-out-quart lg:flex`}
     >
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={open}
         aria-label={open ? "Close activity rail" : "Open activity rail"}
-        className="flex h-9 items-center justify-center gap-1 border-b border-line text-xs text-white/60 transition hover:text-white"
+        className="flex h-9 items-center justify-center gap-2 border-b border-line-soft text-eyebrow text-text-secondary transition-colors hover:text-text-primary"
       >
-        {open
-          ? scope
-            ? `Activity · ${scope.type} ›`
-            : "Activity ›"
-          : "‹"}
+        {open ? (
+          <span className="inline-flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_8px_rgba(124,92,255,0.8)]"
+            />
+            {scope ? `Activity · ${scope.type}` : "Activity"}
+          </span>
+        ) : (
+          <span>‹</span>
+        )}
       </button>
       {open ? (
         <div className="flex-1 overflow-hidden">

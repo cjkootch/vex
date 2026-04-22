@@ -78,16 +78,20 @@ export function ContextChip({
       data-chip="context"
       data-type={type}
       data-status={status}
-      className={`inline-flex items-center gap-2 rounded-full border ${borderClass} bg-muted/40 px-3 py-1.5 text-sm`}
+      className={`inline-flex items-center gap-2 rounded-full border ${borderClass} bg-surface-2/80 pl-2.5 pr-3 py-1 text-[13px] shadow-soft backdrop-blur-sm`}
     >
       <span
         aria-hidden="true"
-        className={`h-2 w-2 rounded-full ${dotClass} ${dotPulse}`}
+        className={`h-1.5 w-1.5 rounded-full ${dotClass} ${dotPulse} ${
+          status === "active" ? "shadow-[0_0_6px_currentColor]" : ""
+        }`}
       />
-      <span className="font-medium text-white">{label}</span>
+      <span className="font-medium tracking-[-0.005em] text-text-primary">
+        {label}
+      </span>
       {sublabel ? (
-        <span className="hidden text-xs text-white/60 sm:inline">
-          <span aria-hidden="true" className="mx-1">
+        <span className="hidden text-xs text-text-muted sm:inline">
+          <span aria-hidden="true" className="mx-1 text-text-muted/60">
             ·
           </span>
           {sublabel}
@@ -98,14 +102,14 @@ export function ContextChip({
           type="button"
           onClick={onClear}
           aria-label={formatVexCopy("Clear {label}", { label })}
-          className="ml-1 rounded-full p-0.5 text-white/40 transition-colors hover:bg-white/10 hover:text-white/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40"
+          className="ml-1 rounded-full p-0.5 text-text-muted transition-colors hover:bg-white/[0.06] hover:text-text-primary"
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
             aria-hidden="true"
-            className="h-3.5 w-3.5"
+            className="h-3 w-3"
           >
             <path
               fillRule="evenodd"

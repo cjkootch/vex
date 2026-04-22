@@ -138,18 +138,31 @@ export function CommandPalette() {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 px-4 pt-28 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/70 px-4 pt-28 backdrop-blur-md"
       onClick={close}
       role="presentation"
     >
       <div
-        className="w-full max-w-xl rounded-lg border border-line bg-canvas shadow-xl"
+        className="w-full max-w-xl overflow-hidden rounded-xl border border-line-strong bg-surface-2/95 shadow-overlay backdrop-blur-xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Search companies, contacts, and deals"
         aria-modal="true"
       >
-        <div className="border-b border-line px-3 py-2">
+        <div className="flex items-center gap-2 border-b border-line-soft px-3.5 py-3">
+          <svg
+            aria-hidden="true"
+            className="h-4 w-4 flex-shrink-0 text-text-muted"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="M21 21l-4.35-4.35" />
+          </svg>
           <input
             ref={inputRef}
             type="search"
@@ -157,26 +170,32 @@ export function CommandPalette() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onInputKey}
             placeholder="Jump to a company, contact, or deal…"
-            className="w-full bg-transparent px-1 py-1 text-sm text-white placeholder:text-white/40 focus:outline-none"
+            className="w-full bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
             aria-label="Search query"
           />
+          <kbd className="num-mono hidden rounded border border-line-soft bg-surface-1 px-1.5 py-0.5 text-[10px] text-text-muted sm:inline-flex">
+            esc
+          </kbd>
         </div>
 
         <div className="max-h-80 overflow-y-auto p-2">
           {query.trim().length < 2 ? (
-            <p className="px-2 py-3 text-xs text-white/40">
-              Type at least 2 characters. Arrow keys to move, Enter to jump, Esc to close.
+            <p className="px-2 py-3 text-xs text-text-muted">
+              Type at least 2 characters.{" "}
+              <span className="text-text-secondary">↑↓</span> to move,{" "}
+              <span className="text-text-secondary">Enter</span> to jump,{" "}
+              <span className="text-text-secondary">Esc</span> to close.
             </p>
           ) : loading && hits.length === 0 ? (
-            <p className="px-2 py-3 text-xs text-white/40">Searching…</p>
+            <p className="px-2 py-3 text-xs text-text-muted">Searching…</p>
           ) : hits.length === 0 ? (
-            <p className="px-2 py-3 text-xs text-white/40">
+            <p className="px-2 py-3 text-xs text-text-muted">
               No matches for &ldquo;{query.trim()}&rdquo;.
             </p>
           ) : (
             groups.map((group) => (
               <div key={group.kind} className="mb-2 last:mb-0">
-                <div className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">
+                <div className="px-2 pb-1 pt-1 text-eyebrow text-text-muted">
                   {KIND_GROUP_LABEL[group.kind]}
                 </div>
                 <ul>
@@ -191,15 +210,15 @@ export function CommandPalette() {
                           onMouseEnter={() =>
                             setCursor(hits.indexOf(hit))
                           }
-                          className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${
+                          className={`flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left text-sm transition-colors ${
                             selected
-                              ? "bg-accent/25 text-white"
-                              : "text-white/90 hover:bg-muted/40"
+                              ? "bg-accent-soft text-text-primary"
+                              : "text-text-primary/90 hover:bg-white/[0.04]"
                           }`}
                         >
-                          <span>{hit.label}</span>
+                          <span className="truncate">{hit.label}</span>
                           {hit.sublabel && (
-                            <span className="text-xs text-white/50">
+                            <span className="flex-shrink-0 text-xs text-text-muted">
                               {hit.sublabel}
                             </span>
                           )}
@@ -213,9 +232,11 @@ export function CommandPalette() {
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-line px-3 py-2 text-[10px] text-white/40">
+        <div className="flex items-center justify-between border-t border-line-soft bg-surface-1/50 px-3 py-2 text-[10px] text-text-muted">
           <span>↑↓ navigate · Enter jump · Esc close</span>
-          <span>⌘K</span>
+          <kbd className="num-mono rounded border border-line-soft bg-surface-1 px-1.5 py-0.5 font-medium">
+            ⌘K
+          </kbd>
         </div>
       </div>
     </div>
