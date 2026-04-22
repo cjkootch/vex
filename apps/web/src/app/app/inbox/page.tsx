@@ -117,10 +117,11 @@ export default function InboxPage(): React.ReactElement {
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 px-6 py-6">
-      <header className="flex items-end justify-between gap-4">
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line-soft pb-5">
         <div>
-          <h1 className="text-xl font-semibold text-white">Inbox</h1>
-          <p className="mt-1 text-xs text-white/50">
+          <div className="text-eyebrow text-text-muted">Now</div>
+          <h1 className="mt-1 text-title text-text-primary">Inbox</h1>
+          <p className="mt-2 text-sm text-text-secondary">
             Every call, email, SMS, and WhatsApp event across the workspace,
             time-sorted.
           </p>
@@ -128,7 +129,7 @@ export default function InboxPage(): React.ReactElement {
         <div className="flex items-center gap-3">
           <div
             role="tablist"
-            className="flex gap-1 rounded-md border border-line bg-muted/20 p-0.5"
+            className="flex gap-1 rounded-md border border-line-soft bg-surface-2/60 p-0.5"
           >
             <button
               type="button"

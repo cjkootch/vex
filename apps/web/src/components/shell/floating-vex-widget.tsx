@@ -138,7 +138,7 @@ export function FloatingVexWidget() {
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? "Close Vex widget" : "Ask Vex"}
         aria-expanded={open}
-        className="fixed bottom-6 right-6 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full text-accent shadow-lg shadow-accent/30 transition hover:scale-105 hover:text-accent/90 md:h-14 md:w-14"
+        className="fixed bottom-6 right-6 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full text-accent shadow-[0_8px_24px_-8px_rgba(124,92,255,0.55),0_0_0_1px_rgba(124,92,255,0.2)] transition-transform duration-150 ease-out-quart hover:scale-[1.04] hover:text-accent-strong md:h-14 md:w-14"
       >
         <VexIconMark className="h-full w-full" title="Ask Vex" />
       </button>
@@ -152,7 +152,7 @@ export function FloatingVexWidget() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.18, ease: "easeOut" }}
-            className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
+            className="fixed inset-0 z-50 bg-black/40 backdrop-blur-md"
             onMouseDown={(e) => {
               if (e.target === e.currentTarget) setOpen(false);
             }}
@@ -165,24 +165,26 @@ export function FloatingVexWidget() {
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
               transition={{ type: "spring", stiffness: 340, damping: 34, mass: 0.9 }}
-              className="absolute bottom-0 right-0 top-0 flex w-full max-w-[440px] flex-col border-l border-line bg-bg shadow-2xl"
+              className="absolute bottom-0 right-0 top-0 flex w-full max-w-[440px] flex-col border-l border-line-strong bg-surface-1 shadow-overlay"
             >
-            <header className="flex flex-shrink-0 items-center justify-between border-b border-line bg-muted/30 px-4 py-3">
+            <header className="flex flex-shrink-0 items-center justify-between border-b border-line-soft bg-surface-2/60 px-4 py-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-white">
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_6px_currentColor]"
+                />
+                <span className="text-sm font-semibold tracking-[-0.005em] text-text-primary">
                   Ask Vex
                 </span>
                 {scope ? (
                   <span
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] ${scopeChipStyles(scope.type)}`}
                   >
-                    <span className="uppercase tracking-wide opacity-80">
-                      {scope.type}
-                    </span>
+                    <span className="text-eyebrow opacity-80">{scope.type}</span>
                   </span>
                 ) : (
-                  <span className="rounded-full border border-line bg-muted/40 px-2 py-0.5 text-[10px] uppercase tracking-wide text-white/50">
-                    global
+                  <span className="rounded-full border border-line-soft bg-surface-2/80 px-2 py-0.5 text-eyebrow text-text-muted">
+                    Global
                   </span>
                 )}
               </div>
@@ -190,7 +192,7 @@ export function FloatingVexWidget() {
                 <button
                   type="button"
                   onClick={handleViewInChat}
-                  className="text-xs text-white/60 transition hover:text-white"
+                  className="text-xs text-text-secondary transition-colors hover:text-text-primary"
                   title="Open the full chat page with this scope + thread"
                 >
                   View full chat →
@@ -199,7 +201,7 @@ export function FloatingVexWidget() {
                   type="button"
                   onClick={() => setOpen(false)}
                   aria-label="Close"
-                  className="text-white/40 transition hover:text-white"
+                  className="rounded p-0.5 text-text-muted transition-colors hover:bg-white/[0.05] hover:text-text-primary"
                 >
                   ✕
                 </button>
@@ -223,7 +225,7 @@ export function FloatingVexWidget() {
               />
             </div>
             {scope ? (
-              <footer className="flex-shrink-0 border-t border-line bg-muted/20 px-4 py-2 text-xs text-white/50">
+              <footer className="flex-shrink-0 border-t border-line-soft bg-surface-2/40 px-4 py-2 text-xs text-text-muted">
                 Answers bias toward this {scope.type}.{" "}
                 <Link
                   href={buildAskVexHref({
@@ -232,7 +234,7 @@ export function FloatingVexWidget() {
                     ask: state.lastUserMessage || undefined,
                   })}
                   onClick={() => setOpen(false)}
-                  className="text-white/70 transition hover:text-white"
+                  className="text-text-secondary transition-colors hover:text-text-primary"
                 >
                   Escalate to full chat →
                 </Link>

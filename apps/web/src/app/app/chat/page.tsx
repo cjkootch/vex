@@ -230,7 +230,7 @@ function ChatPageInner() {
             onClearContext={() => setMode(mode)}
           />
         ) : null}
-        <header className="flex flex-shrink-0 items-center justify-between border-b border-line bg-canvas/95 px-6 py-3 backdrop-blur">
+        <header className="flex flex-shrink-0 items-center justify-between border-b border-line-soft bg-surface-1/80 px-6 py-3 backdrop-blur-xl">
           <input
             value={active.title}
             onChange={(e) =>
@@ -243,7 +243,7 @@ function ChatPageInner() {
               )
             }
             aria-label="Conversation title"
-            className="bg-transparent text-base font-semibold text-white outline-none focus:underline md:text-sm"
+            className="bg-transparent text-sm font-semibold tracking-[-0.005em] text-text-primary outline-none placeholder:text-text-muted focus:underline"
           />
         </header>
         <div
@@ -255,18 +255,20 @@ function ChatPageInner() {
         >
           <div className="flex min-h-0 min-w-0 flex-col">
             {scope ? (
-              <div className="flex items-center gap-2 border-b border-line bg-canvas/60 px-6 py-2">
+              <div className="flex items-center gap-2 border-b border-line-soft bg-intel-soft/30 px-6 py-2">
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_6px_currentColor]"
+                />
                 <span
                   className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs ${scopeChipStyles(scope.type)}`}
                 >
-                  <span className="uppercase tracking-wide opacity-70">
-                    {scope.type}
-                  </span>
+                  <span className="text-eyebrow opacity-70">{scope.type}</span>
                   <span className="font-medium">
                     {scopeLabel ?? scope.id.slice(-8)}
                   </span>
                 </span>
-                <span className="text-xs text-white/50">
+                <span className="text-xs text-text-secondary">
                   Vex is scoped to this {scope.type}. Answers and
                   proposed actions bias toward it.
                 </span>
@@ -283,7 +285,7 @@ function ChatPageInner() {
                     const qs = sp.toString();
                     router.replace(`/app/chat${qs ? `?${qs}` : ""}`);
                   }}
-                  className="ml-auto text-xs text-white/50 transition hover:text-white"
+                  className="ml-auto rounded p-0.5 text-xs text-text-muted transition-colors hover:bg-white/[0.05] hover:text-text-primary"
                   aria-label="Clear scope"
                 >
                   Clear ✕
@@ -356,36 +358,39 @@ function Breadcrumb({
   return (
     <nav
       aria-label="Breadcrumb"
-      className="flex h-9 flex-shrink-0 items-center gap-1 border-b border-line bg-muted/20 px-4 text-xs"
+      className="flex h-9 flex-shrink-0 items-center gap-1 border-b border-line-soft bg-surface-2/40 px-4 text-xs"
     >
       <button
         type="button"
         onClick={onHome}
-        className="rounded px-1.5 py-0.5 text-white/60 transition hover:bg-white/5 hover:text-white"
+        className="rounded px-1.5 py-0.5 text-text-muted transition-colors hover:bg-white/[0.04] hover:text-text-primary"
       >
         Home
       </button>
-      <span aria-hidden="true" className="text-white/30">
+      <span aria-hidden="true" className="text-text-muted/50">
         ›
       </span>
       <button
         type="button"
         onClick={onClearContext}
         aria-current={contextLabel ? undefined : "page"}
-        className={`rounded px-1.5 py-0.5 transition ${
+        className={`rounded px-1.5 py-0.5 transition-colors ${
           contextLabel
-            ? "text-white/60 hover:bg-white/5 hover:text-white"
-            : "text-white"
+            ? "text-text-muted hover:bg-white/[0.04] hover:text-text-primary"
+            : "text-text-primary"
         }`}
       >
         {config.label}
       </button>
       {contextLabel ? (
         <>
-          <span aria-hidden="true" className="text-white/30">
+          <span aria-hidden="true" className="text-text-muted/50">
             ›
           </span>
-          <span aria-current="page" className="px-1.5 py-0.5 text-white">
+          <span
+            aria-current="page"
+            className="px-1.5 py-0.5 font-medium text-text-primary"
+          >
             {contextLabel}
           </span>
         </>
@@ -417,27 +422,25 @@ function DealWorkspacePane({
   return (
     <section
       aria-label="Deal workspace"
-      className="flex h-full min-w-0 flex-col overflow-auto border-l border-line bg-canvas/40"
+      className="flex h-full min-w-0 flex-col overflow-auto border-l border-line-soft bg-surface-1/40"
     >
-      <header className="border-b border-line px-5 py-4">
-        <div className="text-xs uppercase tracking-wider text-white/40">
-          {config.label}
-        </div>
-        <h2 className="mt-1 text-lg font-semibold text-white">
+      <header className="border-b border-line-soft px-5 py-4">
+        <div className="text-eyebrow text-text-muted">{config.label}</div>
+        <h2 className="mt-1 num-mono text-h1 text-text-primary">
           {dealRef ?? "No deal selected"}
         </h2>
         {sublabel ? (
-          <p className="mt-1 text-sm text-white/60">{sublabel}</p>
+          <p className="mt-1 text-sm text-text-secondary">{sublabel}</p>
         ) : null}
       </header>
-      <div className="flex-1 p-5 text-sm text-white/70">
+      <div className="flex-1 p-5 text-sm text-text-secondary">
         <p className="mb-3">{config.description}</p>
-        <div className="mb-2 text-xs uppercase tracking-wider text-white/40">
+        <div className="mb-2 text-eyebrow text-text-muted">
           Panels loading for this mode
         </div>
         <ul className="space-y-1">
           {config.defaultPanels.map((p) => (
-            <li key={p} className="font-mono text-xs text-white/60">
+            <li key={p} className="num-mono text-xs text-text-muted">
               · {p}
             </li>
           ))}
