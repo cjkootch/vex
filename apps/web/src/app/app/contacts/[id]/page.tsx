@@ -8,7 +8,7 @@ import { EditContactForm } from "@/components/crm/edit-contact-form";
 import { QuickActions } from "@/components/crm/quick-actions";
 import { SignalsPanel } from "@/components/signals/signals-panel";
 import { Tabs } from "@/components/ui/tabs";
-import { buildAskVexHref } from "@/lib/ask-vex";
+import { AskVexButton } from "@/components/shell/ask-vex-button";
 
 interface Membership {
   tenantId: string;
@@ -232,17 +232,35 @@ export default function ContactDetailPage({
           >
             Edit
           </button>
-          <Link
-            href={buildAskVexHref({
-              type: "contact",
-              id: contact.id,
-              label: contact.fullName,
-              ask: `What do I know about ${contact.fullName}?`,
-            })}
-            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
-          >
-            Ask Vex →
-          </Link>
+          <AskVexButton
+            type="contact"
+            id={contact.id}
+            label={contact.fullName}
+            defaultAsk={`What do I know about ${contact.fullName}?`}
+            actions={[
+              {
+                label: "Who is this?",
+                ask: `Summarise ${contact.fullName}: role, company, last touchpoint, open deals, anything I should know before reaching out.`,
+              },
+              {
+                label: "Call them (AI mode)",
+                ask: `Have Vex call ${contact.fullName} to check in on their open business with us.`,
+                hint: "Triggers an AI-mode outbound call for approval",
+              },
+              {
+                label: "Draft email",
+                ask: `Draft a short email to ${contact.fullName} — pick the right topic based on our recent activity with them.`,
+              },
+              {
+                label: "Recent activity",
+                ask: `Show me the last 30 days of activity with ${contact.fullName} — calls, emails, SMS, replies.`,
+              },
+              {
+                label: "Schedule follow-up",
+                ask: `Remind me to follow up with ${contact.fullName} in 5 business days.`,
+              },
+            ]}
+          />
         </div>
       </header>
 

@@ -18,7 +18,13 @@ export async function GET(req: NextRequest): Promise<Response> {
   const upstream = process.env["VEX_API_URL"];
   const incoming = new URL(req.url);
   const forwarded = new URLSearchParams();
-  for (const key of ["limit", "status", "since"] as const) {
+  for (const key of [
+    "limit",
+    "status",
+    "since",
+    "scope_type",
+    "scope_id",
+  ] as const) {
     const value = incoming.searchParams.get(key);
     if (value) forwarded.set(key, value);
   }

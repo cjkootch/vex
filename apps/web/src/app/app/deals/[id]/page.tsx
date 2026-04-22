@@ -11,7 +11,7 @@ import { EditDealForm } from "@/components/crm/edit-deal-form";
 import { VesselPanel } from "@/components/deals/vessel-panel";
 import { PortPanel } from "@/components/deals/port-panel";
 import { Tabs } from "@/components/ui/tabs";
-import { buildAskVexHref } from "@/lib/ask-vex";
+import { AskVexButton } from "@/components/shell/ask-vex-button";
 
 interface DealDetail {
   id: string;
@@ -136,17 +136,36 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
           >
             Edit
           </button>
-          <Link
-            href={buildAskVexHref({
-              type: "deal",
-              id: deal.id,
-              label: deal.dealRef,
-              ask: `Score deal ${deal.dealRef}`,
-            })}
-            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
-          >
-            Ask Vex →
-          </Link>
+          <AskVexButton
+            type="deal"
+            id={deal.id}
+            label={deal.dealRef}
+            defaultAsk={`Score deal ${deal.dealRef}`}
+            actions={[
+              {
+                label: "Score this deal",
+                ask: `Score deal ${deal.dealRef} and explain the EBITDA / margin drivers.`,
+                hint: "Runs the deal evaluator + surfaces the flags",
+              },
+              {
+                label: "Check readiness to ship",
+                ask: `For deal ${deal.dealRef}, walk me through KYC, OFAC, counterparty approval, freight freshness, vessel, payment terms, docs, and next milestone owner. Tell me what's blocking.`,
+                hint: "KYC → OFAC → vessel → docs → next step",
+              },
+              {
+                label: "Draft buyer update",
+                ask: `Draft a short status update email to the buyer on deal ${deal.dealRef} covering laycan, vessel, and next milestone.`,
+              },
+              {
+                label: "Summarise recent activity",
+                ask: `Summarise the last 14 days of activity on deal ${deal.dealRef} — calls, emails, milestones, any blockers.`,
+              },
+              {
+                label: "Research the buyer",
+                ask: `Tell me what you know about the buyer on deal ${deal.dealRef}: open deals, recent touchpoints, OFAC status, any risk signals.`,
+              },
+            ]}
+          />
         </div>
       </header>
 

@@ -5,7 +5,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { and, desc, eq, gte, inArray, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, or, sql, type SQL } from "drizzle-orm";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import {
   withTenant,
@@ -90,6 +90,8 @@ export class AgentRunsController {
     @Query("limit") limitRaw?: string,
     @Query("status") status?: string,
     @Query("since") since?: string,
+    @Query("scope_type") scopeType?: string,
+    @Query("scope_id") scopeId?: string,
   ): Promise<{ runs: AgentRunResponseItem[] }> {
     const limit = clampLimit(limitRaw);
     const statusFilter = status && ALLOWED_STATUSES.has(status) ? status : null;
@@ -109,6 +111,15 @@ export class AgentRunsController {
         if (sinceDate) {
           conditions.push(gte(schema.agentRuns.startedAt, sinceDate));
         }
+        // Scope filter — narrows the feed to runs that touched one
+        // specific entity (deal, org, contact, campaign). Matches on
+        // every reasonable key name because different agents stamp
+        // different field names onto input_refs. "Close enough" beats
+        // "perfect" here — if we miss a run the rail just won't show
+        // it; we don't accidentally expose another tenant's data
+        // (RLS still scopes the query).
+        const scopeClause = buildScopeClause(scopeType, scopeId);
+        if (scopeClause) conditions.push(scopeClause);
         const q = tx.select().from(schema.agentRuns);
         const filtered = conditions.length
           ? q.where(and(...conditions))
@@ -136,6 +147,54 @@ export class AgentRunsController {
 
     return { runs };
   }
+}
+
+/**
+ * Map (scope_type, scope_id) to a Drizzle WHERE clause that matches
+ * any agent run whose `input_refs` (or `output_refs`) JSONB carries
+ * that id under a conventional key name.
+ *
+ * Keys checked per type:
+ *   deal          → deal_id | dealId | deal_ref
+ *   organization  → organization_id | org_id | orgId
+ *   contact       → contact_id | contactId
+ *   campaign      → campaign_id | campaignId
+ *
+ * Returns null when either param is missing/empty or the type is
+ * unknown — the caller drops the clause and falls back to the global
+ * feed.
+ */
+function buildScopeClause(
+  scopeType: string | undefined,
+  scopeId: string | undefined,
+): SQL | null {
+  if (!scopeType || !scopeId) return null;
+  const t = scopeType.trim();
+  const id = scopeId.trim();
+  if (!t || !id) return null;
+
+  const keys: readonly string[] = (() => {
+    switch (t) {
+      case "deal":
+        return ["deal_id", "dealId", "deal_ref"];
+      case "organization":
+        return ["organization_id", "org_id", "orgId"];
+      case "contact":
+        return ["contact_id", "contactId"];
+      case "campaign":
+        return ["campaign_id", "campaignId"];
+      default:
+        return [];
+    }
+  })();
+  if (keys.length === 0) return null;
+
+  const predicates: SQL[] = [];
+  for (const k of keys) {
+    predicates.push(sql`${schema.agentRuns.inputRefs} ->> ${k} = ${id}`);
+    predicates.push(sql`${schema.agentRuns.outputRefs} ->> ${k} = ${id}`);
+  }
+  return or(...predicates) ?? null;
 }
 
 function clampLimit(raw: string | undefined): number {
