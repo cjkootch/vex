@@ -14,6 +14,13 @@ export interface TemporalConfig {
  * `localhost:7233`; production reads `TEMPORAL_ADDRESS` (e.g.
  * `<namespace>.tmprl.cloud:7233`) and `TEMPORAL_NAMESPACE` from env.
  *
+ * Temporal Cloud API-key auth requires the `temporal-namespace` gRPC
+ * metadata header on every RPC. The Worker's NativeConnection sets it;
+ * without this the Client's Connection connects via TLS but every
+ * RPC call (start/signal/describe) fails, which looked exactly like
+ * "Temporal unavailable" from the approval-executor and was sending
+ * outbound calls down the direct-Twilio fallback.
+ *
  * Caller owns the underlying Connection lifecycle — call `closeTemporalClient`
  * on shutdown to release the gRPC channel cleanly.
  */
@@ -22,7 +29,13 @@ export async function createTemporalClient(
 ): Promise<{ client: Client; close: () => Promise<void> }> {
   const connection = await Connection.connect({
     address: config.address,
-    ...(config.apiKey ? { tls: true, apiKey: config.apiKey } : {}),
+    ...(config.apiKey
+      ? {
+          tls: true,
+          apiKey: config.apiKey,
+          metadata: { "temporal-namespace": config.namespace },
+        }
+      : {}),
   });
   const client = new Client({
     connection,
