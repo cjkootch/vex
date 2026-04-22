@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import {
   schema,
   withTenant,
@@ -411,6 +411,98 @@ export class ContactsService {
         .orderBy(desc(schema.fuelDeals.createdAt))
         .limit(100),
     );
+  }
+
+  /**
+   * Campaign enrollments (sequences) this contact is currently in or
+   * has been through. Powers the Sequences panel on the contact
+   * profile — one row per (contact × campaign) with enough metadata
+   * for the UI to render progress (step X of Y), the current state,
+   * and a link back to the campaign detail page.
+   *
+   * Joined in one query:
+   *   - campaign_enrollments         → the membership row
+   *   - campaigns                    → channel/source/medium for label
+   *   - COUNT(campaign_steps)        → total step count for progress
+   */
+  async listEnrollmentsForContact(
+    tenantId: string,
+    contactId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      campaignId: string;
+      campaignChannel: string;
+      campaignSource: string | null;
+      campaignMedium: string | null;
+      campaignObjective: string | null;
+      campaignStatus: string;
+      state: string;
+      currentStep: number;
+      stepCount: number;
+      lastEventAt: string | null;
+      enrolledAt: string;
+      updatedAt: string;
+      error: string | null;
+    }>
+  > {
+    return withTenant(this.db, tenantId, async (tx) => {
+      const stepCountSubq = tx
+        .select({
+          campaignId: schema.campaignSteps.campaignId,
+          count: sql<number>`count(*)::int`.as("step_count"),
+        })
+        .from(schema.campaignSteps)
+        .groupBy(schema.campaignSteps.campaignId)
+        .as("step_counts");
+
+      const rows = await tx
+        .select({
+          id: schema.campaignEnrollments.id,
+          campaignId: schema.campaignEnrollments.campaignId,
+          campaignChannel: schema.campaigns.channel,
+          campaignSource: schema.campaigns.source,
+          campaignMedium: schema.campaigns.medium,
+          campaignObjective: schema.campaigns.objective,
+          campaignStatus: schema.campaigns.status,
+          state: schema.campaignEnrollments.state,
+          currentStep: schema.campaignEnrollments.currentStep,
+          stepCount: stepCountSubq.count,
+          lastEventAt: schema.campaignEnrollments.lastEventAt,
+          enrolledAt: schema.campaignEnrollments.createdAt,
+          updatedAt: schema.campaignEnrollments.updatedAt,
+          error: schema.campaignEnrollments.error,
+        })
+        .from(schema.campaignEnrollments)
+        .innerJoin(
+          schema.campaigns,
+          eq(schema.campaignEnrollments.campaignId, schema.campaigns.id),
+        )
+        .leftJoin(
+          stepCountSubq,
+          eq(stepCountSubq.campaignId, schema.campaignEnrollments.campaignId),
+        )
+        .where(eq(schema.campaignEnrollments.contactId, contactId))
+        .orderBy(desc(schema.campaignEnrollments.updatedAt))
+        .limit(50);
+
+      return rows.map((r) => ({
+        id: r.id,
+        campaignId: r.campaignId,
+        campaignChannel: r.campaignChannel,
+        campaignSource: r.campaignSource,
+        campaignMedium: r.campaignMedium,
+        campaignObjective: r.campaignObjective,
+        campaignStatus: r.campaignStatus,
+        state: r.state,
+        currentStep: r.currentStep,
+        stepCount: Number(r.stepCount ?? 0),
+        lastEventAt: r.lastEventAt ? r.lastEventAt.toISOString() : null,
+        enrolledAt: r.enrolledAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+        error: r.error,
+      }));
+    });
   }
 
   /**

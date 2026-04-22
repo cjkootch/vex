@@ -289,6 +289,21 @@ export class ContactsController {
     return { contact, memberships, deals };
   }
 
+  /**
+   * Campaigns the contact is enrolled in (or has been through). Drives
+   * the Sequences panel on the contact profile. Returns up to 50 rows
+   * so an over-enrolled contact doesn't blow up the UI; older rows
+   * beyond that are accessible via the campaign detail page.
+   */
+  @Get(":id/enrollments")
+  async listEnrollments(@Param("id") id: string) {
+    const enrollments = await this.service.listEnrollmentsForContact(
+      this.tenant.tenantId,
+      id,
+    );
+    return { enrollments };
+  }
+
   @Patch(":id")
   async update(@Param("id") id: string, @Body() raw: unknown) {
     const parsed = UpdateContactBody.safeParse(raw);

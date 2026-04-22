@@ -2,12 +2,14 @@ import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { Queue } from "bullmq";
 import { addApprovalExecutorJob, type ApprovalExecutorJobData } from "@vex/agents";
 import {
+  schema,
   withTenant,
   type ApprovalRepository,
   type Approval,
   type Db,
   type EventRepository,
 } from "@vex/db";
+import { and, desc, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Client as TemporalClient } from "@temporalio/client";
 import { WorkflowId } from "@vex/integrations";
 import {
@@ -66,6 +68,92 @@ export class ApprovalsService {
     return withTenant(this.db, args.tenantId, async (tx) =>
       this.approvals.listByDecision(tx, "pending", args.limit ?? 20),
     );
+  }
+
+  /**
+   * Approvals that were auto-approved or approved but whose executor
+   * never finished applying them. "Stalled" = decided more than
+   * `staleAfterSec` seconds ago, still `applied_at IS NULL`. Powers
+   * the global banner so operators see silent hangs in-product
+   * instead of having to grep logs when a chat action "just didn't
+   * happen".
+   *
+   * Does NOT include rows that have an `approval.executor.failed`
+   * event — those are terminal failures and already surfaced on the
+   * approval detail page. We want the *silently stuck* ones here.
+   */
+  async listStalled(args: {
+    tenantId: string;
+    staleAfterSec?: number;
+    limit?: number;
+  }): Promise<
+    Array<{
+      id: string;
+      actionType: string;
+      decision: string;
+      decidedAt: string;
+      agoSeconds: number;
+      workflowId: string | null;
+    }>
+  > {
+    const staleAfter = args.staleAfterSec ?? 60;
+    const cutoff = new Date(Date.now() - staleAfter * 1_000);
+    return withTenant(this.db, args.tenantId, async (tx) => {
+      const rows = await tx
+        .select({
+          id: schema.approvals.id,
+          actionType: schema.approvals.actionType,
+          decision: schema.approvals.decision,
+          decidedAt: schema.approvals.decidedAt,
+          proposedPayload: schema.approvals.proposedPayload,
+        })
+        .from(schema.approvals)
+        .where(
+          and(
+            inArray(schema.approvals.decision, ["approved", "auto_approved"]),
+            isNull(schema.approvals.appliedAt),
+            lt(schema.approvals.decidedAt, cutoff),
+          ),
+        )
+        .orderBy(desc(schema.approvals.decidedAt))
+        .limit(args.limit ?? 20);
+
+      if (rows.length === 0) return [];
+
+      // Exclude rows whose executor emitted a terminal `failed` — the
+      // approval detail page already surfaces those. Single query
+      // matches by subject_id IN (row ids).
+      const ids = rows.map((r) => r.id);
+      const failedEvents = await tx
+        .select({ subjectId: schema.events.subjectId })
+        .from(schema.events)
+        .where(
+          and(
+            inArray(schema.events.subjectId, ids),
+            sql`${schema.events.verb} = 'approval.executor.failed'`,
+          ),
+        );
+      const failedSet = new Set(failedEvents.map((e) => e.subjectId));
+
+      const now = Date.now();
+      return rows
+        .filter((r) => !failedSet.has(r.id))
+        .map((r) => {
+          const payload = (r.proposedPayload ?? {}) as Record<string, unknown>;
+          const workflowId =
+            typeof payload["workflow_id"] === "string"
+              ? (payload["workflow_id"] as string)
+              : null;
+          return {
+            id: r.id,
+            actionType: r.actionType,
+            decision: r.decision,
+            decidedAt: r.decidedAt!.toISOString(),
+            agoSeconds: Math.floor((now - r.decidedAt!.getTime()) / 1_000),
+            workflowId,
+          };
+        });
+    });
   }
 
   /**

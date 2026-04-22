@@ -71,6 +71,13 @@ export interface OutboundCallWorkflowInput {
   agentRunId: string;
   initiatedByUserId: string;
   /**
+   * Enforce the 08:00-18:00 local calling window on this run. Default
+   * `false` — a user pressing "call" at 9pm is expressing consent, so
+   * we shouldn't silently veto. Flip to `true` for scheduled / agent-
+   * initiated calls that run without a human in front of them.
+   */
+  respectCallWindow?: boolean;
+  /**
    * Sprint L2 — when true, Twilio fetches the AI-talkback TwiML variant
    * (Pause + Connect + Stream) instead of the conference bridge, and
    * Vex holds the conversation directly. Default false preserves the
@@ -149,28 +156,34 @@ export async function outboundCallWorkflow(
   });
 
   // --- Step 1: call window ------------------------------------------------
-  const windowCheck = await checks.checkCallWindow({
-    tenantId: input.tenantId,
-    contactId: input.contactId,
-  });
-  if (!windowCheck.allowed) {
-    await long.emitAuditEvent({
+  // Only enforced when `respectCallWindow` is explicitly set — scheduled
+  // / autonomous agent runs should still honour it. Human-triggered
+  // flows (chat "call X now", /calls POST) opt out so a 9pm click
+  // actually dials; the operator's consent is already on-screen.
+  if (input.respectCallWindow) {
+    const windowCheck = await checks.checkCallWindow({
       tenantId: input.tenantId,
-      verb: "call.rejected.outside_window",
-      subjectType: "contact",
-      subjectId: input.contactId,
-      idempotencyKey: `call.rejected.outside_window:${workflowId}`,
-      metadata: {
-        reason: windowCheck.reason ?? "outside window",
-        timezone: windowCheck.contactTimezone,
-        local_hour: windowCheck.localHour,
-        workflow_id: workflowId,
-      },
+      contactId: input.contactId,
     });
-    return {
-      kind: "rejected_outside_window",
-      reason: windowCheck.reason ?? "outside window",
-    };
+    if (!windowCheck.allowed) {
+      await long.emitAuditEvent({
+        tenantId: input.tenantId,
+        verb: "call.rejected.outside_window",
+        subjectType: "contact",
+        subjectId: input.contactId,
+        idempotencyKey: `call.rejected.outside_window:${workflowId}`,
+        metadata: {
+          reason: windowCheck.reason ?? "outside window",
+          timezone: windowCheck.contactTimezone,
+          local_hour: windowCheck.localHour,
+          workflow_id: workflowId,
+        },
+      });
+      return {
+        kind: "rejected_outside_window",
+        reason: windowCheck.reason ?? "outside window",
+      };
+    }
   }
 
   // --- Step 2: suppression ------------------------------------------------

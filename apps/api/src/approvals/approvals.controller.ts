@@ -41,6 +41,24 @@ export class ApprovalsController {
     return { approvals };
   }
 
+  /**
+   * Approvals auto/approved but not applied after N seconds. Drives
+   * the global "stalled approvals" banner in /app so silent pipeline
+   * hangs (worker down, workflow stuck) surface in-product rather
+   * than requiring a log grep.
+   */
+  @Get("stalled")
+  async stalled(@Query("after_sec") afterSecRaw: string | undefined) {
+    const afterSec = afterSecRaw ? Number.parseInt(afterSecRaw, 10) : 60;
+    const approvals = await this.service.listStalled({
+      tenantId: this.tenant.tenantId,
+      staleAfterSec:
+        Number.isFinite(afterSec) && afterSec > 0 ? afterSec : 60,
+      limit: 20,
+    });
+    return { approvals };
+  }
+
   @Get(":id")
   async detail(@Param("id") id: string) {
     const approval = await this.service.findById(this.tenant.tenantId, id);

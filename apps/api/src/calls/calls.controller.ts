@@ -129,6 +129,19 @@ export class CallsController {
     return this.service.getStatus(this.tenant.tenantId, workflowId);
   }
 
+  /**
+   * Unified debug view for a single call. Consolidates the approval,
+   * agent run, voice_call activity, every audit event keyed off the
+   * workflow id, and the live Temporal workflow status into one
+   * response so an operator can diagnose "my call didn't ring"
+   * without ten tool calls.
+   */
+  @Get(":workflowId/debug")
+  @UseGuards(JwtAuthGuard)
+  async debug(@Param("workflowId") workflowId: string) {
+    return this.service.getDebug(this.tenant.tenantId, workflowId);
+  }
+
   @Get(":workflowId/transcript")
   @UseGuards(JwtAuthGuard)
   async transcript(@Param("workflowId") workflowId: string) {
