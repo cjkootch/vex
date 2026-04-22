@@ -10,6 +10,7 @@ import { SignalsPanel } from "@/components/signals/signals-panel";
 import { EditDealForm } from "@/components/crm/edit-deal-form";
 import { VesselPanel } from "@/components/deals/vessel-panel";
 import { PortPanel } from "@/components/deals/port-panel";
+import { ReadinessPanel } from "@/components/deals/readiness-panel";
 import { Tabs } from "@/components/ui/tabs";
 import { AskVexButton } from "@/components/shell/ask-vex-button";
 
@@ -207,6 +208,13 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
             id: "overview",
             label: "Overview",
             content: <OverviewTab deal={deal} />,
+          },
+          {
+            id: "readiness",
+            label: "Readiness",
+            content: (
+              <ReadinessPanel dealId={deal.id} dealRef={deal.dealRef} />
+            ),
           },
           {
             id: "documents",

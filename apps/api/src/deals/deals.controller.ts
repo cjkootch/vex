@@ -1546,6 +1546,107 @@ export class DealsController {
     return { deal };
   }
 
+  /**
+   * Readiness matrix — per-deal operating checklist. Joins every
+   * table that carries a "can we actually ship this?" signal and
+   * reduces each to one of four states: complete, stale, incomplete,
+   * missing, or blocked. Powers the Readiness tab on the deal
+   * detail page so an operator sees at a glance what's stopping
+   * the deal from moving.
+   *
+   * Eight checks, all optional per deal stage — the UI never hides
+   * a row, because "missing" is itself a signal the operator needs.
+   */
+  @Get(":id/readiness")
+  async readiness(@Param("id") id: string) {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const deal = await this.deals.findById(tx, id);
+      if (!deal) throw new NotFoundException(`deal ${id} not found`);
+
+      const [
+        buyer,
+        participantRows,
+        counterpartyRows,
+        documentRows,
+        followUpRows,
+        latestFreight,
+      ] = await Promise.all([
+        this.organizations.findById(tx, deal.buyerOrgId),
+        tx
+          .select()
+          .from(schema.fuelDealParticipants)
+          .where(eq(schema.fuelDealParticipants.dealId, id)),
+        // Counterparty scores are keyed on orgId (not dealId) — the
+        // same counterparty score applies across every deal where
+        // that org sits on the buyer or supplier side. For this
+        // matrix we use the buyer's most recent score; a future
+        // enhancement can roll in supplier scores as a secondary
+        // row.
+        tx
+          .select()
+          .from(schema.fuelDealCounterpartyScores)
+          .where(eq(schema.fuelDealCounterpartyScores.orgId, deal.buyerOrgId))
+          .orderBy(desc(schema.fuelDealCounterpartyScores.scoredAt))
+          .limit(1),
+        tx
+          .select({
+            documentType: schema.fuelDealDocuments.documentType,
+            uploadedAt: schema.fuelDealDocuments.uploadedAt,
+          })
+          .from(schema.fuelDealDocuments)
+          .where(eq(schema.fuelDealDocuments.dealId, id)),
+        tx
+          .select()
+          .from(schema.followUps)
+          .where(
+            and(
+              eq(schema.followUps.subjectType, "fuel_deal"),
+              eq(schema.followUps.subjectId, id),
+              eq(schema.followUps.status, "open"),
+            ),
+          )
+          .orderBy(schema.followUps.dueAt)
+          .limit(1),
+        loadLatestFreightForDeal(tx, deal),
+      ]);
+
+      const supplierOrgIds = participantRows
+        .filter(
+          (p) => p.partyType === "supplier" || p.partyType === "supplier_broker",
+        )
+        .map((p) => p.orgId)
+        .filter((v): v is string => typeof v === "string" && v.length > 0);
+      const suppliers =
+        supplierOrgIds.length > 0
+          ? await tx
+              .select()
+              .from(schema.organizations)
+              .where(inArray(schema.organizations.id, supplierOrgIds))
+          : [];
+
+      const checks = [
+        kycCheck(documentRows),
+        ofacCheck(buyer, suppliers),
+        counterpartyCheck(counterpartyRows[0] ?? null),
+        freightCheck(latestFreight),
+        vesselCheck(deal.vesselId ?? null),
+        paymentTermsCheck(deal.paymentTerms ?? null),
+        docsCheck(documentRows, deal.status),
+        nextMilestoneCheck(followUpRows[0] ?? null),
+      ];
+
+      const summary = summariseReadiness(checks);
+
+      return {
+        dealId: deal.id,
+        dealRef: deal.dealRef,
+        status: deal.status,
+        summary,
+        checks,
+      };
+    });
+  }
+
 }
 
 /**
@@ -1620,6 +1721,470 @@ function findMissingEconomicsFields(
   if (!input.volumeUsg || input.volumeUsg <= 0) missing.push("volumeUsg");
   if (input.freightPerUsg === undefined) missing.push("freightPerUsg");
   return missing;
+}
+
+// ---------------------------------------------------------------------------
+// Readiness matrix helpers. Each check reduces a slice of the deal's
+// context to one of five states:
+//
+//   complete    — satisfies the rule fully
+//   stale       — satisfied once, freshness has expired
+//   incomplete  — partially satisfied (e.g. some docs present)
+//   missing     — nothing on file yet
+//   blocked     — cannot proceed (OFAC confirmed, Declined tier)
+//
+// The UI (ReadinessPanel) groups rows by state; the API just emits
+// typed payload. `ask` is a pre-written Ask Vex prompt the panel
+// links to when the operator clicks the row.
+// ---------------------------------------------------------------------------
+
+export type ReadinessState =
+  | "complete"
+  | "stale"
+  | "incomplete"
+  | "missing"
+  | "blocked";
+
+export interface ReadinessCheck {
+  id:
+    | "kyc"
+    | "ofac"
+    | "counterparty"
+    | "freight"
+    | "vessel"
+    | "payment"
+    | "docs"
+    | "milestone";
+  label: string;
+  state: ReadinessState;
+  detail: string;
+  lastVerifiedAt: string | null;
+  ask: string;
+  deepLink: string | null;
+}
+
+const OFAC_FRESH_DAYS = 30;
+const FREIGHT_FRESH_DAYS = 7;
+const FREIGHT_STALE_DAYS = 30;
+
+/**
+ * Required deal-document types per downstream stage. A deal in draft
+ * only needs a term sheet; one that's moved to loading or beyond is
+ * incomplete if it doesn't have the shipment-side docs too. Keep the
+ * required set small — false positives on this check erode trust in
+ * the whole matrix.
+ */
+function requiredDocTypes(status: string): readonly string[] {
+  // Drizzle's enum string values match the DealDocumentType constants.
+  if (
+    status === "loading" ||
+    status === "in_transit" ||
+    status === "delivered" ||
+    status === "settled"
+  ) {
+    return ["TermSheet", "Spa", "Bl", "Coa", "InsuranceCert"];
+  }
+  if (status === "approved") return ["TermSheet", "Spa"];
+  return ["TermSheet"];
+}
+
+function kycCheck(
+  docs: Array<{ documentType: string; uploadedAt: Date | null }>,
+): ReadinessCheck {
+  const signed = docs.filter(
+    (d) => d.documentType === "TermSheet" || d.documentType === "Spa",
+  );
+  if (signed.length === 0) {
+    return {
+      id: "kyc",
+      label: "KYC / term sheet",
+      state: "missing",
+      detail: "No term sheet or SPA on file.",
+      lastVerifiedAt: null,
+      ask: "What's needed to complete KYC on this deal?",
+      deepLink: null,
+    };
+  }
+  const mostRecent = signed.reduce<Date | null>((acc, d) => {
+    if (!d.uploadedAt) return acc;
+    if (!acc || d.uploadedAt > acc) return d.uploadedAt;
+    return acc;
+  }, null);
+  return {
+    id: "kyc",
+    label: "KYC / term sheet",
+    state: "complete",
+    detail: `${signed.length} signed contract doc${signed.length === 1 ? "" : "s"} on file.`,
+    lastVerifiedAt: mostRecent ? mostRecent.toISOString() : null,
+    ask: "Summarise the signed contract docs on this deal.",
+    deepLink: null,
+  };
+}
+
+type OrgRow = typeof schema.organizations.$inferSelect;
+
+function ofacCheck(
+  buyer: OrgRow | null,
+  suppliers: OrgRow[],
+): ReadinessCheck {
+  const orgs: OrgRow[] = [];
+  if (buyer) orgs.push(buyer);
+  for (const s of suppliers) orgs.push(s);
+  if (orgs.length === 0) {
+    return {
+      id: "ofac",
+      label: "OFAC clear",
+      state: "missing",
+      detail: "No counterparty orgs linked to the deal.",
+      lastVerifiedAt: null,
+      ask: "Why is there no counterparty org linked to this deal?",
+      deepLink: null,
+    };
+  }
+  const now = Date.now();
+  let worstState: ReadinessState = "complete";
+  let lastVerified: Date | null = null;
+  const notes: string[] = [];
+  for (const o of orgs) {
+    if (o.ofacStatus === "confirmed_match") {
+      worstState = "blocked";
+      notes.push(`${o.legalName}: confirmed OFAC match`);
+      continue;
+    }
+    if (o.ofacStatus === "potential_match") {
+      if (worstState !== "blocked") worstState = "blocked";
+      notes.push(`${o.legalName}: potential match — review`);
+      continue;
+    }
+    if (o.ofacStatus === "unscreened" || !o.ofacScreenedAt) {
+      if (worstState === "complete") worstState = "missing";
+      notes.push(`${o.legalName}: unscreened`);
+      continue;
+    }
+    const ageDays =
+      (now - o.ofacScreenedAt.getTime()) / (24 * 60 * 60 * 1000);
+    if (ageDays > OFAC_FRESH_DAYS) {
+      if (worstState === "complete") worstState = "stale";
+      notes.push(
+        `${o.legalName}: screened ${Math.floor(ageDays)}d ago`,
+      );
+    } else {
+      notes.push(`${o.legalName}: clear`);
+    }
+    if (!lastVerified || o.ofacScreenedAt > lastVerified) {
+      lastVerified = o.ofacScreenedAt;
+    }
+  }
+  return {
+    id: "ofac",
+    label: "OFAC clear",
+    state: worstState,
+    detail: notes.join(" · "),
+    lastVerifiedAt: lastVerified ? lastVerified.toISOString() : null,
+    ask: "Re-run OFAC screening on every counterparty on this deal.",
+    deepLink: null,
+  };
+}
+
+type CounterpartyRow =
+  typeof schema.fuelDealCounterpartyScores.$inferSelect;
+
+function counterpartyCheck(
+  row: CounterpartyRow | null,
+): ReadinessCheck {
+  if (!row) {
+    return {
+      id: "counterparty",
+      label: "Counterparty approved",
+      state: "missing",
+      detail: "No counterparty risk score on file.",
+      lastVerifiedAt: null,
+      ask: "Score the counterparty risk on this deal.",
+      deepLink: null,
+    };
+  }
+  if (row.riskTier === "declined") {
+    return {
+      id: "counterparty",
+      label: "Counterparty approved",
+      state: "blocked",
+      detail: "Risk tier: Declined.",
+      lastVerifiedAt: row.scoredAt.toISOString(),
+      ask: "Why was this counterparty declined? What would unblock it?",
+      deepLink: null,
+    };
+  }
+  if (row.riskTier === "watch") {
+    return {
+      id: "counterparty",
+      label: "Counterparty approved",
+      state: "stale",
+      detail: "Risk tier: Watch — review before shipping.",
+      lastVerifiedAt: row.scoredAt.toISOString(),
+      ask: "What specifically put this counterparty on Watch?",
+      deepLink: null,
+    };
+  }
+  return {
+    id: "counterparty",
+    label: "Counterparty approved",
+    state: "complete",
+    detail: `Risk tier: ${row.riskTier.replace(/_/g, " ")}.`,
+    lastVerifiedAt: row.scoredAt.toISOString(),
+    ask: "Summarise why this counterparty lands in its current tier.",
+    deepLink: null,
+  };
+}
+
+/**
+ * Look up the most recent freight rate on the deal's origin →
+ * destination lane. Ports table carries the region slug we match
+ * on; falls back to null when the deal doesn't have linked ports
+ * yet (legacy text-only origin/destination).
+ */
+async function loadLatestFreightForDeal(
+  tx: Tx,
+  deal: typeof schema.fuelDeals.$inferSelect,
+): Promise<{ rateDate: Date; rateUsdPerMt: number } | null> {
+  if (!deal.originPortId || !deal.destinationPortId) return null;
+  const [origin] = await tx
+    .select({ region: schema.ports.region })
+    .from(schema.ports)
+    .where(eq(schema.ports.id, deal.originPortId))
+    .limit(1);
+  const [destination] = await tx
+    .select({ region: schema.ports.region })
+    .from(schema.ports)
+    .where(eq(schema.ports.id, deal.destinationPortId))
+    .limit(1);
+  if (!origin || !destination) return null;
+  const [rate] = await tx
+    .select({
+      rateDate: schema.freightRates.rateDate,
+      rateUsdPerMt: schema.freightRates.rateUsdPerMt,
+    })
+    .from(schema.freightRates)
+    .where(
+      and(
+        eq(schema.freightRates.originRegion, origin.region),
+        eq(schema.freightRates.destinationRegion, destination.region),
+      ),
+    )
+    .orderBy(desc(schema.freightRates.rateDate))
+    .limit(1);
+  if (!rate) return null;
+  // Drizzle's `date()` returns the column as a string ("2026-04-21")
+  // from the node-postgres driver; coerce to Date on the way out so
+  // the readiness checks can do simple time math.
+  const raw: unknown = rate.rateDate;
+  const rateDate =
+    raw instanceof Date
+      ? raw
+      : typeof raw === "string"
+        ? new Date(raw)
+        : new Date();
+  return { rateDate, rateUsdPerMt: rate.rateUsdPerMt };
+}
+
+function freightCheck(
+  rate: { rateDate: Date; rateUsdPerMt: number } | null,
+): ReadinessCheck {
+  if (!rate) {
+    return {
+      id: "freight",
+      label: "Freight quote fresh",
+      state: "missing",
+      detail: "No freight rate on file for this lane.",
+      lastVerifiedAt: null,
+      ask: "Pull a fresh freight quote for this lane.",
+      deepLink: null,
+    };
+  }
+  const ageDays =
+    (Date.now() - rate.rateDate.getTime()) / (24 * 60 * 60 * 1000);
+  const age = Math.floor(ageDays);
+  const rateStr = `$${rate.rateUsdPerMt.toFixed(2)}/MT`;
+  if (ageDays <= FREIGHT_FRESH_DAYS) {
+    return {
+      id: "freight",
+      label: "Freight quote fresh",
+      state: "complete",
+      detail: `${rateStr} · ${age}d old.`,
+      lastVerifiedAt: rate.rateDate.toISOString(),
+      ask: "Compare our locked freight on this deal to the current market.",
+      deepLink: null,
+    };
+  }
+  if (ageDays <= FREIGHT_STALE_DAYS) {
+    return {
+      id: "freight",
+      label: "Freight quote fresh",
+      state: "stale",
+      detail: `${rateStr} · ${age}d old — re-quote.`,
+      lastVerifiedAt: rate.rateDate.toISOString(),
+      ask: "Pull a fresh freight quote for this lane.",
+      deepLink: null,
+    };
+  }
+  return {
+    id: "freight",
+    label: "Freight quote fresh",
+    state: "missing",
+    detail: `Last quote ${age}d old (stale).`,
+    lastVerifiedAt: rate.rateDate.toISOString(),
+    ask: "Pull a fresh freight quote for this lane.",
+    deepLink: null,
+  };
+}
+
+function vesselCheck(vesselId: string | null): ReadinessCheck {
+  if (!vesselId) {
+    return {
+      id: "vessel",
+      label: "Vessel selected",
+      state: "missing",
+      detail: "No vessel linked to the deal.",
+      lastVerifiedAt: null,
+      ask: "Propose a vessel for this deal from the available fleet.",
+      deepLink: null,
+    };
+  }
+  return {
+    id: "vessel",
+    label: "Vessel selected",
+    state: "complete",
+    detail: "Vessel selected.",
+    lastVerifiedAt: null,
+    ask: "Summarise the selected vessel's capacity, age, and flag.",
+    deepLink: null,
+  };
+}
+
+function paymentTermsCheck(
+  terms: string | null,
+): ReadinessCheck {
+  if (!terms) {
+    return {
+      id: "payment",
+      label: "Payment terms",
+      state: "missing",
+      detail: "Payment terms not set.",
+      lastVerifiedAt: null,
+      ask: "What payment terms make sense for this deal?",
+      deepLink: null,
+    };
+  }
+  const friendly = terms.replace(/_/g, " ");
+  return {
+    id: "payment",
+    label: "Payment terms",
+    state: "complete",
+    detail: friendly,
+    lastVerifiedAt: null,
+    ask: `Sanity-check our ${friendly} payment terms against the counterparty's tier.`,
+    deepLink: null,
+  };
+}
+
+function docsCheck(
+  docs: Array<{ documentType: string; uploadedAt: Date | null }>,
+  status: string,
+): ReadinessCheck {
+  const required = requiredDocTypes(status);
+  const present = new Set(docs.map((d) => d.documentType));
+  const missing = required.filter((r) => !present.has(r));
+  if (missing.length === 0) {
+    return {
+      id: "docs",
+      label: "Required docs",
+      state: "complete",
+      detail: `${required.length}/${required.length} required · ${docs.length} total on file.`,
+      lastVerifiedAt: null,
+      ask: "List every document on this deal and flag anything that looks inconsistent.",
+      deepLink: null,
+    };
+  }
+  if (missing.length === required.length) {
+    return {
+      id: "docs",
+      label: "Required docs",
+      state: "missing",
+      detail: `Missing: ${missing.join(", ")}.`,
+      lastVerifiedAt: null,
+      ask: `What do we need to collect to get the required docs (${missing.join(", ")}) on this deal?`,
+      deepLink: null,
+    };
+  }
+  return {
+    id: "docs",
+    label: "Required docs",
+    state: "incomplete",
+    detail: `Missing: ${missing.join(", ")}. Present: ${required.length - missing.length}/${required.length}.`,
+    lastVerifiedAt: null,
+    ask: `What's needed to collect ${missing.join(", ")} on this deal?`,
+    deepLink: null,
+  };
+}
+
+function nextMilestoneCheck(
+  row: typeof schema.followUps.$inferSelect | null,
+): ReadinessCheck {
+  if (!row) {
+    return {
+      id: "milestone",
+      label: "Next milestone owner",
+      state: "missing",
+      detail: "No open follow-up on this deal.",
+      lastVerifiedAt: null,
+      ask: "What's the next concrete milestone on this deal and who should own it?",
+      deepLink: null,
+    };
+  }
+  const now = Date.now();
+  const overdue = row.dueAt ? row.dueAt.getTime() < now : false;
+  const owner = row.assignedTo ?? "unassigned";
+  if (overdue) {
+    const days = Math.floor(
+      (now - (row.dueAt as Date).getTime()) / (24 * 60 * 60 * 1000),
+    );
+    return {
+      id: "milestone",
+      label: "Next milestone owner",
+      state: "stale",
+      detail: `${row.title} · ${owner} · ${days}d overdue.`,
+      lastVerifiedAt: row.dueAt ? row.dueAt.toISOString() : null,
+      ask: `Why is the milestone "${row.title}" on this deal overdue and what should unblock it?`,
+      deepLink: "/app/follow-ups",
+    };
+  }
+  return {
+    id: "milestone",
+    label: "Next milestone owner",
+    state: row.assignedTo ? "complete" : "incomplete",
+    detail: `${row.title} · ${owner}${row.dueAt ? ` · due ${row.dueAt.toDateString()}` : ""}.`,
+    lastVerifiedAt: row.dueAt ? row.dueAt.toISOString() : null,
+    ask: row.assignedTo
+      ? `Who is ${row.assignedTo} and what's the status on "${row.title}"?`
+      : `This deal's next milestone "${row.title}" has no owner — who should it be?`,
+    deepLink: "/app/follow-ups",
+  };
+}
+
+function summariseReadiness(checks: ReadinessCheck[]): {
+  total: number;
+  complete: number;
+  blocked: number;
+  attention: number;
+} {
+  let complete = 0;
+  let blocked = 0;
+  let attention = 0;
+  for (const c of checks) {
+    if (c.state === "complete") complete += 1;
+    else if (c.state === "blocked") blocked += 1;
+    else attention += 1; // stale, incomplete, missing all want eyes on them
+  }
+  return { total: checks.length, complete, blocked, attention };
 }
 
 function clampLimit(raw: string | undefined, fallback: number, max: number): number {
