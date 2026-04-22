@@ -6,6 +6,7 @@ import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
 import { NewDealForm } from "@/components/crm/new-deal-form";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
+import { DealCockpit } from "@/components/deals/deal-cockpit";
 import { fetchWithRetry } from "@/lib/fetch-with-retry";
 import { downloadCsv, toCsv } from "@/lib/csv";
 
@@ -299,6 +300,8 @@ export default function DealsPage() {
           </button>
         </div>
       </header>
+
+      <DealCockpit />
 
       <NewDealForm
         open={creating}

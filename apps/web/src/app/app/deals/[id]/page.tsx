@@ -13,6 +13,7 @@ import { VesselPanel } from "@/components/deals/vessel-panel";
 import { PortPanel } from "@/components/deals/port-panel";
 import { ReadinessPanel } from "@/components/deals/readiness-panel";
 import { ReadinessPill } from "@/components/deals/readiness-pill";
+import { PulseBand } from "@/components/deals/pulse-band";
 import { Tabs } from "@/components/ui/tabs";
 import { AskVexButton } from "@/components/shell/ask-vex-button";
 
@@ -183,6 +184,12 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
         </div>
         </div>
       </header>
+
+      <PulseBand
+        dealId={deal.id}
+        dealRef={deal.dealRef}
+        updatedAt={deal.updatedAt ?? null}
+      />
 
       <QuickActions
         items={[

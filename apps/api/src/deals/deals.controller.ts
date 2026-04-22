@@ -442,6 +442,214 @@ export class DealsController {
     private readonly portsRepo: PortRepository,
   ) {}
 
+  /**
+   * Workspace pulse — per-deal execution status across every open
+   * deal in the tenant. Aggregates the cheap-to-query readiness
+   * signals (buyer OFAC, counterparty tier, vessel presence,
+   * compliance hold, staleness) and classifies each deal into one
+   * of four urgency groups. Powers the brief "Deals needing
+   * attention" section and the grouped view on /app/deals.
+   *
+   * Intentionally a narrower signal set than the full per-deal
+   * readiness matrix — this runs on every home-page load, so it
+   * stays on column-driven checks rather than doing doc-presence or
+   * freight-freshness queries per deal.
+   */
+  @Get("workspace-pulse")
+  async workspacePulse() {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const openStatuses: Array<
+        "draft"
+        | "negotiating"
+        | "pending_approval"
+        | "approved"
+        | "loading"
+        | "in_transit"
+        | "delivered"
+      > = [
+        "draft",
+        "negotiating",
+        "pending_approval",
+        "approved",
+        "loading",
+        "in_transit",
+        "delivered",
+      ];
+      const deals = await tx
+        .select({
+          id: schema.fuelDeals.id,
+          dealRef: schema.fuelDeals.dealRef,
+          status: schema.fuelDeals.status,
+          product: schema.fuelDeals.product,
+          buyerOrgId: schema.fuelDeals.buyerOrgId,
+          volumeUsg: schema.fuelDeals.volumeUsg,
+          volumeUnit: schema.fuelDeals.volumeUnit,
+          vesselId: schema.fuelDeals.vesselId,
+          complianceHold: schema.fuelDeals.complianceHold,
+          updatedAt: schema.fuelDeals.updatedAt,
+        })
+        .from(schema.fuelDeals)
+        .where(inArray(schema.fuelDeals.status, openStatuses))
+        .orderBy(desc(schema.fuelDeals.updatedAt))
+        .limit(200);
+
+      if (deals.length === 0) {
+        return {
+          generatedAt: new Date().toISOString(),
+          deals: [],
+          summary: { blocked: 0, at_risk: 0, stale: 0, healthy: 0 },
+        };
+      }
+
+      const buyerIds = Array.from(new Set(deals.map((d) => d.buyerOrgId)));
+      const buyers = await tx
+        .select({
+          id: schema.organizations.id,
+          legalName: schema.organizations.legalName,
+          ofacStatus: schema.organizations.ofacStatus,
+          ofacScreenedAt: schema.organizations.ofacScreenedAt,
+        })
+        .from(schema.organizations)
+        .where(inArray(schema.organizations.id, buyerIds));
+      const buyerById = new Map(buyers.map((b) => [b.id, b]));
+
+      // Most recent counterparty score per buyer org.
+      const scores = await tx
+        .select({
+          orgId: schema.fuelDealCounterpartyScores.orgId,
+          riskTier: schema.fuelDealCounterpartyScores.riskTier,
+          scoredAt: schema.fuelDealCounterpartyScores.scoredAt,
+        })
+        .from(schema.fuelDealCounterpartyScores)
+        .where(
+          inArray(
+            schema.fuelDealCounterpartyScores.orgId,
+            buyerIds,
+          ),
+        )
+        .orderBy(desc(schema.fuelDealCounterpartyScores.scoredAt));
+      const tierByOrg = new Map<string, string>();
+      for (const s of scores) {
+        if (!tierByOrg.has(s.orgId)) tierByOrg.set(s.orgId, s.riskTier);
+      }
+
+      const now = Date.now();
+      const pulseDeals = deals.map((d) => {
+        const buyer = buyerById.get(d.buyerOrgId);
+        const tier = tierByOrg.get(d.buyerOrgId);
+        const blockers: Array<{ kind: string; detail: string }> = [];
+        const attention: Array<{ kind: string; detail: string }> = [];
+
+        if (d.complianceHold) {
+          blockers.push({
+            kind: "compliance_hold",
+            detail: "Deal is on compliance hold.",
+          });
+        }
+        if (buyer) {
+          if (buyer.ofacStatus === "confirmed_match") {
+            blockers.push({
+              kind: "ofac_match",
+              detail: `Buyer ${buyer.legalName}: confirmed OFAC match.`,
+            });
+          } else if (buyer.ofacStatus === "potential_match") {
+            blockers.push({
+              kind: "ofac_potential",
+              detail: `Buyer ${buyer.legalName}: potential OFAC match — review.`,
+            });
+          } else if (buyer.ofacStatus === "unscreened") {
+            attention.push({
+              kind: "ofac_unscreened",
+              detail: `Buyer ${buyer.legalName} has not been OFAC-screened.`,
+            });
+          } else if (buyer.ofacScreenedAt) {
+            const ageDays =
+              (now - buyer.ofacScreenedAt.getTime()) /
+              (24 * 60 * 60 * 1000);
+            if (ageDays > 30) {
+              attention.push({
+                kind: "ofac_stale",
+                detail: `Buyer OFAC screen is ${Math.floor(ageDays)}d old.`,
+              });
+            }
+          }
+        }
+        if (tier === "declined") {
+          blockers.push({
+            kind: "counterparty_declined",
+            detail: "Counterparty risk tier: Declined.",
+          });
+        } else if (tier === "watch") {
+          attention.push({
+            kind: "counterparty_watch",
+            detail: "Counterparty on Watch — review before shipping.",
+          });
+        }
+        if (
+          !d.vesselId &&
+          (d.status === "approved" ||
+            d.status === "loading" ||
+            d.status === "in_transit")
+        ) {
+          attention.push({
+            kind: "vessel_missing",
+            detail: "No vessel selected for a deal past approval.",
+          });
+        }
+
+        const ageDays = Math.floor(
+          (now - d.updatedAt.getTime()) / (24 * 60 * 60 * 1000),
+        );
+        const stale = ageDays >= 14;
+
+        let urgency: "blocked" | "at_risk" | "stale" | "healthy";
+        if (blockers.length > 0) urgency = "blocked";
+        else if (attention.length > 0) urgency = "at_risk";
+        else if (stale) urgency = "stale";
+        else urgency = "healthy";
+
+        if (stale && urgency !== "blocked" && urgency !== "at_risk") {
+          attention.push({
+            kind: "stale",
+            detail: `No updates in ${ageDays}d.`,
+          });
+        }
+
+        const nextAction = pickNextAction(d.status, blockers, attention);
+
+        return {
+          dealId: d.id,
+          dealRef: d.dealRef,
+          status: d.status,
+          product: d.product,
+          buyerName: buyer?.legalName ?? null,
+          buyerOrgId: d.buyerOrgId,
+          volumeUsg: d.volumeUsg,
+          volumeUnit: d.volumeUnit,
+          updatedAt: d.updatedAt.toISOString(),
+          ageDays,
+          urgency,
+          blockers,
+          attention,
+          nextAction,
+        };
+      });
+
+      const summary = {
+        blocked: pulseDeals.filter((d) => d.urgency === "blocked").length,
+        at_risk: pulseDeals.filter((d) => d.urgency === "at_risk").length,
+        stale: pulseDeals.filter((d) => d.urgency === "stale").length,
+        healthy: pulseDeals.filter((d) => d.urgency === "healthy").length,
+      };
+
+      return {
+        generatedAt: new Date().toISOString(),
+        deals: pulseDeals,
+        summary,
+      };
+    });
+  }
+
   @Get()
   async list(
     @Query("status") statusRaw?: string,
@@ -2168,6 +2376,71 @@ function nextMilestoneCheck(
       : `This deal's next milestone "${row.title}" has no owner — who should it be?`,
     deepLink: "/app/follow-ups",
   };
+}
+
+/**
+ * Given a deal's status + its current blocker/attention set, pick
+ * the single most actionable next-step hint. Blockers win over
+ * attention; if neither is set, the hint tracks the status-driven
+ * natural next milestone (e.g. approved → select vessel). Kept to
+ * one sentence, imperative voice, so the UI can render it inline
+ * without truncation juggling.
+ */
+function pickNextAction(
+  status: string,
+  blockers: Array<{ kind: string; detail: string }>,
+  attention: Array<{ kind: string; detail: string }>,
+): string | null {
+  if (blockers.length > 0) {
+    const b = blockers[0]!;
+    switch (b.kind) {
+      case "compliance_hold":
+        return "Resolve compliance hold before moving forward.";
+      case "ofac_match":
+        return "Review OFAC match on buyer — escalate or clear.";
+      case "ofac_potential":
+        return "Investigate potential OFAC match on buyer.";
+      case "counterparty_declined":
+        return "Buyer declined — decide whether to continue or close.";
+      default:
+        return "Resolve blocker before moving forward.";
+    }
+  }
+  if (attention.length > 0) {
+    const a = attention[0]!;
+    switch (a.kind) {
+      case "ofac_unscreened":
+        return "Run OFAC screening on buyer.";
+      case "ofac_stale":
+        return "Re-run OFAC screening — previous one is stale.";
+      case "counterparty_watch":
+        return "Review why counterparty is on Watch before shipping.";
+      case "vessel_missing":
+        return "Select a vessel for this deal.";
+      case "stale":
+        return "Ping buyer / supplier — no updates recently.";
+      default:
+        return "Address outstanding attention item.";
+    }
+  }
+  switch (status) {
+    case "draft":
+      return "Confirm terms and move to Negotiating.";
+    case "negotiating":
+      return "Lock terms + request approval.";
+    case "pending_approval":
+      return "Awaiting approval — nudge reviewer if stale.";
+    case "approved":
+      return "Select vessel and lock freight.";
+    case "loading":
+      return "Confirm BL issued + cargo loaded.";
+    case "in_transit":
+      return "Track vessel; prepare arrival docs.";
+    case "delivered":
+      return "Collect final payment + settle.";
+    default:
+      return null;
+  }
 }
 
 function summariseReadiness(checks: ReadinessCheck[]): {
