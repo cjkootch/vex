@@ -143,6 +143,51 @@ export function buildNormalizationProcessor(deps: NormalizationProcessorDeps) {
       if (deps.agentsQueue && outcome.status === "ok") {
         if (
           raw.provider === "website_chat" &&
+          (raw.payload as { event?: unknown }).event === "conversation.started"
+        ) {
+          // Lighter signal: a visitor identified themselves and opened
+          // the chat. Fire a Slack notification immediately — many
+          // sessions never reach `conversation.ended` (idle / unload),
+          // so the operator needs to know about a chat the moment it
+          // starts, not only after qualification can run.
+          const conversationId = (raw.payload as { conversation_id?: unknown })
+            .conversation_id;
+          if (typeof conversationId === "string" && outcome.leadId) {
+            const payload = raw.payload as {
+              lead?: { name?: unknown; email?: unknown };
+              page?: { url?: unknown; referrer?: unknown };
+            };
+            await addAgentJob(
+              deps.agentsQueue,
+              {
+                kind: "chat_started_notification",
+                workspace_id: tenantId,
+                input: {
+                  conversation_id: conversationId,
+                  lead_id: outcome.leadId,
+                  contact_name:
+                    typeof payload.lead?.name === "string"
+                      ? payload.lead.name
+                      : null,
+                  contact_email:
+                    typeof payload.lead?.email === "string"
+                      ? payload.lead.email
+                      : null,
+                  page_url:
+                    typeof payload.page?.url === "string"
+                      ? payload.page.url
+                      : null,
+                  referrer:
+                    typeof payload.page?.referrer === "string"
+                      ? payload.page.referrer
+                      : null,
+                },
+              },
+              `chat-started:${conversationId}`,
+            );
+          }
+        } else if (
+          raw.provider === "website_chat" &&
           (raw.payload as { event?: unknown }).event === "conversation.ended"
         ) {
           const conversationId = (raw.payload as { conversation_id?: unknown })

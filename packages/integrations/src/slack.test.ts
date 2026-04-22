@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { SlackNotifier, buildHotLeadBlocks } from "./slack.js";
+import {
+  SlackNotifier,
+  buildHotLeadBlocks,
+  buildNewChatBlocks,
+} from "./slack.js";
 
 const BASE_PAYLOAD = {
   leadId: "01HLEADHOT0000000000000001",
@@ -139,5 +143,97 @@ describe("buildHotLeadBlocks", () => {
       "https://vex.example.com",
     );
     expect(blocks.find((b) => b["type"] === "section")).toBeUndefined();
+  });
+});
+
+const CHAT_PAYLOAD = {
+  leadId: "01HLEADCHAT0000000000000001",
+  contactId: "01HCONTACTCHAT0000000000001",
+  contactName: "Priya Narine",
+  contactEmail: "priya@massy.tt",
+  orgName: "massy.tt",
+  pageUrl: "https://vectortradecapital.com/fuel/ulsd?utm_source=li",
+  referrer: "https://linkedin.com/feed/",
+};
+
+describe("notifyNewChat", () => {
+  it("POSTs a chat-started Block Kit payload", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => "ok",
+    });
+    const notifier = new SlackNotifier({
+      webhookUrl: "https://hooks.slack.com/services/T/B/X",
+      appBaseUrl: "https://vex.example.com",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      log: silentLog(),
+    });
+    const result = await notifier.notifyNewChat(CHAT_PAYLOAD);
+    expect(result).toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const init = fetchImpl.mock.calls[0]![1];
+    const body = JSON.parse(init.body as string) as {
+      blocks: unknown[];
+      text: string;
+    };
+    expect(body.text).toContain("New website chat");
+    expect(body.text).toContain("Priya");
+  });
+
+  it("is a no-op when slack webhook is disabled", async () => {
+    const notifier = new SlackNotifier({
+      webhookUrl: null,
+      appBaseUrl: null,
+      log: silentLog(),
+    });
+    expect(await notifier.notifyNewChat(CHAT_PAYLOAD)).toEqual({
+      ok: false,
+      reason: "disabled",
+    });
+  });
+});
+
+describe("buildNewChatBlocks", () => {
+  it("renders header + context + Open-contact deep link", () => {
+    const blocks = buildNewChatBlocks(CHAT_PAYLOAD, "https://vex.example.com");
+    const types = blocks.map((b) => b["type"]);
+    expect(types).toEqual(["header", "context", "actions"]);
+    const header = blocks[0] as { text: { text: string } };
+    expect(header.text.text).toContain("Priya Narine");
+    expect(header.text.text).toContain("massy.tt");
+    const actions = blocks[2] as {
+      elements: Array<{ url: string; text: { text: string } }>;
+    };
+    expect(actions.elements[0]!.url).toBe(
+      "https://vex.example.com/app/contacts/01HCONTACTCHAT0000000000001",
+    );
+    expect(actions.elements[0]!.text.text).toBe("Open contact");
+  });
+
+  it("falls back to /app/inbox when contactId is missing", () => {
+    const blocks = buildNewChatBlocks(
+      { ...CHAT_PAYLOAD, contactId: null },
+      "https://vex.example.com",
+    );
+    const actions = blocks.find((b) => b["type"] === "actions") as {
+      elements: Array<{ url: string }>;
+    };
+    expect(actions.elements[0]!.url).toBe(
+      "https://vex.example.com/app/inbox",
+    );
+  });
+
+  it("omits context when no email/page/referrer present", () => {
+    const blocks = buildNewChatBlocks(
+      {
+        ...CHAT_PAYLOAD,
+        contactEmail: null,
+        pageUrl: null,
+        referrer: null,
+      },
+      null,
+    );
+    expect(blocks.find((b) => b["type"] === "context")).toBeUndefined();
   });
 });

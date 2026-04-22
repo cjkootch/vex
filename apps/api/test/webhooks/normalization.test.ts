@@ -610,4 +610,75 @@ describe("buildNormalizationProcessor — lead_qualification fan-out", () => {
       input: { source: "website_chat", conversation_id: "vtc-123" },
     });
   });
+
+  it("fires chat_started_notification with visitor + page context on a conversation.started raw_event", async () => {
+    const deps = buildLeadCaptureDeps();
+    const tx = makeFakeTx();
+    const fakeDb = {
+      transaction: async <T>(cb: (t: Tx) => Promise<T>) => cb(tx),
+    } as unknown as Db;
+    const agents = buildFakeAgentsQueue();
+
+    const processor = buildNormalizationProcessor({
+      db: fakeDb,
+      contacts: deps.contacts as never,
+      touchpoints: deps.touchpoints as never,
+      activities: deps.activities as never,
+      events: deps.events as never,
+      organizations: deps.organizations as never,
+      memberships: deps.memberships as never,
+      leads: deps.leads as never,
+      documents: deps.documents as never,
+      agentsQueue: agents.queue,
+      rawEvents: {
+        findById: vi.fn(async () => ({
+          id: "raw-chat-start-1",
+          tenantId: "01HSEEDWRK0000000000000001",
+          provider: "website_chat",
+          providerEventId: "vtc-999:conversation.started",
+          headers: {},
+          payload: {
+            event: "conversation.started",
+            conversation_id: "vtc-999",
+            timestamp: "2026-04-20T04:06:39.694Z",
+            lead: { name: "Priya Narine", email: "priya@massy.tt" },
+            page: {
+              url: "https://vectortradecapital.com/fuel/ulsd",
+              referrer: "https://linkedin.com/feed/",
+            },
+          },
+          receivedAt: new Date(),
+          checksum: null,
+          status: "pending" as const,
+        })),
+        updateStatus: vi.fn(async () => undefined),
+        insertIfNotExists: vi.fn(),
+        listFailed: vi.fn(),
+      } as never,
+    });
+
+    await processor({
+      data: {
+        raw_event_id: "raw-chat-start-1",
+        tenant_id: "01HSEEDWRK0000000000000001",
+      },
+    } as never);
+
+    expect(agents.calls).toHaveLength(1);
+    const call = agents.calls[0]!;
+    expect(call.data).toMatchObject({
+      kind: "chat_started_notification",
+      workspace_id: "01HSEEDWRK0000000000000001",
+      input: {
+        conversation_id: "vtc-999",
+        contact_name: "Priya Narine",
+        contact_email: "priya@massy.tt",
+        page_url: "https://vectortradecapital.com/fuel/ulsd",
+        referrer: "https://linkedin.com/feed/",
+      },
+    });
+    expect((call.opts as { jobId: string }).jobId).toContain(
+      "chat-started:vtc-999",
+    );
+  });
 });

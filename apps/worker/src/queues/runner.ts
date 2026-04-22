@@ -452,6 +452,55 @@ function buildAgentProcessor(
 
         return record;
       }
+      case "chat_started_notification": {
+        // Lightweight Slack ping fired the moment a visitor identifies
+        // themselves on the marketing chatbot. Doesn't run an LLM —
+        // just relays {who, where, link} so the operator can react
+        // in real time. The qualification pass on conversation.ended
+        // still runs separately and produces the hot-lead nudge.
+        const leadId = data.input?.["lead_id"];
+        const conversationId = data.input?.["conversation_id"];
+        if (typeof leadId !== "string" || typeof conversationId !== "string") {
+          throw new Error(
+            "chat_started_notification job missing lead_id or conversation_id",
+          );
+        }
+        if (slack) {
+          const contactEmail =
+            typeof data.input?.["contact_email"] === "string"
+              ? (data.input["contact_email"] as string)
+              : null;
+          const at = contactEmail?.lastIndexOf("@") ?? -1;
+          const domain =
+            contactEmail && at !== -1
+              ? contactEmail.slice(at + 1).trim().toLowerCase()
+              : null;
+          await slack.notifyNewChat({
+            leadId,
+            contactId: null,
+            contactName:
+              typeof data.input?.["contact_name"] === "string"
+                ? (data.input["contact_name"] as string)
+                : null,
+            contactEmail,
+            orgName: domain,
+            pageUrl:
+              typeof data.input?.["page_url"] === "string"
+                ? (data.input["page_url"] as string)
+                : null,
+            referrer:
+              typeof data.input?.["referrer"] === "string"
+                ? (data.input["referrer"] as string)
+                : null,
+          });
+        }
+        return {
+          kind: "chat_started_notification",
+          conversation_id: conversationId,
+          lead_id: leadId,
+          notified: Boolean(slack),
+        };
+      }
       case "reactivation_batch": {
         const contactIds = data.input?.["contact_ids"];
         const productContext = data.input?.["product_context"];
