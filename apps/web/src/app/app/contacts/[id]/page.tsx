@@ -52,12 +52,30 @@ interface ContactResponse {
   deals: ContactDeal[];
 }
 
+interface ContactEnrollment {
+  id: string;
+  campaignId: string;
+  campaignChannel: string;
+  campaignSource: string | null;
+  campaignMedium: string | null;
+  campaignObjective: string | null;
+  campaignStatus: string;
+  state: string;
+  currentStep: number;
+  stepCount: number;
+  lastEventAt: string | null;
+  enrolledAt: string;
+  updatedAt: string;
+  error: string | null;
+}
+
 export default function ContactDetailPage({
   params,
 }: {
   params: { id: string };
 }) {
   const [data, setData] = useState<ContactResponse | null>(null);
+  const [enrollments, setEnrollments] = useState<ContactEnrollment[]>([]);
   const [orgNames, setOrgNames] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -84,6 +102,25 @@ export default function ContactDetailPage({
       })
       .catch((err: Error) => {
         if (!cancelled) setError(err.message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, refreshKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setEnrollments([]);
+    fetch(`/api/contacts/${params.id}/enrollments`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`${res.status}`);
+        return res.json();
+      })
+      .then((body: { enrollments?: ContactEnrollment[] }) => {
+        if (!cancelled) setEnrollments(body.enrollments ?? []);
+      })
+      .catch(() => {
+        /* sequences panel tolerates a missing fetch — it just shows empty */
       });
     return () => {
       cancelled = true;
@@ -263,6 +300,12 @@ export default function ContactDetailPage({
             content: <DealsTab deals={deals} orgNames={orgNames} />,
           },
           {
+            id: "sequences",
+            label: "Sequences",
+            count: enrollments.length,
+            content: <SequencesTab enrollments={enrollments} />,
+          },
+          {
             id: "documents",
             label: "Documents",
             content: (
@@ -412,6 +455,106 @@ function formatVolume(usg: number): string {
   if (usg >= 1_000_000) return `${(usg / 1_000_000).toFixed(1)}M USG`;
   if (usg >= 1_000) return `${(usg / 1_000).toFixed(0)}k USG`;
   return `${usg} USG`;
+}
+
+function SequencesTab({ enrollments }: { enrollments: ContactEnrollment[] }) {
+  if (enrollments.length === 0) {
+    return (
+      <p className="rounded-md border border-line bg-muted/20 px-3 py-4 text-sm text-white/50">
+        This contact isn&apos;t in any sequence. Enroll them from a
+        campaign&apos;s detail page.
+      </p>
+    );
+  }
+  const active = enrollments.filter(
+    (e) => e.state === "enrolled" || e.state === "paused",
+  );
+  const inactive = enrollments.filter(
+    (e) => e.state !== "enrolled" && e.state !== "paused",
+  );
+  return (
+    <div className="flex flex-col gap-4">
+      {active.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-[11px] uppercase tracking-wide text-white/40">
+            Active
+          </h3>
+          <ul className="flex flex-col divide-y divide-line/60 rounded-lg border border-line bg-muted/20 px-4">
+            {active.map((e) => (
+              <SequenceRow key={e.id} enrollment={e} />
+            ))}
+          </ul>
+        </div>
+      )}
+      {inactive.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-[11px] uppercase tracking-wide text-white/40">
+            History
+          </h3>
+          <ul className="flex flex-col divide-y divide-line/60 rounded-lg border border-line bg-muted/20 px-4">
+            {inactive.map((e) => (
+              <SequenceRow key={e.id} enrollment={e} />
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SequenceRow({ enrollment: e }: { enrollment: ContactEnrollment }) {
+  const label = sequenceLabel(e);
+  const progress = e.stepCount > 0 ? `${e.currentStep} / ${e.stepCount}` : "—";
+  return (
+    <li className="flex items-start justify-between py-3 text-sm">
+      <div className="flex flex-col gap-0.5">
+        <Link
+          href={`/app/marketing/${e.campaignId}`}
+          className="font-medium text-accent hover:underline"
+        >
+          {label}
+        </Link>
+        <div className="text-xs text-white/50">
+          Step {progress}
+          {e.campaignObjective ? ` · ${e.campaignObjective}` : ""}
+        </div>
+        <div className="text-[11px] text-white/40">
+          {e.lastEventAt
+            ? `Last event ${new Date(e.lastEventAt).toLocaleString()}`
+            : `Enrolled ${new Date(e.enrolledAt).toLocaleString()}`}
+          {e.error ? ` · error: ${e.error}` : ""}
+        </div>
+      </div>
+      <span
+        className={`rounded px-1.5 py-0.5 text-xs ${stateClass(e.state)}`}
+        title={`state: ${e.state}`}
+      >
+        {e.state}
+      </span>
+    </li>
+  );
+}
+
+function sequenceLabel(e: ContactEnrollment): string {
+  const left = e.campaignSource ?? e.campaignChannel;
+  return e.campaignMedium ? `${left} · ${e.campaignMedium}` : left;
+}
+
+function stateClass(state: string): string {
+  switch (state) {
+    case "enrolled":
+      return "bg-accent/20 text-accent";
+    case "paused":
+      return "bg-warn/20 text-warn";
+    case "completed":
+      return "bg-good/20 text-good";
+    case "unsubscribed":
+      return "bg-muted/60 text-white/60";
+    case "errored":
+      return "bg-bad/20 text-bad";
+    default:
+      return "bg-muted/60 text-white/70";
+  }
 }
 
 function Breadcrumb({ name }: { name: string | null }) {
