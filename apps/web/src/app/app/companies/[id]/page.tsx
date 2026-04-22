@@ -10,7 +10,7 @@ import { QuickActions } from "@/components/crm/quick-actions";
 import { SignalsPanel } from "@/components/signals/signals-panel";
 import { EditCompanyForm } from "@/components/crm/edit-company-form";
 import { Tabs } from "@/components/ui/tabs";
-import { buildAskVexHref } from "@/lib/ask-vex";
+import { AskVexButton } from "@/components/shell/ask-vex-button";
 
 interface OrganizationContact {
   id: string;
@@ -123,17 +123,35 @@ export default function CompanyDetailPage({
           >
             Edit
           </button>
-          <Link
-            href={buildAskVexHref({
-              type: "organization",
-              id: org.id,
-              label: org.legalName,
-              ask: `Tell me about ${org.legalName}`,
-            })}
-            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/80 hover:border-accent hover:text-white"
-          >
-            Ask Vex →
-          </Link>
+          <AskVexButton
+            type="organization"
+            id={org.id}
+            label={org.legalName}
+            defaultAsk={`Tell me about ${org.legalName}`}
+            actions={[
+              {
+                label: "Counterparty snapshot",
+                ask: `Give me a snapshot of ${org.legalName}: OFAC status, open deals, recent touchpoints, key contacts, any risk signals.`,
+                hint: "OFAC + deals + people at a glance",
+              },
+              {
+                label: "Research & enrich",
+                ask: `Research ${org.legalName}: ownership, counterparty risk, leadership, public news, anything relevant to trading with them.`,
+              },
+              {
+                label: "Draft outreach",
+                ask: `Draft a short intro email to the right person at ${org.legalName} — use what we already know about them.`,
+              },
+              {
+                label: "List their deals",
+                ask: `Show me every deal involving ${org.legalName} — buyer, supplier, or broker side — with status and value.`,
+              },
+              {
+                label: "Re-screen OFAC",
+                ask: `Re-run OFAC screening on ${org.legalName} and tell me if anything changed.`,
+              },
+            ]}
+          />
         </div>
       </header>
 

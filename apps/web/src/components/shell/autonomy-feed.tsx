@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { vexCopy } from "@vex/ui";
+import { buildAskVexHref, type AskVexSubjectType } from "@/lib/ask-vex";
 
 /**
  * Right-rail autonomy feed — what Vex has been doing for you in the
@@ -60,21 +61,41 @@ const GROUP_TONE: Record<GroupKey, { label: string; className: string }> = {
  * Poll the agent-runs endpoint. Tolerant of `AgentRunItem[]` or
  * `{ runs: AgentRunItem[] }` response shapes. Network errors stash the
  * latest message without blanking the previously-rendered data.
+ *
+ * When a `scope` is passed, the query adds `scope_type` + `scope_id`
+ * so the rail only lists runs that touched the entity in view — the
+ * rail becomes a "what did Vex just do to this deal / contact / org"
+ * timeline instead of a global activity log. Unscoped callers keep
+ * the global behaviour.
  */
-function useAgentRuns(): {
+function useAgentRuns(scope: AutonomyScope | null): {
   runs: AgentRunItem[] | null;
   error: string | null;
 } {
   const [runs, setRuns] = useState<AgentRunItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const scopeType = scope?.type ?? "";
+  const scopeId = scope?.id ?? "";
   useEffect(() => {
     let cancelled = false;
+    // Rebuild the URL every poll so scope changes land immediately —
+    // closing over the current scope via deps below.
+    const buildUrl = (): string => {
+      const params = new URLSearchParams();
+      params.set("limit", "20");
+      params.set("tenant_id", "current");
+      if (scopeType && scopeId) {
+        params.set("scope_type", scopeType);
+        params.set("scope_id", scopeId);
+      }
+      return `/api/agent-runs?${params.toString()}`;
+    };
     const tick = async (): Promise<void> => {
       try {
-        const res = await fetch(
-          "/api/agent-runs?limit=20&tenant_id=current",
-          { credentials: "include", cache: "no-store" },
-        );
+        const res = await fetch(buildUrl(), {
+          credentials: "include",
+          cache: "no-store",
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = (await res.json()) as
           | AgentRunItem[]
@@ -87,14 +108,94 @@ function useAgentRuns(): {
         setError((e as Error).message);
       }
     };
+    // Reset while scope changes so the old list doesn't flash.
+    setRuns(null);
     void tick();
     const interval = setInterval(() => void tick(), POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [scopeType, scopeId]);
   return { runs, error };
+}
+
+export interface AutonomyScope {
+  type: AskVexSubjectType;
+  id: string;
+  label: string;
+}
+
+/**
+ * Heuristic: when scoped, surface 2-4 one-click prompts that
+ * correspond to the things an operator most often asks Vex from the
+ * current page. These read as "Vex suggests" rather than "run this
+ * command" — click opens chat with the prompt pre-filled.
+ */
+function suggestionsFor(scope: AutonomyScope): AskSuggestion[] {
+  switch (scope.type) {
+    case "deal":
+      return [
+        {
+          label: "Check readiness to ship",
+          ask: `For deal ${scope.label}, walk me through KYC, OFAC, counterparty approval, freight freshness, vessel, payment terms, docs, and next milestone owner. Tell me what's blocking.`,
+        },
+        {
+          label: "Score this deal",
+          ask: `Score deal ${scope.label} and explain the EBITDA / margin drivers.`,
+        },
+        {
+          label: "Summarise recent activity",
+          ask: `Summarise the last 14 days of activity on deal ${scope.label}.`,
+        },
+      ];
+    case "organization":
+      return [
+        {
+          label: "Counterparty snapshot",
+          ask: `Give me a snapshot of ${scope.label}: OFAC status, open deals, recent touchpoints, key contacts, risk signals.`,
+        },
+        {
+          label: "Research & enrich",
+          ask: `Research ${scope.label}: ownership, leadership, public news, anything relevant to trading with them.`,
+        },
+        {
+          label: "Re-screen OFAC",
+          ask: `Re-run OFAC screening on ${scope.label} and tell me if anything changed.`,
+        },
+      ];
+    case "contact":
+      return [
+        {
+          label: "Who is this?",
+          ask: `Summarise ${scope.label}: role, company, last touchpoint, open deals.`,
+        },
+        {
+          label: "Call them (AI mode)",
+          ask: `Have Vex call ${scope.label} to check in on their open business with us.`,
+        },
+        {
+          label: "Draft email",
+          ask: `Draft a short email to ${scope.label} — pick the right topic based on our recent activity with them.`,
+        },
+      ];
+    case "campaign":
+      return [
+        {
+          label: "Campaign health",
+          ask: `How is campaign ${scope.label} performing? Engagement, reply rate, bounces, what's stuck.`,
+        },
+        {
+          label: "Draft next step",
+          ask: `Draft the next step for campaign ${scope.label} — pick the channel and the hook.`,
+        },
+      ];
+  }
+}
+
+interface AskSuggestion {
+  label: string;
+  ask: string;
 }
 
 function groupOf(run: AgentRunItem): GroupKey {
@@ -123,8 +224,10 @@ function formatCost(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
-export function AutonomyFeed() {
-  const { runs, error } = useAgentRuns();
+export function AutonomyFeed({
+  scope,
+}: { scope?: AutonomyScope | null } = {}) {
+  const { runs, error } = useAgentRuns(scope ?? null);
 
   const sections = useMemo(() => {
     const order: GroupKey[] = [
@@ -161,8 +264,49 @@ export function AutonomyFeed() {
     return { sum, n };
   }, [runs]);
 
+  const suggestions = scope ? suggestionsFor(scope) : null;
+
   return (
     <div className="flex h-full flex-col">
+      {scope ? (
+        <div className="border-b border-line bg-muted/20 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wider text-white/40">
+            Scoped to
+          </div>
+          <div className="mt-0.5 flex items-center gap-2 text-xs">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
+            <span className="truncate font-medium text-white/90">
+              {scope.label}
+            </span>
+            <span className="text-white/40">· {scope.type}</span>
+          </div>
+        </div>
+      ) : null}
+      {suggestions && suggestions.length > 0 ? (
+        <div className="border-b border-line bg-canvas/60 px-2 py-2">
+          <div className="mb-1 px-1 text-[10px] uppercase tracking-wider text-accent">
+            Vex suggests
+          </div>
+          <ul className="flex flex-col gap-1">
+            {suggestions.map((s) => (
+              <li key={s.label}>
+                <Link
+                  href={buildAskVexHref({
+                    type: scope!.type,
+                    id: scope!.id,
+                    label: scope!.label,
+                    ask: s.ask,
+                  })}
+                  className="block rounded-md px-2 py-1.5 text-xs text-white/80 transition-colors hover:bg-accent/15 hover:text-white"
+                >
+                  {s.label}
+                  <span className="ml-1 text-accent">→</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="flex-1 overflow-auto px-3 py-2">
         {runs === null && error === null ? (
           <SkeletonRows />
@@ -172,7 +316,9 @@ export function AutonomyFeed() {
           </p>
         ) : sections.length === 0 ? (
           <p className="px-1 py-4 text-sm text-white/60">
-            Vex is idle. Agents run on schedule.
+            {scope
+              ? `Vex hasn't run anything on ${scope.label} yet.`
+              : "Vex is idle. Agents run on schedule."}
           </p>
         ) : (
           sections.map(({ key, tone, items }) => (

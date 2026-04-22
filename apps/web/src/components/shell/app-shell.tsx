@@ -13,6 +13,10 @@ import { CommandPalette } from "./command-palette";
 import { FloatingVexWidget } from "./floating-vex-widget";
 import { NotificationsBell } from "./notifications-bell";
 import { StalledApprovalsBanner } from "./stalled-approvals-banner";
+import {
+  AutonomyFeed,
+  type AutonomyScope,
+} from "./autonomy-feed";
 import { VexLogo } from "@/components/brand/vex-logo";
 
 /**
@@ -149,36 +153,52 @@ const ITEM_ADMIN: NavItem = {
   iconPath: "M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z",
 };
 
-// Grouped nav. Brief + Chat sit at the top with no header (daily-
-// drivers); the rest cluster by function. Group state (open/closed)
-// persists per-user via localStorage so dropdowns remember.
+// Grouped nav for a trading-desk operator. Brief + Chat sit at the
+// top with no header (daily-drivers). Everything else clusters by
+// mental model, not by module type:
+//
+//   Now          — things that demand attention today
+//   Pipeline     — what you're moving (deals, the atoms)
+//   Counterparties — who you're moving them with (orgs + people)
+//   Outreach     — how you reach counterparties
+//   Intelligence — what you know (signals, strategy)
+//   Workspace    — admin plumbing
+//
+// "Now" separates time-sensitive surfaces (approvals waiting, inbox
+// replies, live signals) from the pipeline browse. "Counterparties"
+// is a dedicated section so Companies + Contacts read as one
+// relationship surface instead of two parallel CRUD tables.
 const NAV_GROUPS: NavGroup[] = [
   { id: null, label: null, items: [ITEM_BRIEF, ITEM_CHAT] },
   {
+    id: "now",
+    label: "Now",
+    items: [ITEM_INBOX, ITEM_APPROVALS, ITEM_SIGNALS, ITEM_FOLLOW_UPS],
+  },
+  {
     id: "pipeline",
     label: "Pipeline",
-    items: [ITEM_DEALS, ITEM_COMPANIES, ITEM_CONTACTS],
+    items: [ITEM_DEALS],
+  },
+  {
+    id: "counterparties",
+    label: "Counterparties",
+    items: [ITEM_COMPANIES, ITEM_CONTACTS],
   },
   {
     id: "outreach",
     label: "Outreach",
-    items: [
-      ITEM_INBOX,
-      ITEM_CALLS,
-      ITEM_VOICE,
-      ITEM_MARKETING,
-      ITEM_FOLLOW_UPS,
-    ],
+    items: [ITEM_CALLS, ITEM_VOICE, ITEM_MARKETING],
   },
   {
-    id: "autonomy",
-    label: "Autonomy",
-    items: [ITEM_APPROVALS, ITEM_SIGNALS],
+    id: "intelligence",
+    label: "Intelligence",
+    items: [ITEM_STRATEGY],
   },
   {
     id: "workspace",
     label: "Workspace",
-    items: [ITEM_STRATEGY, ITEM_IMPORT, ITEM_ADMIN],
+    items: [ITEM_IMPORT, ITEM_ADMIN],
   },
 ];
 
@@ -348,6 +368,13 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const navCounts = useNavCounts();
   const pending = navCounts.pendingApprovals;
   const pathname = usePathname() ?? "";
+  // Pathname → current entity scope for the autonomy rail. A page
+  // about a specific deal / contact / org should narrow the rail to
+  // runs that touched it; the home page stays global. We use the id
+  // as the scope label for now — detail pages already fetch the
+  // human-readable label themselves, so duplicating it here would
+  // add a second round-trip just to decorate the rail header.
+  const scope = deriveAutonomyScope(pathname);
 
   // Close the mobile drawer on route change so tapping a link doesn't
   // leave it hovering over the new page.
@@ -383,6 +410,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
         <AutonomyRail
           open={autonomyOpen}
           onToggle={() => setAutonomyOpen((o) => !o)}
+          scope={scope}
         />
       </div>
     </div>
@@ -765,9 +793,11 @@ function MobileNav({
 function AutonomyRail({
   open,
   onToggle,
+  scope,
 }: {
   open: boolean;
   onToggle: () => void;
+  scope: AutonomyScope | null;
 }) {
   return (
     <aside
@@ -780,15 +810,47 @@ function AutonomyRail({
         aria-label={open ? "Close activity rail" : "Open activity rail"}
         className="flex h-9 items-center justify-center gap-1 border-b border-line text-xs text-white/60 transition hover:text-white"
       >
-        {open ? "Activity ›" : "‹"}
+        {open
+          ? scope
+            ? `Activity · ${scope.type} ›`
+            : "Activity ›"
+          : "‹"}
       </button>
       {open ? (
-        <div className="flex-1 overflow-auto p-3 text-sm text-white/60">
-          {vexCopy.agents.working}
+        <div className="flex-1 overflow-hidden">
+          <AutonomyFeed scope={scope} />
         </div>
       ) : null}
     </aside>
   );
+}
+
+/**
+ * Pattern-match the current URL to the entity currently in view.
+ * Powers the AutonomyRail scope filter + the "Vex suggests" section.
+ * Returns null for list / home / chat routes — the rail falls back
+ * to the global feed.
+ */
+function deriveAutonomyScope(pathname: string): AutonomyScope | null {
+  const patterns: Array<{
+    regex: RegExp;
+    type: AutonomyScope["type"];
+  }> = [
+    { regex: /^\/app\/deals\/([^/?#]+)/, type: "deal" },
+    { regex: /^\/app\/companies\/([^/?#]+)/, type: "organization" },
+    { regex: /^\/app\/contacts\/([^/?#]+)/, type: "contact" },
+    { regex: /^\/app\/marketing\/([^/?#]+)/, type: "campaign" },
+  ];
+  for (const { regex, type } of patterns) {
+    const match = regex.exec(pathname);
+    const id = match?.[1];
+    if (id && id.length > 0) {
+      // The page itself carries the human label; the rail shows the
+      // type + truncated id until the page hydrates its own header.
+      return { type, id, label: `${id.slice(0, 8)}…` };
+    }
+  }
+  return null;
 }
 
 function Icon({ path, size = 5 }: { path: string; size?: 4 | 5 }) {
