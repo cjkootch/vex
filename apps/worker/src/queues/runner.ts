@@ -707,6 +707,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyDealSetBroker(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "bundle") {
+          await applyBundle(tx, deps, workspace_id, approval);
+          return;
+        }
       }
 
       await deps.events.insertIfNotExists(tx, workspace_id, {
@@ -1856,6 +1860,205 @@ async function applyDealMilestone(
  * hallucinating. The executor just logs the attempt so operators
  * can review "asks that need new actions" as a feature-request feed.
  */
+/**
+ * Dispatch a multi-action bundle. Each item gets a synthetic child
+ * approval (phantom id `${parent.id}.item.${i}`) passed through the
+ * matching handler — audit events use the phantom id so they don't
+ * collide with the parent, and the parent row is marked applied
+ * once at the end with a summary of what ran. Stops on the first
+ * item failure and emits `approval.executor.bundle.partial` with
+ * per-item results so the operator can see exactly what landed.
+ *
+ * The operator's unchecked items (`_unselectedItems`) never reach
+ * here — the approve endpoint trims them before marking decision.
+ * An empty items array after trim is treated as a no-op.
+ */
+async function applyBundle(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  parent: ApprovalRow,
+): Promise<void> {
+  if (parent.appliedObjectId) {
+    await recordExecutorReplay(tx, deps, tenantId, parent, "bundle");
+    return;
+  }
+  const payload = parent.proposedPayload as
+    | { items?: Array<{ kind?: string; payload?: Record<string, unknown> }> }
+    | null;
+  const items = Array.isArray(payload?.items) ? payload!.items : [];
+  if (items.length === 0) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      parent.id,
+      "bundle",
+      "empty_subset_after_trim",
+    );
+    return;
+  }
+
+  type ItemResult = {
+    index: number;
+    kind: string;
+    status: "applied" | "failed" | "unknown_kind";
+    reason?: string;
+  };
+  const results: ItemResult[] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i] ?? {};
+    const kind = typeof item.kind === "string" ? item.kind : "unknown";
+    // Synthetic child — phantom id + item's payload + item's kind.
+    // markApplied inside child handlers writes nothing (the id doesn't
+    // match a real row) and audit events scope to the phantom id.
+    const child: ApprovalRow = {
+      ...parent,
+      id: `${parent.id}.item.${i}`,
+      actionType: kind,
+      proposedPayload: (item.payload ?? {}) as Record<string, unknown>,
+    };
+    try {
+      const dispatched = await dispatchBundleItem(tx, deps, tenantId, kind, child);
+      if (!dispatched) {
+        results.push({ index: i, kind, status: "unknown_kind" });
+        break;
+      }
+      results.push({ index: i, kind, status: "applied" });
+    } catch (err) {
+      results.push({
+        index: i,
+        kind,
+        status: "failed",
+        reason: (err as Error).message,
+      });
+      break;
+    }
+  }
+
+  const allOk = results.every((r) => r.status === "applied");
+  if (allOk) {
+    await deps.approvals.markApplied(tx, parent.id, `bundle:${items.length}`);
+  }
+
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: allOk
+      ? "approval.executor.bundle.applied"
+      : "approval.executor.bundle.partial",
+    subjectType: "approval",
+    subjectId: parent.id,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: parent.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor.bundle:${parent.id}`,
+    metadata: {
+      action_type: "bundle",
+      total_items: items.length,
+      applied: results.filter((r) => r.status === "applied").length,
+      failed: results.filter((r) => r.status !== "applied").length,
+      results,
+    },
+  });
+}
+
+/**
+ * Map a bundle item's `kind` to the matching apply function. Returns
+ * true if the kind is known (applied or threw), false if unknown so
+ * the bundle flow can mark it as such without conflating "unknown"
+ * with "application threw".
+ */
+async function dispatchBundleItem(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  kind: string,
+  child: ApprovalRow,
+): Promise<boolean> {
+  switch (kind) {
+    case "deal.status_change":
+      await applyDealStatusChange(tx, deps, tenantId, child);
+      return true;
+    case "crm.create_company":
+      await applyCreateCompany(tx, deps, tenantId, child);
+      return true;
+    case "crm.create_contact":
+      await applyCreateContact(tx, deps, tenantId, child);
+      return true;
+    case "crm.create_deal":
+      await applyCreateDeal(tx, deps, tenantId, child);
+      return true;
+    case "campaign.enroll_batch":
+      await applyEnrollBatch(tx, deps, tenantId, child);
+      return true;
+    case "contact.merge":
+      await applyContactMerge(tx, deps, tenantId, child);
+      return true;
+    case "contact.update":
+      await applyContactUpdate(tx, deps, tenantId, child);
+      return true;
+    case "campaign.create":
+      await applyCampaignCreate(tx, deps, tenantId, child);
+      return true;
+    case "email.send":
+      await applyEmailSend(tx, deps, tenantId, child);
+      return true;
+    case "sms.send":
+      await applyMessageSend(tx, deps, tenantId, child, "sms");
+      return true;
+    case "whatsapp.send":
+      await applyMessageSend(tx, deps, tenantId, child, "whatsapp");
+      return true;
+    case "contact.opt_out":
+      await applyContactOptOut(tx, deps, tenantId, child);
+      return true;
+    case "outbound_call":
+      await applyOutboundCall(tx, deps, tenantId, child);
+      return true;
+    case "enrollment.control":
+      await applyEnrollmentControl(tx, deps, tenantId, child);
+      return true;
+    case "org.tag":
+    case "org.untag":
+    case "contact.tag":
+    case "contact.untag":
+      await applyTagChange(tx, deps, tenantId, child);
+      return true;
+    case "follow_up.schedule":
+      await applyFollowUpSchedule(tx, deps, tenantId, child);
+      return true;
+    case "touchpoint.log":
+      await applyTouchpointLog(tx, deps, tenantId, child);
+      return true;
+    case "lead.reactivate_draft":
+      await applyLeadReactivateDraft(tx, deps, tenantId, child);
+      return true;
+    case "deal.milestone":
+      await applyDealMilestone(tx, deps, tenantId, child);
+      return true;
+    case "org.set_kind":
+      await applyOrgSetKind(tx, deps, tenantId, child);
+      return true;
+    case "org.add_product":
+      await applyOrgAddProduct(tx, deps, tenantId, child);
+      return true;
+    case "org.link_relationship":
+      await applyOrgLinkRelationship(tx, deps, tenantId, child);
+      return true;
+    case "deal.set_broker":
+      await applyDealSetBroker(tx, deps, tenantId, child);
+      return true;
+    case "bundle":
+      // Nested bundles aren't supported. The chat-side bundler flattens
+      // them at proposal time; anything reaching here is a bug.
+      return false;
+    default:
+      return false;
+  }
+}
+
 async function applyUnsupportedRequest(
   tx: Parameters<Parameters<typeof withTenant>[2]>[0],
   deps: ApprovalExecutorDeps,
