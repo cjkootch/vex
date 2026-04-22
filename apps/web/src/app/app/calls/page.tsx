@@ -96,11 +96,12 @@ function CallsPageInner() {
   );
 
   return (
-    <main className="mx-auto max-w-5xl space-y-10 px-8 py-10 text-white">
-      <header className="flex flex-wrap items-start justify-between gap-4">
+    <main className="mx-auto max-w-5xl space-y-8 px-8 py-10">
+      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-line-soft pb-5">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Calls</h1>
-          <p className="mt-1 text-sm text-white/60">
+          <div className="text-eyebrow text-text-muted">Outreach</div>
+          <h1 className="mt-1 text-title text-text-primary">Calls</h1>
+          <p className="mt-2 text-sm text-text-secondary">
             Outbound PSTN calls orchestrated by Vex. Every call requires a
             T3 approval before Twilio dials.
           </p>

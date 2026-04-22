@@ -44,11 +44,11 @@ function ObjectChip({
   objectId: string;
   label?: string;
 }) {
-  const dot = OBJECT_DOT[objectType] ?? "bg-white/30";
+  const dot = OBJECT_DOT[objectType] ?? "bg-text-muted/60";
   const href = objectHref(objectType, objectId);
   const text = label ?? `${objectType} · ${objectId}`;
   const inner = (
-    <span className="inline-flex items-center gap-2 rounded-full border border-line bg-canvas/40 px-2 py-0.5 text-xs text-white/70">
+    <span className="inline-flex items-center gap-2 rounded-full border border-line-soft bg-surface-2/60 px-2 py-0.5 text-xs text-text-secondary">
       <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${dot}`} />
       {text}
     </span>
@@ -58,7 +58,7 @@ function ObjectChip({
     <Link
       href={href}
       onClick={(e) => e.stopPropagation()}
-      className="inline-block transition hover:text-white"
+      className="inline-block transition-colors hover:text-text-primary"
     >
       {inner}
     </Link>
@@ -83,18 +83,25 @@ export function BlockedCard({ item }: BlockedCardProps) {
   return (
     <article
       data-card="blocked"
-      className="relative rounded-lg border border-amber-500/40 bg-amber-500/5 p-4"
+      className="relative overflow-hidden rounded-lg border border-warn/45 bg-warn/[0.05] p-4 shadow-soft"
     >
       <div
         aria-hidden="true"
-        className="absolute left-0 top-0 h-full w-1 rounded-l-lg bg-amber-500"
+        className="absolute left-0 top-0 h-full w-1 rounded-l-lg bg-warn shadow-[0_0_12px_theme(colors.warn)/0.4]"
       />
       <div className="pl-2">
-        <h3 className="font-semibold text-white">{item.summary}</h3>
-        <p className="mt-1 text-sm text-white/60">{item.reason}</p>
+        <div className="flex items-center gap-2">
+          <span className="text-eyebrow text-warn">Blocked</span>
+        </div>
+        <h3 className="mt-0.5 font-semibold text-text-primary">
+          {item.summary}
+        </h3>
+        <p className="mt-1 text-sm text-text-secondary">{item.reason}</p>
         {item.resolution ? (
-          <div className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-            <span className="mr-1 font-medium">To unblock:</span>
+          <div className="mt-3 rounded-md border border-warn/40 bg-warn/[0.08] px-3 py-2 text-xs text-amber-200">
+            <span className="mr-1 font-semibold uppercase tracking-wider2">
+              To unblock ·
+            </span>
             {item.resolution}
           </div>
         ) : null}
@@ -118,13 +125,18 @@ export interface RiskCardProps {
 }
 
 const RISK_BORDER: Record<BriefRisk["severity"], string> = {
-  high: "border-red-500/50 bg-red-500/5",
-  medium: "border-amber-500/40 bg-amber-500/5",
+  high: "border-bad/50 bg-bad/[0.05]",
+  medium: "border-warn/45 bg-warn/[0.05]",
 };
 
 const RISK_BAR: Record<BriefRisk["severity"], string> = {
-  high: "bg-red-500",
-  medium: "bg-amber-500",
+  high: "bg-bad shadow-[0_0_12px_theme(colors.bad)/0.4]",
+  medium: "bg-warn shadow-[0_0_12px_theme(colors.warn)/0.4]",
+};
+
+const RISK_EYEBROW: Record<BriefRisk["severity"], string> = {
+  high: "text-bad",
+  medium: "text-warn",
 };
 
 /**
@@ -135,19 +147,25 @@ const RISK_BAR: Record<BriefRisk["severity"], string> = {
 export function RiskCard({ risk }: RiskCardProps) {
   const borderClass = RISK_BORDER[risk.severity];
   const barClass = RISK_BAR[risk.severity];
+  const eyebrowClass = RISK_EYEBROW[risk.severity];
   return (
     <article
       data-card="risk"
       data-severity={risk.severity}
-      className={`relative rounded-lg border p-4 ${borderClass}`}
+      className={`relative overflow-hidden rounded-lg border p-4 shadow-soft ${borderClass}`}
     >
       <div
         aria-hidden="true"
         className={`absolute left-0 top-0 h-full w-1 rounded-l-lg ${barClass}`}
       />
       <div className="pl-2">
-        <h3 className="font-semibold text-white">{risk.title}</h3>
-        <p className="mt-1 line-clamp-2 text-sm text-white/60">
+        <div className={`text-eyebrow ${eyebrowClass}`}>
+          {risk.severity === "high" ? "High risk" : "Watch"}
+        </div>
+        <h3 className="mt-0.5 font-semibold text-text-primary">
+          {risk.title}
+        </h3>
+        <p className="mt-1 line-clamp-2 text-sm text-text-secondary">
           {risk.description}
         </p>
         <div className="mt-3">

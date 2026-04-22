@@ -68,9 +68,10 @@ export default function FollowUpsPage(): React.ReactElement {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-4 px-6 py-6">
-      <header>
-        <h1 className="text-xl font-semibold text-white">Follow-ups</h1>
-        <p className="mt-1 text-xs text-white/50">
+      <header className="border-b border-line-soft pb-5">
+        <div className="text-eyebrow text-text-muted">Now</div>
+        <h1 className="mt-1 text-title text-text-primary">Follow-ups</h1>
+        <p className="mt-2 text-sm text-text-secondary">
           Scheduled reminders + assigned tasks. Sorted by due date — overdue
           surface on top.
         </p>

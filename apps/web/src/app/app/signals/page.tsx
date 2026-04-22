@@ -68,10 +68,11 @@ export default function SignalsPage(): React.ReactElement {
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-4 px-6 py-6">
-      <header className="flex items-end justify-between gap-4">
+      <header className="flex flex-wrap items-end justify-between gap-4 border-b border-line-soft pb-5">
         <div>
-          <h1 className="text-xl font-semibold text-white">Signals</h1>
-          <p className="mt-1 text-xs text-white/50">
+          <div className="text-eyebrow text-text-muted">Now · Intelligence</div>
+          <h1 className="mt-1 text-title text-text-primary">Signals</h1>
+          <p className="mt-2 text-sm text-text-secondary">
             Proactive alerts — conditions Vex surfaces without being asked.
             Acknowledge to clear once handled.
           </p>
