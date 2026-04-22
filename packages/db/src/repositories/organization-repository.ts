@@ -2,7 +2,26 @@ import { and, asc, eq, lt, or, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { organizations, type Organization } from "../schema/organizations.js";
-import type { FieldConfidenceEntry } from "../merge.js";
+import { resolveFieldValue, type FieldConfidenceEntry } from "../merge.js";
+
+/**
+ * Source priority used by `upsertByExternalKey` when callers don't
+ * provide their own. Higher priority sources (lower index) win ties
+ * when field confidence is equal. Callers with richer knowledge
+ * (e.g. the research agent knows clearbit > manual > tavily) should
+ * pass their own list.
+ */
+const DEFAULT_SOURCE_PRIORITY: readonly string[] = [
+  "manual",
+  "clearbit",
+  "hubspot",
+  "salesforce",
+  "zoominfo",
+  "tavily",
+  "website_form",
+  "website_chat",
+  "email_inbound",
+];
 
 /**
  * Structured data for upsertByExternalKey. Fields map directly to
@@ -130,37 +149,134 @@ export class OrganizationRepository {
     return row;
   }
 
+  /**
+   * External-key lookup via SQL-side JSONB containment. Backed by the
+   * `organizations_external_keys_gin_idx` GIN index (migration 0021)
+   * so the query is O(log n) instead of reading every row.
+   */
   async findByExternalKey(
     tx: Tx,
     system: string,
     key: string,
   ): Promise<Organization | null> {
-    const rows = await tx.select().from(organizations);
-    return rows.find((row) => row.externalKeys[system] === key) ?? null;
+    const probe = JSON.stringify({ [system]: key });
+    const [row] = await tx
+      .select()
+      .from(organizations)
+      .where(sql`${organizations.externalKeys} @> ${probe}::jsonb`)
+      .limit(1);
+    return row ?? null;
   }
 
+  /**
+   * Upsert-by-external-key with entity-resolution safety. Three-step
+   * match in order of strength:
+   *
+   *   1. External-key exact — same `{system, key}` → adopt that row.
+   *   2. Normalized identity (name + domain) — a same-company hit from
+   *      a different source system → adopt that row, stamp the new
+   *      external key onto the existing row's external_keys map.
+   *   3. No match → insert a new row.
+   *
+   * When an existing row is adopted, field updates go through
+   * {@link resolveFieldValue} so a lower-priority source can't
+   * overwrite a higher-priority / higher-confidence legalName, domain,
+   * industry, or sourceOfTruth. The per-field decision is persisted
+   * on `field_confidence` so the next upsert can see the audit.
+   *
+   * Legacy behaviour (pre-Sprint H) was to blindly overwrite on an
+   * external-key hit and to silently create duplicates when the same
+   * company came in from a different provider. Both are closed here.
+   */
   async upsertByExternalKey(
     tx: Tx,
     tenantId: string,
     system: string,
     key: string,
     data: OrganizationUpsertData,
+    options: {
+      sourcePriority?: readonly string[];
+      incomingConfidence?: number;
+    } = {},
   ): Promise<Organization> {
-    const existing = await this.findByExternalKey(tx, system, key);
-    if (existing) {
+    const sourcePriority = options.sourcePriority ?? DEFAULT_SOURCE_PRIORITY;
+    const incomingConfidence = options.incomingConfidence ?? 0.7;
+    const now = new Date();
+    const incomingSource = data.sourceOfTruth ?? system;
+
+    let existing = await this.findByExternalKey(tx, system, key);
+    let matchReason: "external_key" | "normalized_identity" | null = existing
+      ? "external_key"
+      : null;
+    if (!existing) {
+      existing = await this.findByNormalizedIdentity(
+        tx,
+        data.legalName,
+        data.domain ?? null,
+      );
+      if (existing) matchReason = "normalized_identity";
+    }
+
+    if (existing && matchReason) {
+      const nextConfidence: Record<string, FieldConfidenceEntry> = {
+        ...existing.fieldConfidence,
+      };
+      const nextValues: Record<string, unknown> = {};
+
+      for (const field of ["legalName", "domain", "industry", "sourceOfTruth"] as const) {
+        const incomingValue = data[field];
+        if (incomingValue === undefined || incomingValue === null) continue;
+        const incomingEntry: FieldConfidenceEntry = {
+          value: incomingValue,
+          source: incomingSource,
+          confidence: incomingConfidence,
+          updated_at: now.toISOString(),
+        };
+        const existingEntry = existing.fieldConfidence[field];
+        const winner = existingEntry
+          ? resolveFieldValue(existingEntry, incomingEntry, sourcePriority)
+          : incomingEntry;
+        nextConfidence[field] = winner;
+        nextValues[field] = winner.value;
+      }
+
+      // Merge the incoming external key onto existing.external_keys. If
+      // this system already has a key for this row but it differs from
+      // the incoming one, prefer the incoming (freshest wins) and emit
+      // the old value as a side-field so the audit keeps a paper trail.
+      const mergedKeys: Record<string, string> = {
+        ...existing.externalKeys,
+        [system]: key,
+      };
+
+      const setPayload: Record<string, unknown> = {
+        externalKeys: mergedKeys,
+        fieldConfidence: nextConfidence,
+        updatedAt: now,
+        ...nextValues,
+      };
+
       const [updated] = await tx
         .update(organizations)
-        .set({
-          legalName: data.legalName,
-          domain: data.domain ?? existing.domain,
-          industry: data.industry ?? existing.industry,
-          sourceOfTruth: data.sourceOfTruth ?? existing.sourceOfTruth,
-          updatedAt: new Date(),
-        })
+        .set(setPayload)
         .where(eq(organizations.id, existing.id))
         .returning();
-      if (!updated) throw new Error(`organization ${existing.id} vanished during update`);
+      if (!updated) {
+        throw new Error(`organization ${existing.id} vanished during update`);
+      }
       return updated;
+    }
+
+    const initialConfidence: Record<string, FieldConfidenceEntry> = {};
+    for (const field of ["legalName", "domain", "industry", "sourceOfTruth"] as const) {
+      const value = data[field];
+      if (value === undefined || value === null) continue;
+      initialConfidence[field] = {
+        value,
+        source: incomingSource,
+        confidence: incomingConfidence,
+        updated_at: now.toISOString(),
+      };
     }
 
     const [inserted] = await tx
@@ -173,7 +289,7 @@ export class OrganizationRepository {
         industry: data.industry ?? null,
         sourceOfTruth: data.sourceOfTruth ?? null,
         externalKeys: { [system]: key },
-        fieldConfidence: {},
+        fieldConfidence: initialConfidence,
       })
       .returning();
     if (!inserted) throw new Error("organization insert returned no row");

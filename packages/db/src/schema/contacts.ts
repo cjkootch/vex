@@ -58,6 +58,14 @@ export const contacts = pgTable(
     orgIdx: index("contacts_org_idx").on(t.orgId),
     statusIdx: index("contacts_status_idx").on(t.status),
     mergedIntoIdx: index("contacts_merged_into_idx").on(t.mergedIntoContactId),
+    // GIN indexes back JSONB containment queries (`@>`) used by the
+    // dedupe lookups in ContactRepository. See migration 0021.
+    emailsGinIdx: index("contacts_emails_gin_idx").using("gin", t.emails),
+    phonesGinIdx: index("contacts_phones_gin_idx").using("gin", t.phones),
+    externalKeysGinIdx: index("contacts_external_keys_gin_idx").using(
+      "gin",
+      t.externalKeys,
+    ),
   }),
 );
 

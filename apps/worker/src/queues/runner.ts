@@ -2393,8 +2393,9 @@ async function applyCreateContact(
         action_type: "crm.create_contact",
         matched_existing: true,
         applied_object_id: created.contact.id,
-        matched_email: created.matchedEmail,
-        reason: "email-overlap duplicate",
+        duplicate_reason: created.reason,
+        matched_value: created.matchedValue,
+        reason: `${created.reason} duplicate`,
       },
     });
     return;

@@ -23,11 +23,19 @@ export class ContactRepository {
   }
 
   /**
-   * Dedupe-aware create. Walks the supplied emails against existing
-   * contacts and short-circuits if any match, so both the direct API
-   * path and the approval executor get the same collision behavior.
-   * Returns a tagged result — caller decides whether to throw (direct)
-   * or mark-applied + emit a replay event (executor).
+   * Dedupe-aware create. Walks the supplied identifiers in order of
+   * strongest to weakest signal:
+   *   1. Email exact match (case-insensitive)
+   *   2. Phone exact match (E.164-normalized)
+   *   3. Full-name match (trimmed, case-insensitive) scoped to the
+   *      same primary org — a real dupe for "John Smith" only matters
+   *      when two rows are claiming membership in the same counterparty.
+   *
+   * First hit wins. Returns a tagged result so callers decide whether
+   * to throw (direct API path) or mark-applied + emit a replay event
+   * (approval executor). Sprint 7 shipped email-only; broadened here
+   * because changing-email contacts and phone-first contacts were
+   * producing duplicate rows that had to be merged by hand.
    */
   async createWithDedupeCheck(
     tx: Tx,
@@ -35,12 +43,50 @@ export class ContactRepository {
     input: ContactCreateInput,
   ): Promise<
     | { kind: "created"; contact: Contact }
-    | { kind: "duplicate"; contact: Contact; matchedEmail: string }
+    | {
+        kind: "duplicate";
+        contact: Contact;
+        reason: "email" | "phone" | "name_and_org";
+        matchedValue: string;
+      }
   > {
     for (const email of input.emails ?? []) {
       const duplicate = await this.findByEmail(tx, email);
       if (duplicate) {
-        return { kind: "duplicate", contact: duplicate, matchedEmail: email };
+        return {
+          kind: "duplicate",
+          contact: duplicate,
+          reason: "email",
+          matchedValue: email,
+        };
+      }
+    }
+    for (const phone of input.phones ?? []) {
+      const normalized = normalizePhone(phone);
+      if (!normalized) continue;
+      const duplicate = await this.findByPhone(tx, normalized);
+      if (duplicate) {
+        return {
+          kind: "duplicate",
+          contact: duplicate,
+          reason: "phone",
+          matchedValue: normalized,
+        };
+      }
+    }
+    if (input.fullName && input.orgId) {
+      const duplicate = await this.findByNameAndOrg(
+        tx,
+        input.fullName,
+        input.orgId,
+      );
+      if (duplicate) {
+        return {
+          kind: "duplicate",
+          contact: duplicate,
+          reason: "name_and_org",
+          matchedValue: `${input.fullName}@${input.orgId}`,
+        };
       }
     }
     const contact = await this.create(tx, tenantId, input);
@@ -73,14 +119,81 @@ export class ContactRepository {
     return row;
   }
 
+  /**
+   * Email match via SQL-side JSONB containment. Backed by the
+   * `contacts_emails_gin_idx` GIN index (migration 0021) so the
+   * lookup is O(log n) instead of the N-row scan the old in-memory
+   * filter had to do.
+   *
+   * Case-insensitivity is enforced by lower-casing on both sides:
+   * every stored value goes through `LOWER()` inside the containment
+   * check, and the input is lower-cased before the JSONB literal is
+   * built.
+   */
   async findByEmail(tx: Tx, email: string): Promise<Contact | null> {
-    const rows = await tx.select().from(contacts);
-    const lower = email.toLowerCase();
-    return (
-      rows.find((row) =>
-        row.emails.some((e) => typeof e === "string" && e.toLowerCase() === lower),
-      ) ?? null
-    );
+    const lower = email.trim().toLowerCase();
+    if (!lower) return null;
+    const [row] = await tx
+      .select()
+      .from(contacts)
+      .where(
+        sql`(
+          SELECT bool_or(lower(v.value) = ${lower})
+          FROM jsonb_array_elements_text(${contacts.emails}) AS v(value)
+        )`,
+      )
+      .limit(1);
+    return row ?? null;
+  }
+
+  /**
+   * Phone match via SQL-side JSONB containment. The input should be
+   * E.164-normalized (use `normalizePhone` below) — stored phones
+   * are expected to match the E.164 shape, and normalizing both
+   * sides means `+1 (832) 492-7169` collides with `+18324927169`.
+   */
+  async findByPhone(tx: Tx, phoneE164: string): Promise<Contact | null> {
+    const normalized = normalizePhone(phoneE164);
+    if (!normalized) return null;
+    // Normalize both sides: strip every non-digit-or-plus from each
+    // stored value, then compare. That absorbs legacy rows that
+    // stored the original formatting.
+    const [row] = await tx
+      .select()
+      .from(contacts)
+      .where(
+        sql`(
+          SELECT bool_or(regexp_replace(v.value, '[^0-9+]', '', 'g') = ${normalized})
+          FROM jsonb_array_elements_text(${contacts.phones}) AS v(value)
+        )`,
+      )
+      .limit(1);
+    return row ?? null;
+  }
+
+  /**
+   * Case-insensitive full-name match scoped to an org. Last-resort
+   * dedupe signal: two "John Smith" rows are only really the same
+   * person when they're both associated with the same counterparty.
+   */
+  async findByNameAndOrg(
+    tx: Tx,
+    fullName: string,
+    orgId: string,
+  ): Promise<Contact | null> {
+    const normalized = fullName.trim().toLowerCase();
+    if (!normalized) return null;
+    const [row] = await tx
+      .select()
+      .from(contacts)
+      .where(
+        and(
+          eq(contacts.orgId, orgId),
+          sql`lower(trim(${contacts.fullName})) = ${normalized}`,
+        ),
+      )
+      .limit(1);
+    return row ?? null;
   }
 
   async findByOrgId(tx: Tx, orgId: string): Promise<Contact[]> {
@@ -400,4 +513,21 @@ function dedupeCaseInsensitive(values: string[]): string[] {
     out.push(v);
   }
   return out;
+}
+
+/**
+ * Reduce a phone string to its E.164-ish canonical form by stripping
+ * every character that isn't a digit or a leading `+`. Returns null
+ * when the result is too short to be a real number (fewer than 7
+ * digits). Deliberately lenient — this is a dedupe helper, not a
+ * validation helper; Zod schemas elsewhere enforce the stricter
+ * `/^\+[1-9]\d{7,14}$/` on user-facing inputs.
+ */
+export function normalizePhone(raw: string): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed.replace(/[^0-9+]/g, "");
+  if (cleaned.replace(/\D/g, "").length < 7) return null;
+  return cleaned;
 }
