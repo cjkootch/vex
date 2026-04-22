@@ -11,6 +11,7 @@ import { SignalsPanel } from "@/components/signals/signals-panel";
 import { EditCompanyForm } from "@/components/crm/edit-company-form";
 import { Tabs } from "@/components/ui/tabs";
 import { AskVexButton } from "@/components/shell/ask-vex-button";
+import { CompanyHero } from "@/components/profile/company-hero";
 
 interface OrganizationContact {
   id: string;
@@ -107,30 +108,16 @@ export default function CompanyDetailPage({
     <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-6">
       <Breadcrumb name={org.legalName} />
 
-      <header className="flex flex-col gap-4 border-b border-line-soft pb-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="text-eyebrow text-text-muted">Company</div>
-            <h1 className="mt-1 text-title text-text-primary">
-              {org.legalName}
-            </h1>
-            <p className="mt-2 text-sm text-text-secondary">
-              <span className="num-mono text-text-muted">
-                {org.domain ?? "—"}
-              </span>
-              <span className="mx-2 text-text-muted/60">·</span>
-              <span>{org.industry ?? "no industry"}</span>
-              {org.fitScore !== null && (
-                <>
-                  <span className="mx-2 text-text-muted/60">·</span>
-                  <span className="num">
-                    fit {Math.round(org.fitScore * 100)}
-                  </span>
-                </>
-              )}
-            </p>
-          </div>
-          <div className="flex flex-shrink-0 items-center gap-2">
+      <CompanyHero
+        orgId={org.id}
+        fallback={{
+          legalName: org.legalName,
+          domain: org.domain ?? null,
+          industry: org.industry ?? null,
+          fitScore: org.fitScore ?? null,
+        }}
+        actions={
+          <>
             <button
               type="button"
               onClick={() => setEditOpen(true)}
@@ -167,9 +154,9 @@ export default function CompanyDetailPage({
               },
             ]}
           />
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <QuickActions
         items={[

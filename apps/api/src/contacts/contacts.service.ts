@@ -6,7 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from "@nestjs/common";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   schema,
   withTenant,
@@ -412,6 +412,150 @@ export class ContactsService {
         .orderBy(desc(schema.fuelDeals.createdAt))
         .limit(100),
     );
+  }
+
+  /**
+   * Operational pulse for the contact detail page's hero band. One
+   * transaction, a handful of small queries. Returns the primary +
+   * all orgs, open deal count, last touchpoint, and a 7-day activity
+   * count — enough to drive the stats row without the UI making
+   * four separate requests.
+   */
+  async contactPulse(
+    tenantId: string,
+    contactId: string,
+  ): Promise<{
+    contact: {
+      id: string;
+      fullName: string;
+      title: string | null;
+      emails: string[];
+      phones: string[];
+      status: string;
+      optOutAt: string | null;
+    };
+    primaryOrg: { id: string; legalName: string } | null;
+    allOrgs: Array<{
+      orgId: string;
+      orgName: string;
+      role: string | null;
+      isPrimary: boolean;
+    }>;
+    openDealsCount: number;
+    lastTouchpointAt: string | null;
+    lastTouchpointChannel: string | null;
+    activityLast7d: number;
+  }> {
+    return withTenant(this.db, tenantId, async (tx) => {
+      const contact = await this.contacts.findById(tx, contactId);
+      if (!contact) {
+        throw new NotFoundException(`contact ${contactId} not found`);
+      }
+
+      const OPEN_STATUSES: Array<
+        "draft"
+        | "negotiating"
+        | "pending_approval"
+        | "approved"
+        | "loading"
+        | "in_transit"
+        | "delivered"
+      > = [
+        "draft",
+        "negotiating",
+        "pending_approval",
+        "approved",
+        "loading",
+        "in_transit",
+        "delivered",
+      ];
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      const [orgRows, openDealsRows, lastTouchpointRows, recentRows] =
+        await Promise.all([
+          tx
+            .select({
+              orgId: schema.contactOrgMemberships.orgId,
+              role: schema.contactOrgMemberships.role,
+              isPrimary: schema.contactOrgMemberships.isPrimary,
+              orgName: schema.organizations.legalName,
+            })
+            .from(schema.contactOrgMemberships)
+            .innerJoin(
+              schema.organizations,
+              eq(
+                schema.contactOrgMemberships.orgId,
+                schema.organizations.id,
+              ),
+            )
+            .where(
+              eq(schema.contactOrgMemberships.contactId, contactId),
+            )
+            .orderBy(desc(schema.contactOrgMemberships.isPrimary)),
+          tx
+            .select({ id: schema.fuelDeals.id })
+            .from(schema.fuelDeals)
+            .where(
+              and(
+                eq(schema.fuelDeals.buyerContactId, contactId),
+                inArray(schema.fuelDeals.status, OPEN_STATUSES),
+              ),
+            ),
+          tx
+            .select({
+              channel: schema.touchpoints.channel,
+              occurredAt: schema.touchpoints.occurredAt,
+            })
+            .from(schema.touchpoints)
+            .where(eq(schema.touchpoints.contactId, contactId))
+            .orderBy(desc(schema.touchpoints.occurredAt))
+            .limit(1),
+          tx
+            .select({ id: schema.touchpoints.id })
+            .from(schema.touchpoints)
+            .where(
+              and(
+                eq(schema.touchpoints.contactId, contactId),
+                gte(schema.touchpoints.occurredAt, sevenDaysAgo),
+              ),
+            ),
+        ]);
+
+      const allOrgs = orgRows.map((r) => ({
+        orgId: r.orgId,
+        orgName: r.orgName,
+        role: r.role,
+        isPrimary: r.isPrimary,
+      }));
+      const primaryOrg =
+        allOrgs.find((o) => o.isPrimary) ?? allOrgs[0] ?? null;
+
+      const firstTp = lastTouchpointRows[0] ?? null;
+
+      return {
+        contact: {
+          id: contact.id,
+          fullName: contact.fullName,
+          title: contact.title,
+          emails: contact.emails,
+          phones: contact.phones,
+          status: contact.status,
+          optOutAt: contact.optOutAt
+            ? contact.optOutAt.toISOString()
+            : null,
+        },
+        primaryOrg: primaryOrg
+          ? { id: primaryOrg.orgId, legalName: primaryOrg.orgName }
+          : null,
+        allOrgs,
+        openDealsCount: openDealsRows.length,
+        lastTouchpointAt: firstTp?.occurredAt
+          ? firstTp.occurredAt.toISOString()
+          : null,
+        lastTouchpointChannel: firstTp?.channel ?? null,
+        activityLast7d: recentRows.length,
+      };
+    });
   }
 
   /**

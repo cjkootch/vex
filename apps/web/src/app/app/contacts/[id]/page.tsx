@@ -9,6 +9,7 @@ import { QuickActions } from "@/components/crm/quick-actions";
 import { SignalsPanel } from "@/components/signals/signals-panel";
 import { Tabs } from "@/components/ui/tabs";
 import { AskVexButton } from "@/components/shell/ask-vex-button";
+import { ContactHero } from "@/components/profile/contact-hero";
 
 interface Membership {
   tenantId: string;
@@ -212,34 +213,18 @@ export default function ContactDetailPage({
     <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-6">
       <Breadcrumb name={contact.fullName} />
 
-      <header className="flex flex-col gap-4 border-b border-line-soft pb-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="text-eyebrow text-text-muted">Contact</span>
-              {contact.optOutAt && (
-                <span className="rounded-md border border-bad/40 bg-bad/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider2 text-bad">
-                  Suppressed
-                </span>
-              )}
-            </div>
-            <h1 className="mt-1 text-title text-text-primary">
-              {contact.fullName}
-            </h1>
-            <p className="mt-2 text-sm text-text-secondary">
-              <span>{contact.title ?? "—"}</span>
-              <span className="mx-2 text-text-muted/60">·</span>
-              <span className="num-mono text-text-muted">
-                {contact.emails[0] ?? "no email"}
-              </span>
-            </p>
-            {contact.optOutAt && contact.optOutReason && (
-              <p className="mt-1.5 text-xs text-bad/80">
-                Opt-out reason: {contact.optOutReason}
-              </p>
-            )}
-          </div>
-          <div className="flex flex-shrink-0 items-center gap-2">
+      <ContactHero
+        contactId={contact.id}
+        fallback={{
+          fullName: contact.fullName,
+          title: contact.title ?? null,
+          emails: contact.emails,
+          phones: contact.phones,
+          status: contact.status,
+          optOutReason: contact.optOutReason ?? null,
+        }}
+        actions={
+          <>
             <button
               type="button"
               onClick={() => setEditOpen(true)}
@@ -276,9 +261,9 @@ export default function ContactDetailPage({
               },
             ]}
           />
-          </div>
-        </div>
-      </header>
+          </>
+        }
+      />
 
       <QuickActions
         items={[
