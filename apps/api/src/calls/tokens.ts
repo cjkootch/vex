@@ -49,3 +49,11 @@ export const CALLS_RESEND_CLIENT = Symbol("CALLS_RESEND_CLIENT");
  * chat-triggered calls (not just demo calls).
  */
 export const CALLS_REDIS_CLIENT = Symbol("CALLS_REDIS_CLIENT");
+
+/**
+ * Optional SlackNotifier — when set, outbound-call escalations
+ * (`call.request_backup`) fire an urgent Slack nudge with a Join-call
+ * deep link. Null when SLACK_WEBHOOK_URL isn't set; escalation still
+ * creates the approval row regardless, Slack is a convenience layer.
+ */
+export const CALLS_SLACK_NOTIFIER = Symbol("CALLS_SLACK_NOTIFIER");

@@ -50,6 +50,16 @@ export interface NewChatSlackPayload {
   referrer: string | null;
 }
 
+export interface BackupRequestSlackPayload {
+  workflowId: string;
+  callSid: string | null;
+  calleeName: string | null;
+  calleeOrg: string | null;
+  reason: string | null;
+  /** Seconds elapsed since the call connected, at the moment backup was requested. */
+  durationAtRequestSeconds: number;
+}
+
 export type SlackNotifyResult =
   | { ok: true }
   | { ok: false; reason: "disabled" | "timeout" | "http_error" | "exception" };
@@ -95,6 +105,22 @@ export class SlackNotifier {
       buildNewChatBlocks(payload, this.config.appBaseUrl),
       newChatFallback(payload),
       payload.leadId,
+    );
+  }
+
+  /**
+   * Fires when the AI on an outbound voice call escalates via the
+   * escalate_to_human tool — the callee is live on the phone asking
+   * for a human. Urgent by design: loud header, a Join-call deep link
+   * that drops the operator into the conference immediately.
+   */
+  async notifyBackupRequest(
+    payload: BackupRequestSlackPayload,
+  ): Promise<SlackNotifyResult> {
+    return this.post(
+      buildBackupRequestBlocks(payload, this.config.appBaseUrl),
+      backupRequestFallback(payload),
+      payload.workflowId,
     );
   }
 
@@ -284,6 +310,68 @@ function newChatFallback(p: NewChatSlackPayload): string {
       : p.contactName
     : (p.contactEmail ?? "unknown visitor");
   return `💬 New website chat: ${who}`;
+}
+
+/**
+ * Block Kit for an urgent "AI needs you on this call" nudge. Loud
+ * header, caller-identity context line, elapsed time, and a single
+ * Join-call primary button deep-linking into /app/calls/:workflowId
+ * where the existing LiveListenPanel can drop the operator into
+ * the conference via Voice SDK.
+ */
+export function buildBackupRequestBlocks(
+  p: BackupRequestSlackPayload,
+  appBaseUrl: string | null,
+): Array<Record<string, unknown>> {
+  const who = p.calleeName
+    ? p.calleeOrg
+      ? `${p.calleeName} · ${p.calleeOrg}`
+      : p.calleeName
+    : (p.calleeOrg ?? "caller");
+  const headline = `📞 AI needs backup — ${who}`;
+
+  const mm = Math.floor(p.durationAtRequestSeconds / 60);
+  const ss = p.durationAtRequestSeconds % 60;
+  const elapsed = `${mm}:${ss.toString().padStart(2, "0")}`;
+
+  const contextBits = [
+    `live · ${elapsed} in`,
+    p.reason ? `_"${p.reason.slice(0, 120)}"_` : null,
+  ].filter((v): v is string => !!v);
+
+  const joinUrl = appBaseUrl
+    ? `${appBaseUrl.replace(/\/$/, "")}/app/calls/${p.workflowId}`
+    : null;
+
+  const blocks: Array<Record<string, unknown>> = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: headline.slice(0, 150), emoji: true },
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: contextBits.join(" · ") }],
+    },
+  ];
+  if (joinUrl) {
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Join call", emoji: true },
+          url: joinUrl,
+          style: "danger",
+        },
+      ],
+    });
+  }
+  return blocks;
+}
+
+function backupRequestFallback(p: BackupRequestSlackPayload): string {
+  const who = p.calleeName ?? p.calleeOrg ?? "caller";
+  return `📞 AI needs backup on call with ${who}`;
 }
 
 function shortUrl(url: string): string {

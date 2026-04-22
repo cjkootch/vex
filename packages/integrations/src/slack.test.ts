@@ -3,6 +3,7 @@ import {
   SlackNotifier,
   buildHotLeadBlocks,
   buildNewChatBlocks,
+  buildBackupRequestBlocks,
 } from "./slack.js";
 
 const BASE_PAYLOAD = {
@@ -235,5 +236,91 @@ describe("buildNewChatBlocks", () => {
       null,
     );
     expect(blocks.find((b) => b["type"] === "context")).toBeUndefined();
+  });
+});
+
+const BACKUP_PAYLOAD = {
+  workflowId: "outbound_call_abc123",
+  callSid: "CA_DEMO",
+  calleeName: "Priya Narine",
+  calleeOrg: "Massy Energy",
+  reason: "callee asked for a live person to talk pricing",
+  durationAtRequestSeconds: 137,
+};
+
+describe("notifyBackupRequest", () => {
+  it("POSTs a backup-request Block Kit payload", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => "ok",
+    });
+    const notifier = new SlackNotifier({
+      webhookUrl: "https://hooks.slack.com/services/T/B/X",
+      appBaseUrl: "https://vex.example.com",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      log: silentLog(),
+    });
+    const result = await notifier.notifyBackupRequest(BACKUP_PAYLOAD);
+    expect(result).toEqual({ ok: true });
+    const init = fetchImpl.mock.calls[0]![1];
+    const body = JSON.parse(init.body as string) as {
+      blocks: unknown[];
+      text: string;
+    };
+    expect(body.text).toContain("AI needs backup");
+    expect(body.text).toContain("Priya");
+  });
+
+  it("is a no-op when slack webhook is disabled", async () => {
+    const notifier = new SlackNotifier({
+      webhookUrl: null,
+      appBaseUrl: null,
+      log: silentLog(),
+    });
+    expect(await notifier.notifyBackupRequest(BACKUP_PAYLOAD)).toEqual({
+      ok: false,
+      reason: "disabled",
+    });
+  });
+});
+
+describe("buildBackupRequestBlocks", () => {
+  it("renders header + context + Join-call deep link", () => {
+    const blocks = buildBackupRequestBlocks(
+      BACKUP_PAYLOAD,
+      "https://vex.example.com",
+    );
+    const types = blocks.map((b) => b["type"]);
+    expect(types).toEqual(["header", "context", "actions"]);
+    const header = blocks[0] as { text: { text: string } };
+    expect(header.text.text).toContain("Priya Narine");
+    expect(header.text.text).toContain("Massy Energy");
+    const ctx = blocks[1] as {
+      elements: Array<{ text: string }>;
+    };
+    expect(ctx.elements[0]!.text).toContain("2:17");
+    const actions = blocks[2] as {
+      elements: Array<{ url: string; text: { text: string }; style?: string }>;
+    };
+    expect(actions.elements[0]!.url).toBe(
+      "https://vex.example.com/app/calls/outbound_call_abc123",
+    );
+    expect(actions.elements[0]!.text.text).toBe("Join call");
+    expect(actions.elements[0]!.style).toBe("danger");
+  });
+
+  it("omits the Join-call button when appBaseUrl is null", () => {
+    const blocks = buildBackupRequestBlocks(BACKUP_PAYLOAD, null);
+    expect(blocks.find((b) => b["type"] === "actions")).toBeUndefined();
+  });
+
+  it("degrades gracefully without callee name/org", () => {
+    const blocks = buildBackupRequestBlocks(
+      { ...BACKUP_PAYLOAD, calleeName: null, calleeOrg: null, reason: null },
+      "https://vex.example.com",
+    );
+    const header = blocks[0] as { text: { text: string } };
+    expect(header.text.text).toMatch(/AI needs backup/);
   });
 });

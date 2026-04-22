@@ -47,6 +47,7 @@ import {
   AnthropicAdapter,
   OpenAIAdapter,
   S3Uploader,
+  SlackNotifier,
   TEMPORAL_TASK_QUEUE,
   createTemporalClient,
   createResendClient,
@@ -444,6 +445,12 @@ async function bootstrap(): Promise<void> {
               appBaseUrl: env.APP_BASE_URL ?? "",
               resend,
               redis,
+              slack: env.SLACK_WEBHOOK_URL
+                ? new SlackNotifier({
+                    webhookUrl: env.SLACK_WEBHOOK_URL,
+                    appBaseUrl: env.APP_BASE_URL ?? null,
+                  })
+                : null,
               taskQueue: TEMPORAL_TASK_QUEUE,
             }),
           }

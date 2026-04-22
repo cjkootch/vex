@@ -531,6 +531,15 @@ describe("FUEL_LEAD_QUALIFIER_INSTRUCTIONS", () => {
   it("includes a goal-gradient close summary", () => {
     expect(FUEL_LEAD_QUALIFIER_INSTRUCTIONS).toMatch(/recap|to recap/i);
   });
+
+  it("tells the AI to stay on the line post-escalation + briefs the teammate", () => {
+    expect(FUEL_LEAD_QUALIFIER_INSTRUCTIONS).toMatch(
+      /STAY ON THE LINE|stay on the line/,
+    );
+    expect(FUEL_LEAD_QUALIFIER_INSTRUCTIONS).toMatch(/briefing|brief/i);
+    expect(FUEL_LEAD_QUALIFIER_INSTRUCTIONS).toMatch(/60 seconds/i);
+    expect(FUEL_LEAD_QUALIFIER_INSTRUCTIONS).toMatch(/All yours/i);
+  });
 });
 
 describe("VOICEMAIL_INSTRUCTIONS", () => {

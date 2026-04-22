@@ -77,7 +77,11 @@ export { pricing, tokensToUsdMicros, unitsToUsdMicros } from "./pricing.js";
 export {
   SlackNotifier,
   buildHotLeadBlocks,
+  buildNewChatBlocks,
+  buildBackupRequestBlocks,
   type HotLeadSlackPayload,
+  type NewChatSlackPayload,
+  type BackupRequestSlackPayload,
   type SlackNotifierConfig,
   type SlackNotifyResult,
 } from "./slack.js";
