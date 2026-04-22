@@ -265,6 +265,9 @@ async function bootstrap(): Promise<void> {
         db,
         touchpoints: touchpointRepository,
         activities: activityRepository,
+        approvals: approvalRepository,
+        events: eventRepository,
+        approvalExecutorQueue: queues.approvalExecutor,
       }),
       followUps: FollowUpsModule.register({
         db,

@@ -3,6 +3,7 @@ import type { Redis } from "ioredis";
 import {
   AgentRunner,
   DailyBriefAgent,
+  EmailReplyDraftAgent,
   FollowUpAgent,
   FreightMarketAgent,
   LeadQualificationAgent,
@@ -500,6 +501,16 @@ function buildAgentProcessor(
           { workspaceId: data.workspace_id },
         );
       }
+      case "email_reply_draft": {
+        const touchpointIdRaw = data.input?.["touchpoint_id"];
+        if (typeof touchpointIdRaw !== "string") {
+          throw new Error("email_reply_draft job missing input.touchpoint_id");
+        }
+        return runner.run(
+          new EmailReplyDraftAgent({ touchpointId: touchpointIdRaw }),
+          { workspaceId: data.workspace_id },
+        );
+      }
       default:
         throw new Error(`unknown agent kind: ${(data as { kind: string }).kind}`);
     }
@@ -731,11 +742,19 @@ async function applyEmailSend(
   approval: ApprovalRow,
 ): Promise<void> {
   const payload = approval.proposedPayload as
-    | { to?: string[] | string; subject?: string; body?: string }
+    | {
+        to?: string[] | string;
+        subject?: string;
+        body?: string;
+        inReplyTo?: string;
+        contactId?: string;
+      }
     | null;
   const to = Array.isArray(payload?.to) ? payload?.to : payload?.to ? [payload.to] : [];
   const subject = payload?.subject;
   const body = payload?.body;
+  const inReplyTo = payload?.inReplyTo;
+  const contactId = payload?.contactId;
   if (to.length === 0 || !subject || !body) {
     await emitExecutorFailed(tx, deps, tenantId, approval.id, "email.send", "missing to / subject / body");
     return;
@@ -744,7 +763,19 @@ async function applyEmailSend(
     await emitExecutorFailed(tx, deps, tenantId, approval.id, "email.send", "resend_unconfigured");
     return;
   }
-  const result = await deps.resend.send({ to, subject, text: body });
+  // Threading: when the approval is a reply to a known Message-ID,
+  // pass In-Reply-To + References so Gmail / Outlook stitch the
+  // reply under the original thread instead of rendering it as a
+  // new conversation. Resend accepts custom headers verbatim.
+  const headers = inReplyTo
+    ? { "In-Reply-To": inReplyTo, References: inReplyTo }
+    : undefined;
+  const result = await deps.resend.send({
+    to,
+    subject,
+    text: body,
+    ...(headers ? { headers } : {}),
+  });
   if (result.error) {
     await emitExecutorFailed(tx, deps, tenantId, approval.id, "email.send", `${result.error.name}: ${result.error.message}`);
     return;
@@ -763,10 +794,21 @@ async function applyEmailSend(
     costUsdMicros: unitsToUsdMicros(to.length, pricing.resend.emailSendUsd),
     occurredAt: new Date(),
   });
+  // Contact link lets the outbound touchpoint thread correctly on the
+  // contact's timeline. Without it, a Reply-triggered send shows up
+  // as "unlinked email" even though the reply has a known recipient.
+  const orgIdForContact = contactId
+    ? await deps.contacts
+        .findById(tx, contactId)
+        .then((c) => c?.orgId ?? null)
+        .catch(() => null)
+    : null;
   await deps.touchpoints.insert(tx, tenantId, {
     channel: "email.sent",
     actor: `approval:${approval.id}`,
     occurredAt: new Date(),
+    ...(contactId ? { contactId } : {}),
+    ...(orgIdForContact ? { orgId: orgIdForContact } : {}),
     metadata: {
       direction: "outbound",
       provider_message_id: messageId,
@@ -774,6 +816,7 @@ async function applyEmailSend(
       subject,
       preview: subject,
       text: body,
+      ...(inReplyTo ? { in_reply_to: inReplyTo } : {}),
     },
   });
   await deps.events.insertIfNotExists(tx, tenantId, {

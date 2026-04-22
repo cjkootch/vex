@@ -1,8 +1,19 @@
 import { Module, type DynamicModule } from "@nestjs/common";
-import type { ActivityRepository, Db, TouchpointRepository } from "@vex/db";
+import type { Queue } from "bullmq";
+import type {
+  ActivityRepository,
+  ApprovalRepository,
+  Db,
+  EventRepository,
+  TouchpointRepository,
+} from "@vex/db";
+import type { ApprovalExecutorJobData } from "@vex/agents";
 import {
   COMMUNICATIONS_ACTIVITY_REPO,
+  COMMUNICATIONS_APPROVAL_EXECUTOR_QUEUE,
+  COMMUNICATIONS_APPROVAL_REPO,
   COMMUNICATIONS_DB_CLIENT,
+  COMMUNICATIONS_EVENT_REPO,
   COMMUNICATIONS_TOUCHPOINT_REPO,
   CommunicationsController,
 } from "./communications.controller.js";
@@ -11,6 +22,9 @@ export interface CommunicationsModuleConfig {
   db: Db;
   touchpoints: TouchpointRepository;
   activities: ActivityRepository;
+  approvals: ApprovalRepository;
+  events: EventRepository;
+  approvalExecutorQueue: Queue<ApprovalExecutorJobData>;
 }
 
 /**
@@ -33,6 +47,18 @@ export class CommunicationsModule {
         {
           provide: COMMUNICATIONS_ACTIVITY_REPO,
           useFactory: () => config.activities,
+        },
+        {
+          provide: COMMUNICATIONS_APPROVAL_REPO,
+          useFactory: () => config.approvals,
+        },
+        {
+          provide: COMMUNICATIONS_EVENT_REPO,
+          useFactory: () => config.events,
+        },
+        {
+          provide: COMMUNICATIONS_APPROVAL_EXECUTOR_QUEUE,
+          useFactory: () => config.approvalExecutorQueue,
         },
       ],
     };

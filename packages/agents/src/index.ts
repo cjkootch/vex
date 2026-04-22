@@ -107,6 +107,7 @@ export {
   PortIntelligenceAgent,
   ReactivationBatchAgent,
   VesselIntelligenceAgent,
+  EmailReplyDraftAgent,
   sanctionsExposureRiskFor,
   type AgentContext,
   type AgentOutput,
@@ -118,6 +119,7 @@ export {
   type PortIntelligenceInput,
   type ReactivationBatchInput,
   type VesselIntelligenceInput,
+  type EmailReplyDraftAgentInput,
 } from "./agents/index.js";
 export {
   evaluateGate,
