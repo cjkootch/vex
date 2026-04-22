@@ -97,6 +97,15 @@ export default {
       transitionTimingFunction: {
         // Premium easing — slightly anticipatory in, settled out.
         "out-quart": "cubic-bezier(0.25, 1, 0.5, 1)",
+        // Tailwind's `transition` + `transition-colors` etc default to
+        // this curve so every hover / focus / press across the product
+        // reads as one hand. Keeps shell motion calm, no bouncy ease.
+        DEFAULT: "cubic-bezier(0.25, 1, 0.5, 1)",
+      },
+      transitionDuration: {
+        // 150ms is fast enough to feel instant on good hardware and
+        // slow enough that state changes register as intentional.
+        DEFAULT: "150ms",
       },
     },
   },

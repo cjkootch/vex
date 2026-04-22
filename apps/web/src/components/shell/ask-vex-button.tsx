@@ -100,9 +100,15 @@ export function AskVexButton({
         </Link>
       )}
       {open && hasActions ? (
-        <div className="absolute right-0 top-full z-30 mt-1 w-72 overflow-hidden rounded-md border border-line bg-bg/95 shadow-xl backdrop-blur">
-          <div className="border-b border-line/60 px-3 py-2 text-[10px] uppercase tracking-wider text-white/40">
-            What can Vex do from here?
+        <div className="absolute right-0 top-full z-30 mt-1.5 w-72 overflow-hidden rounded-lg border border-line-strong bg-surface-2/95 shadow-overlay backdrop-blur-xl">
+          <div className="flex items-center justify-between border-b border-line-soft bg-intel-soft/40 px-3 py-2">
+            <span className="text-eyebrow text-accent-strong">
+              Vex can do from here
+            </span>
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_6px_currentColor]"
+            />
           </div>
           <ul className="flex flex-col">
             {actions?.map((a) => (
@@ -110,11 +116,11 @@ export function AskVexButton({
                 <Link
                   href={buildAskVexHref({ type, id, label, ask: a.ask })}
                   onClick={() => setOpen(false)}
-                  className="block border-b border-line/40 px-3 py-2 text-sm text-white/90 last:border-b-0 hover:bg-muted/40"
+                  className="block border-b border-line-soft/60 px-3 py-2.5 text-sm text-text-primary transition-colors last:border-b-0 hover:bg-white/[0.04]"
                 >
                   <div className="font-medium">{a.label}</div>
                   {a.hint ? (
-                    <div className="mt-0.5 text-[11px] text-white/50">
+                    <div className="mt-0.5 text-[11px] text-text-muted">
                       {a.hint}
                     </div>
                   ) : null}

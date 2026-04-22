@@ -159,25 +159,27 @@ export default function MarketingPage() {
 
   return (
     <div className="mx-auto flex h-full max-w-6xl flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
-      <header className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold text-white">Marketing</h1>
-          <p className="mt-1 hidden text-sm text-white/60 md:block">
-            Campaigns with send/open/click rollups from the touchpoint
-            stream. Click a row to open campaign detail.
-          </p>
-        </div>
-        <div className="flex flex-shrink-0 items-center gap-2">
-          <Link
-            href={`/app/chat?ask=${encodeURIComponent(ASK_VEX_PROMPT)}`}
-            aria-label="Ask Vex about marketing anomalies"
-            className="inline-flex h-9 items-center justify-center rounded-md border border-line px-3 text-sm text-white/80 hover:border-accent hover:text-white"
-          >
-            <span className="hidden sm:inline">Ask Vex →</span>
-            <span className="sm:hidden" aria-hidden="true">
-              ✦
-            </span>
-          </Link>
+      <header className="flex flex-col gap-3 border-b border-line-soft pb-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-eyebrow text-text-muted">Outreach</div>
+            <h1 className="mt-1 text-title text-text-primary">Marketing</h1>
+            <p className="mt-2 hidden text-sm text-text-secondary md:block">
+              Campaigns with send / open / click rollups from the touchpoint
+              stream. Click a row to open campaign detail.
+            </p>
+          </div>
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <Link
+              href={`/app/chat?ask=${encodeURIComponent(ASK_VEX_PROMPT)}`}
+              aria-label="Ask Vex about marketing anomalies"
+              className="inline-flex h-9 items-center justify-center rounded-md border border-line-soft bg-surface-2/60 px-3 text-sm text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary"
+            >
+              <span className="hidden sm:inline">Ask Vex →</span>
+              <span className="sm:hidden" aria-hidden="true">
+                ✦
+              </span>
+            </Link>
           <button
             type="button"
             title="Campaign creation isn't wired up yet — the next PR adds it."
@@ -185,10 +187,11 @@ export default function MarketingPage() {
               // eslint-disable-next-line no-console
               console.log("TODO");
             }}
-            className="inline-flex h-9 cursor-not-allowed items-center rounded-md bg-accent/60 px-3 text-sm font-medium text-white/80"
+            className="inline-flex h-9 cursor-not-allowed items-center rounded-md bg-accent/60 px-3 text-sm font-medium text-text-primary/80"
           >
             + New campaign
           </button>
+        </div>
         </div>
       </header>
 

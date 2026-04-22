@@ -222,10 +222,11 @@ export default function DealsPage() {
 
   return (
     <div className="mx-auto flex h-full max-w-6xl flex-col gap-4 px-4 py-4 md:px-6 md:py-6">
-      <header className="flex items-start justify-between gap-3">
+      <header className="flex items-start justify-between gap-3 border-b border-line-soft pb-5">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold text-white">Deals</h1>
-          <p className="mt-1 hidden text-sm text-white/60 md:block">
+          <div className="text-eyebrow text-text-muted">Pipeline</div>
+          <h1 className="mt-1 text-title text-text-primary">Deals</h1>
+          <p className="mt-2 hidden text-sm text-text-secondary md:block">
             Fuel deals, sortable and filterable. Click a row to open the deal detail.
           </p>
         </div>
