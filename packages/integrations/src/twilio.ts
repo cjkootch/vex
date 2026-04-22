@@ -61,6 +61,28 @@ export interface CreateOutboundCallParams {
   record?: boolean;
   /** Optional timeout in seconds before the call is considered a no-answer. Default 30. */
   timeout?: number;
+  /**
+   * Enable Twilio's Answering Machine Detection. When `machineDetection`
+   * is set, Twilio detects whether the call was picked up by a human or
+   * a voicemail and passes `AnsweredBy` in the TwiML request body. Our
+   * TwiML endpoint branches on that value: human → start the AI media
+   * stream, machine → play the short voicemail script and hang up.
+   *
+   *   "Enable"             — fast detection, may route to TwiML before
+   *                          the voicemail beep finishes.
+   *   "DetectMessageEnd"   — waits for the voicemail beep; better for
+   *                          leaving a message (+2s latency on human
+   *                          pickup which we mask with the opening
+   *                          Pause in the TwiML).
+   *
+   * Defaults to off (no detection); callers opt in per-call.
+   */
+  machineDetection?: "Enable" | "DetectMessageEnd";
+  /**
+   * Upper bound on how long Twilio will wait for AMD to decide.
+   * Default 30s to match Twilio's documented ceiling.
+   */
+  machineDetectionTimeout?: number;
 }
 
 export interface CreateOutboundCallResult {
@@ -141,6 +163,12 @@ export function createTwilioClient(deps: TwilioDeps) {
               recordingStatusCallback: params.recordingStatusCallback,
               recordingStatusCallbackEvent: ["completed", "failed"],
               recordingStatusCallbackMethod: "POST",
+            }
+          : {}),
+        ...(params.machineDetection
+          ? {
+              machineDetection: params.machineDetection,
+              machineDetectionTimeout: params.machineDetectionTimeout ?? 30,
             }
           : {}),
         timeout: params.timeout ?? 30,

@@ -24,6 +24,7 @@ import {
   CALLS_TWILIO_VERIFIER,
   CALLS_VOICE_LISTENER_CONFIG,
 } from "./tokens.js";
+import { VOICEMAIL_INSTRUCTIONS } from "@vex/integrations";
 
 const InitiateBody = z.object({
   contact_id: z.string().min(1),
@@ -417,6 +418,37 @@ export class CallsController {
       typeof query["tenant"] === "string" ? (query["tenant"] as string) : "";
     const wf =
       typeof query["wf"] === "string" ? (query["wf"] as string) : "demo";
+
+    // When outbound dial used Twilio AMD (machineDetection=Enable|
+    // DetectMessageEnd), the pickup signal is POSTed in the form body
+    // as `AnsweredBy`. machine_start / machine_end_beep / fax →
+    // voicemail branch: play the short AI-disclosed script and hang up
+    // without ever opening the realtime stream. human / unknown → the
+    // normal Connect><Stream path.
+    const body = parseTwilioFormBody(req);
+    const answeredBy =
+      typeof body["AnsweredBy"] === "string"
+        ? (body["AnsweredBy"] as string)
+        : null;
+    if (answeredBy && answeredBy.startsWith("machine")) {
+      // Strip the 'Leave a single short voicemail, then stop.' preamble
+      // — Twilio's <Say> only speaks what's between the tags, and we
+      // don't want the meta-instructions read out. The actual script
+      // is the line inside the quotes in VOICEMAIL_INSTRUCTIONS.
+      const match = VOICEMAIL_INSTRUCTIONS.match(/"([^"]+)"/);
+      const script =
+        match?.[1] ??
+        "Hi, this is Vex — an AI assistant calling on behalf of Vector Trade Capital. I'll follow up by email shortly. Thank you.";
+      return [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        "<Response>",
+        '  <Pause length="2"/>',
+        `  <Say voice="Polly.Joanna">${escapeXml(script)}</Say>`,
+        "  <Hangup/>",
+        "</Response>",
+      ].join("\n");
+    }
+
     // Twilio's `<Connect><Stream>` strips URL query strings before
     // opening the WebSocket. Pass params as `<Parameter>` children so
     // they arrive in the stream's "start" event as customParameters.
@@ -628,4 +660,24 @@ function escapeXml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&apos;");
+}
+
+/**
+ * Parse a Twilio `application/x-www-form-urlencoded` TwiML request body
+ * into a flat string map. Used to read the AMD signal (`AnsweredBy`)
+ * from the TwiML POST without wiring a global body parser.
+ */
+function parseTwilioFormBody(
+  req: RawBodyRequest<FastifyRequest>,
+): Record<string, string> {
+  const raw = req.rawBody;
+  if (!raw || raw.length === 0) return {};
+  try {
+    const params = new URLSearchParams(raw.toString("utf8"));
+    const out: Record<string, string> = {};
+    for (const [k, v] of params.entries()) out[k] = v;
+    return out;
+  } catch {
+    return {};
+  }
 }

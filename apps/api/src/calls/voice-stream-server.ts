@@ -6,6 +6,7 @@ import {
   ESCALATION_LISTENER_INSTRUCTIONS,
   ESCALATION_TOOL,
   FUEL_LEAD_QUALIFIER_INSTRUCTIONS,
+  OPT_OUT_TOOL,
   startVoiceBridge,
   type RealtimeClientEvent,
   type RealtimeServerEvent,
@@ -59,6 +60,19 @@ export interface VoiceStreamServerConfig {
   /** Optional instructions override — defaults to the canonical listener prompt. */
   instructions?: string;
   onEscalate: (args: {
+    workflowId: string;
+    tenantId: string;
+    callId: string;
+    reason: string;
+  }) => Promise<void>;
+  /**
+   * Invoked when the AI fires the `opt_out_contact` tool mid-call.
+   * Handler should persist `contact.opt_out` so future outreach is
+   * suppressed. If omitted, the bridge still fires the tool and ends
+   * the call — just without the DB write (the audit trail lives in
+   * the transcript + agent-run).
+   */
+  onDoNotContact?: (args: {
     workflowId: string;
     tenantId: string;
     callId: string;
@@ -222,11 +236,21 @@ export class VoiceStreamServer {
         ? FUEL_LEAD_QUALIFIER_INSTRUCTIONS
         : (this.config.instructions ?? ESCALATION_LISTENER_INSTRUCTIONS));
 
+    // Tools: escalation always; opt-out when a handler is wired so
+    // the callee's "take me off your list" request produces a real
+    // contact.opt_out. In listen-only mode the AI still needs both
+    // tools registered so the prompt's opt-out path stays valid when
+    // a human is driving the callee side.
+    const tools =
+      args.mode === "talkback" || this.config.onDoNotContact
+        ? [ESCALATION_TOOL, OPT_OUT_TOOL]
+        : [ESCALATION_TOOL];
+
     const handle = startVoiceBridge(twilio, realtime, {
       workflowId: args.workflowId,
       tenantId: args.tenantId,
       instructions,
-      tools: [ESCALATION_TOOL],
+      tools,
       mode: args.mode,
       ...(this.config.voice ? { voice: this.config.voice } : {}),
       ...(this.config.turnDetection
@@ -235,6 +259,13 @@ export class VoiceStreamServer {
       onEscalate: async (payload) => {
         await this.config.onEscalate(payload);
       },
+      ...(this.config.onDoNotContact
+        ? {
+            onDoNotContact: async (payload) => {
+              await this.config.onDoNotContact!(payload);
+            },
+          }
+        : {}),
       log: this.config.log,
     });
     this.handles.add(handle);

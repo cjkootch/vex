@@ -40,6 +40,8 @@ export {
   ESCALATION_LISTENER_INSTRUCTIONS,
   ESCALATION_TOOL,
   FUEL_LEAD_QUALIFIER_INSTRUCTIONS,
+  VOICEMAIL_INSTRUCTIONS,
+  OPT_OUT_TOOL,
   type RealtimeClientEvent,
   type RealtimeServerEvent,
   type RealtimeToolDefinition,
@@ -50,6 +52,12 @@ export {
   type VoiceBridgeConfig,
   type VoiceBridgeHandle,
 } from "./voice-bridge.js";
+export {
+  checkCallWindow,
+  inferTimezone,
+  type CallWindowConfig,
+  type CallWindowResult,
+} from "./call-window.js";
 export {
   createResendClient,
   fetchResendInboundBody,

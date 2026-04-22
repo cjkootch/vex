@@ -72,6 +72,7 @@ import {
   createResendClient,
   createTwilioClient,
   SlackNotifier,
+  checkCallWindow,
   type TwilioClient,
 } from "@vex/integrations";
 
@@ -1063,6 +1064,27 @@ async function applyOutboundCall(
       approval.id,
       "outbound_call",
       `missing ${missing.join(" + ")}`,
+    );
+    return;
+  }
+
+  // Call-window gate — never dial before 9am or after 8pm in the
+  // recipient's local tz. Derives the zone from the phone number
+  // country + NANP area code (Caribbean area codes map to their own
+  // islands). Outside the window → record the block and skip; the
+  // operator can re-approve once the window opens. This is a belt-
+  // and-suspenders layer on top of any workflow-level scheduling.
+  const callWindow = checkCallWindow({ to: toNumber });
+  if (!callWindow.ok) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "outbound_call",
+      callWindow.reason === "invalid_number"
+        ? `invalid_phone_for_window_check: ${toNumber}`
+        : `outside_call_window: local ${callWindow.localHour ?? "?"}:00 in ${callWindow.timezone ?? "unknown"}`,
     );
     return;
   }
