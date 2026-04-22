@@ -31,6 +31,14 @@ export interface DataTableProps<T> {
    * The table is always client-side filtered so the pager stays in sync.
    */
   initialFilter?: string;
+  /**
+   * External control of the search filter. When `filter` is provided,
+   * the table becomes controlled and the internal search input is
+   * suppressed — callers render their own toolbar (see ListToolbar).
+   */
+  filter?: string;
+  /** Hide the built-in search input + row-count header row. */
+  hideToolbar?: boolean;
   /** Rendered when `data.length === 0`. */
   emptyState?: ReactNode;
   /** Rows per page. Defaults to 25. */
@@ -55,6 +63,8 @@ export function DataTable<T>({
   columns,
   filterPlaceholder = "Filter…",
   initialFilter = "",
+  filter,
+  hideToolbar = false,
   emptyState,
   pageSize = 25,
   onRowClick,
@@ -63,7 +73,12 @@ export function DataTable<T>({
   getRowId,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [globalFilter, setGlobalFilter] = useState(initialFilter);
+  const [internalFilter, setInternalFilter] = useState(initialFilter);
+  const globalFilter = filter ?? internalFilter;
+  const setGlobalFilter = (next: string) => {
+    if (filter === undefined) setInternalFilter(next);
+  };
+  const controlled = filter !== undefined;
 
   const selectable = selectedIds !== undefined && onSelectionChange !== undefined && getRowId !== undefined;
 
@@ -134,18 +149,20 @@ export function DataTable<T>({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <input
-          type="search"
-          value={globalFilter}
-          onChange={(e) => setGlobalFilter(e.target.value)}
-          placeholder={filterPlaceholder}
-          className="w-64 rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted transition-colors focus:border-accent focus:outline-none"
-        />
-        <span className="num text-xs text-text-muted">
-          {filteredCount} {filteredCount === 1 ? "row" : "rows"}
-        </span>
-      </div>
+      {!hideToolbar && !controlled ? (
+        <div className="flex items-center justify-between">
+          <input
+            type="search"
+            value={globalFilter}
+            onChange={(e) => setGlobalFilter(e.target.value)}
+            placeholder={filterPlaceholder}
+            className="w-64 rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted transition-colors focus:border-accent focus:outline-none"
+          />
+          <span className="num text-xs text-text-muted">
+            {filteredCount} {filteredCount === 1 ? "row" : "rows"}
+          </span>
+        </div>
+      ) : null}
 
       <div className="overflow-hidden rounded-lg border border-line-soft bg-surface-1/60 shadow-soft">
         <table className="min-w-full text-left text-sm">

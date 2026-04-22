@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { type ColumnDef } from "@tanstack/react-table";
 import { DataTable } from "@/components/data-table/data-table";
+import {
+  FacetChips,
+  ListToolbar,
+} from "@/components/data-table/list-toolbar";
 import { NewContactForm } from "@/components/crm/new-contact-form";
 import { fetchWithRetry } from "@/lib/fetch-with-retry";
 import { downloadCsv, toCsv } from "@/lib/csv";
@@ -33,22 +37,24 @@ interface OrgLookup {
   [id: string]: string;
 }
 
-const FILTER_TABS = [
-  { label: "Active", value: "active" },
-  { label: "Suppressed", value: "suppressed" },
-] as const;
+type StatusTab = "active" | "suppressed";
+type ReachFilter = "" | "has_email" | "has_phone" | "has_both";
 
 export default function ContactsPage() {
   const [contacts, setContacts] = useState<ContactRow[] | null>(null);
   const [orgLookup, setOrgLookup] = useState<OrgLookup>({});
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"active" | "suppressed">("active");
+  const [tab, setTab] = useState<StatusTab>("active");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [creating, setCreating] = useState(false);
   const [archiveModalOpen, setArchiveModalOpen] = useState(false);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveError, setArchiveError] = useState<string | null>(null);
   const [archiveConfirmText, setArchiveConfirmText] = useState("");
+
+  const [search, setSearch] = useState("");
+  const [companyFilter, setCompanyFilter] = useState<string>("");
+  const [reachFilter, setReachFilter] = useState<ReachFilter>("");
 
   useEffect(() => {
     let cancelled = false;
@@ -96,8 +102,6 @@ export default function ContactsPage() {
     };
   }, [tab]);
 
-  // Separate fetch so the chip renderer can show "Acme" rather than
-  // the raw ULID when no memberships table join is available yet.
   useEffect(() => {
     let cancelled = false;
     fetch("/api/organizations")
@@ -119,52 +123,94 @@ export default function ContactsPage() {
     };
   }, []);
 
+  const companyOptions = useMemo<Array<{ id: string; name: string }>>(() => {
+    if (!contacts) return [];
+    const ids = new Set<string>();
+    for (const c of contacts) {
+      for (const o of c.orgs ?? []) ids.add(o.orgId);
+    }
+    return Array.from(ids)
+      .map((id) => ({ id, name: orgLookup[id] ?? id.slice(-6) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [contacts, orgLookup]);
+
+  const filtered = useMemo<ContactRow[]>(() => {
+    if (!contacts) return [];
+    const q = search.trim().toLowerCase();
+    return contacts.filter((c) => {
+      if (companyFilter) {
+        if (!c.orgs.some((o) => o.orgId === companyFilter)) return false;
+      }
+      if (reachFilter === "has_email" && c.emails.length === 0) return false;
+      if (reachFilter === "has_phone" && c.phones.length === 0) return false;
+      if (
+        reachFilter === "has_both" &&
+        (c.emails.length === 0 || c.phones.length === 0)
+      )
+        return false;
+      if (!q) return true;
+      return (
+        c.fullName.toLowerCase().includes(q) ||
+        (c.title?.toLowerCase().includes(q) ?? false) ||
+        c.emails.some((e) => e.toLowerCase().includes(q)) ||
+        c.phones.some((p) => p.toLowerCase().includes(q))
+      );
+    });
+  }, [contacts, search, companyFilter, reachFilter]);
+
   const columns = useMemo<ColumnDef<ContactRow, unknown>[]>(
     () => [
       {
         accessorKey: "fullName",
         header: "Name",
         cell: ({ row }) => (
-          <Link
-            href={`/app/contacts/${row.original.id}`}
-            className="font-medium text-accent hover:underline"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {row.original.fullName}
-          </Link>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Avatar name={row.original.fullName} />
+            <div className="flex min-w-0 flex-col">
+              <Link
+                href={`/app/contacts/${row.original.id}`}
+                className="truncate font-medium text-text-primary transition-colors hover:text-accent-strong hover:underline"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {row.original.fullName}
+              </Link>
+              {row.original.title ? (
+                <span className="truncate text-[11px] text-text-muted">
+                  {row.original.title}
+                </span>
+              ) : null}
+            </div>
+          </div>
         ),
-      },
-      {
-        accessorKey: "title",
-        header: "Title",
-        cell: ({ getValue }) => getValue<string | null>() ?? "—",
       },
       {
         id: "companies",
         header: "Companies",
         cell: ({ row }) => {
           const orgs = row.original.orgs ?? [];
-          if (orgs.length === 0) return <span className="text-white/40">—</span>;
+          if (orgs.length === 0) return <span className="text-text-muted/50">—</span>;
+          const primary = orgs.find((o) => o.isPrimary) ?? orgs[0]!;
+          const others = orgs.filter((o) => o !== primary);
           return (
-            <div className="flex flex-wrap gap-1">
-              {orgs.map((o) => (
+            <div className="flex items-center gap-1.5">
+              <Link
+                href={`/app/companies/${primary.orgId}`}
+                onClick={(e) => e.stopPropagation()}
+                className="truncate text-text-secondary hover:text-text-primary hover:underline"
+                title={primary.role ?? undefined}
+              >
+                {orgLookup[primary.orgId] ?? primary.orgId.slice(-6)}
+              </Link>
+              {others.length > 0 ? (
                 <span
-                  key={o.orgId}
-                  title={o.role ?? undefined}
-                  className={`rounded px-1.5 py-0.5 text-xs ${
-                    o.isPrimary
-                      ? "bg-accent/25 text-accent"
-                      : "bg-muted/60 text-white/70"
-                  }`}
+                  className="num rounded-full border border-line-soft bg-surface-2/60 px-1.5 py-0 text-[10px] text-text-muted"
+                  title={others
+                    .map((o) => orgLookup[o.orgId] ?? o.orgId)
+                    .join(", ")}
                 >
-                  {orgLookup[o.orgId] ?? o.orgId.slice(-6)}
-                  {o.isPrimary && (
-                    <span className="ml-1 text-[10px] uppercase tracking-wider text-accent/80">
-                      ★
-                    </span>
-                  )}
+                  +{others.length}
                 </span>
-              ))}
+              ) : null}
             </div>
           );
         },
@@ -172,12 +218,24 @@ export default function ContactsPage() {
       {
         id: "email",
         header: "Email",
-        cell: ({ row }) => row.original.emails[0] ?? "—",
+        cell: ({ row }) => {
+          const e = row.original.emails[0];
+          if (!e) return <span className="text-text-muted/50">—</span>;
+          return (
+            <span className="num-mono truncate text-text-secondary" title={e}>
+              {e}
+            </span>
+          );
+        },
       },
       {
         id: "phone",
         header: "Phone",
-        cell: ({ row }) => row.original.phones[0] ?? "—",
+        cell: ({ row }) => {
+          const p = row.original.phones[0];
+          if (!p) return <span className="text-text-muted/50">—</span>;
+          return <span className="num-mono text-text-secondary">{p}</span>;
+        },
       },
       {
         id: "status",
@@ -186,39 +244,43 @@ export default function ContactsPage() {
           if (row.original.optOutAt) {
             return (
               <span
-                className="rounded bg-bad/20 px-1.5 py-0.5 text-xs text-bad"
+                className="rounded-md border border-bad/40 bg-bad/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider2 text-bad"
                 title={row.original.optOutReason ?? "suppressed"}
               >
-                suppressed
+                Suppressed
               </span>
             );
           }
-          return (
-            <span className="rounded bg-good/20 px-1.5 py-0.5 text-xs text-good">
-              active
-            </span>
-          );
+          return <span className="text-text-muted/50">—</span>;
         },
       },
       {
         accessorKey: "updatedAt",
         header: "Updated",
-        cell: ({ getValue }) => formatRelative(getValue<string>()),
+        cell: ({ getValue }) => (
+          <span className="num text-text-muted">
+            {formatRelative(getValue<string>())}
+          </span>
+        ),
       },
     ],
     [orgLookup],
   );
 
+  const anyFilterActive =
+    Boolean(search) || Boolean(companyFilter) || Boolean(reachFilter);
+
   return (
-    <div className="mx-auto flex h-full max-w-6xl flex-col gap-4 px-6 py-6">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line-soft pb-5">
-        <div>
-          <div className="text-eyebrow text-text-muted">Counterparties</div>
-          <h1 className="mt-1 text-title text-text-primary">Contacts</h1>
-          <p className="mt-2 text-sm text-text-secondary">
-            People across your workspace. Suppressed contacts are filtered out of outbound
-            automation.
-          </p>
+    <div className="mx-auto flex h-full max-w-7xl flex-col gap-4 px-6 py-6">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line-soft pb-4">
+        <div className="flex items-baseline gap-3">
+          <div className="flex flex-col">
+            <span className="text-eyebrow text-text-muted">Counterparties</span>
+            <h1 className="text-title text-text-primary">Contacts</h1>
+          </div>
+          <span className="hidden text-sm text-text-muted sm:inline">
+            · {contacts?.length ?? 0} {tab}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -229,7 +291,7 @@ export default function ContactsPage() {
               const target =
                 selectedIds.size > 0
                   ? contacts.filter((c) => selectedIds.has(c.id))
-                  : contacts;
+                  : filtered;
               const csv = toCsv(
                 [
                   "full_name",
@@ -261,14 +323,14 @@ export default function ContactsPage() {
                 csv,
               );
             }}
-            className="rounded-md border border-line bg-muted/40 px-3 py-1.5 text-sm text-white/80 hover:bg-muted/60 disabled:opacity-40"
+            className="rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-sm text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary disabled:opacity-40"
           >
             {selectedIds.size > 0 ? `CSV (${selectedIds.size})` : "CSV"}
           </button>
           <button
             type="button"
             onClick={() => setCreating(true)}
-            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white hover:bg-accent/90"
+            className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-accent-strong"
           >
             + New contact
           </button>
@@ -279,29 +341,70 @@ export default function ContactsPage() {
         open={creating}
         onClose={() => setCreating(false)}
         onCreated={() => {
-          // Easiest correct behaviour: refetch so the new row picks up
-          // the server-assigned computed fields (status, timestamps).
           setContacts(null);
           setTab("active");
         }}
       />
 
-      <div className="flex gap-1">
-        {FILTER_TABS.map((t) => (
-          <button
-            key={t.value}
-            type="button"
-            onClick={() => setTab(t.value)}
-            className={`rounded-md px-3 py-1 text-xs transition-colors ${
-              tab === t.value
-                ? "bg-accent text-white"
-                : "bg-muted/40 text-white/70 hover:bg-muted/60"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <ListToolbar
+        search={search}
+        onSearchChange={setSearch}
+        searchPlaceholder="Filter by name, title, email, phone…"
+        count={filtered.length}
+        facets={
+          <>
+            <FacetChips<StatusTab>
+              value={tab}
+              onChange={setTab}
+              options={[
+                { label: "Active", value: "active" },
+                { label: "Suppressed", value: "suppressed" },
+              ]}
+            />
+            <FacetChips<ReachFilter>
+              label="Reach"
+              value={reachFilter}
+              onChange={setReachFilter}
+              options={[
+                { label: "Any", value: "" },
+                { label: "Email", value: "has_email" },
+                { label: "Phone", value: "has_phone" },
+                { label: "Both", value: "has_both" },
+              ]}
+            />
+            {companyOptions.length > 0 ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-eyebrow text-text-muted">Company</span>
+                <select
+                  value={companyFilter}
+                  onChange={(e) => setCompanyFilter(e.target.value)}
+                  className="max-w-[160px] rounded-md border border-line-soft bg-surface-2/60 px-2 py-1 text-xs text-text-primary transition-colors focus:border-accent focus:outline-none"
+                >
+                  <option value="">All</option>
+                  {companyOptions.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+            {anyFilterActive ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setCompanyFilter("");
+                  setReachFilter("");
+                }}
+                className="text-xs text-text-muted transition-colors hover:text-text-secondary"
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </>
+        }
+      />
 
       {error && (
         <div className="rounded-md border border-bad/40 bg-bad/10 px-3 py-2 text-sm text-bad">
@@ -310,15 +413,15 @@ export default function ContactsPage() {
       )}
 
       {contacts === null ? (
-        <div className="rounded-md border border-line bg-muted/20 px-3 py-6 text-center text-sm text-white/40">
+        <div className="rounded-md border border-line-soft bg-surface-2/30 px-3 py-6 text-center text-sm text-text-muted">
           Loading contacts…
         </div>
       ) : (
         <>
           {selectedIds.size > 0 && (
-            <div className="mb-2 flex items-center justify-between rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-sm">
-              <span className="text-white">
-                <span className="font-mono">{selectedIds.size}</span> contact
+            <div className="mb-2 flex items-center justify-between rounded-md border border-accent/40 bg-accent-soft/30 px-3 py-2 text-sm">
+              <span className="text-text-primary">
+                <span className="num-mono">{selectedIds.size}</span> contact
                 {selectedIds.size === 1 ? "" : "s"} selected
               </span>
               <div className="flex items-center gap-3">
@@ -329,14 +432,14 @@ export default function ContactsPage() {
                     setArchiveError(null);
                     setArchiveModalOpen(true);
                   }}
-                  className="rounded-md border border-red-500/40 bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-200 transition hover:bg-red-500/20"
+                  className="rounded-md border border-bad/40 bg-bad/10 px-2.5 py-1 text-xs font-medium text-bad transition-colors hover:bg-bad/20"
                 >
                   Delete {selectedIds.size}
                 </button>
                 <button
                   type="button"
                   onClick={() => setSelectedIds(new Set())}
-                  className="text-xs text-white/60 hover:text-white"
+                  className="text-xs text-text-muted hover:text-text-primary"
                 >
                   Clear
                 </button>
@@ -415,10 +518,6 @@ export default function ContactsPage() {
                           archivedIds: string[];
                         };
                         const archivedSet = new Set(payload.archivedIds);
-                        // Optimistic: drop archived rows from the list
-                        // immediately so the UI feels instant. Keep
-                        // any rows that didn't match (stale ids,
-                        // already-archived) visible.
                         setContacts((prev) =>
                           prev
                             ? prev.filter((c) => !archivedSet.has(c.id))
@@ -444,13 +543,16 @@ export default function ContactsPage() {
             </div>
           ) : null}
           <DataTable
-            data={contacts}
+            data={filtered}
             columns={columns}
-            filterPlaceholder="Filter by name, title, email…"
+            filter={search}
+            hideToolbar
             emptyState={
-              tab === "suppressed"
-                ? "No suppressed contacts. Opt-outs recorded here."
-                : "No active contacts. Load contacts via ingestion or seed."
+              anyFilterActive
+                ? "No contacts match the current filters."
+                : tab === "suppressed"
+                  ? "No suppressed contacts. Opt-outs recorded here."
+                  : "No active contacts. Load contacts via ingestion or seed."
             }
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
@@ -458,6 +560,23 @@ export default function ContactsPage() {
           />
         </>
       )}
+    </div>
+  );
+}
+
+function Avatar({ name }: { name: string }) {
+  const initials = name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("");
+  return (
+    <div
+      aria-hidden="true"
+      className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-line-soft bg-surface-2/80 text-[11px] font-semibold text-accent-strong"
+    >
+      {initials || "·"}
     </div>
   );
 }

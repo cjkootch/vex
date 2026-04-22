@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
+import { usePulsingFetch } from "@/lib/use-pulsing-fetch";
 
 /**
  * LinkedIn-style hero band for a contact detail page. Mirrors the
@@ -54,25 +54,10 @@ export function ContactHero({
   };
   actions?: React.ReactNode;
 }): React.ReactElement {
-  const [pulse, setPulse] = useState<ContactPulse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/contacts/${contactId}/pulse`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((body: ContactPulse) => {
-        if (!cancelled) setPulse(body);
-      })
-      .catch(() => {
-        /* hero still renders with fallback */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [contactId]);
+  const pulse = usePulsingFetch<ContactPulse>(
+    `/api/contacts/${contactId}/pulse`,
+    { deps: [contactId] },
+  );
 
   const fullName = pulse?.contact.fullName ?? fallback.fullName;
   const title = pulse?.contact.title ?? fallback.title;

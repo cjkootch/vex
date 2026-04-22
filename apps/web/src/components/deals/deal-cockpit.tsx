@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { usePulsingFetch } from "@/lib/use-pulsing-fetch";
 
 /**
  * Deal cockpit — the "which deals need attention right now" view that
@@ -81,29 +82,9 @@ const GROUP_META: Record<
 };
 
 export function DealCockpit(): React.ReactElement | null {
-  const [data, setData] = useState<PulseResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const data = usePulsingFetch<PulseResponse>(`/api/deals/workspace-pulse`);
   const [showHealthy, setShowHealthy] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/deals/workspace-pulse`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((body: PulseResponse) => {
-        if (!cancelled) setData(body);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  if (error) return null;
   if (!data) return <CockpitSkeleton />;
   if (data.deals.length === 0) return null;
 

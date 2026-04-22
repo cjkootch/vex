@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { buildAskVexHref } from "@/lib/ask-vex";
+import { usePulsingFetch } from "@/lib/use-pulsing-fetch";
 
 /**
  * Per-deal pulse band. Renders a one-line execution summary above
@@ -48,25 +48,10 @@ export function PulseBand({
   dealRef: string;
   updatedAt: string | null;
 }): React.ReactElement | null {
-  const [data, setData] = useState<ReadinessResponse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/deals/${dealId}/readiness`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((body: ReadinessResponse) => {
-        if (!cancelled) setData(body);
-      })
-      .catch(() => {
-        // Band is supplementary; the Readiness tab surfaces errors loudly.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [dealId]);
+  const data = usePulsingFetch<ReadinessResponse>(
+    `/api/deals/${dealId}/readiness`,
+    { deps: [dealId] },
+  );
 
   if (!data) return null;
 

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
+import { usePulsingFetch } from "@/lib/use-pulsing-fetch";
 
 /**
  * LinkedIn-style hero band for a counterparty (company) detail page.
@@ -75,25 +75,10 @@ export function CompanyHero({
   };
   actions?: React.ReactNode;
 }): React.ReactElement {
-  const [pulse, setPulse] = useState<OrgPulse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/organizations/${orgId}/pulse`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((body: OrgPulse) => {
-        if (!cancelled) setPulse(body);
-      })
-      .catch(() => {
-        /* hero still renders with fallback name + meta */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [orgId]);
+  const pulse = usePulsingFetch<OrgPulse>(
+    `/api/organizations/${orgId}/pulse`,
+    { deps: [orgId] },
+  );
 
   const legalName = pulse?.org.legalName ?? fallback.legalName;
   const domain = pulse?.org.domain ?? fallback.domain;

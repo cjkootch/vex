@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { usePulsingFetch } from "@/lib/use-pulsing-fetch";
 
 /**
  * Home-page section that rolls up the workspace-pulse signal and
@@ -42,25 +42,7 @@ interface PulseResponse {
 const MAX_ROWS = 5;
 
 export function DealsNeedingAttention(): React.ReactElement | null {
-  const [data, setData] = useState<PulseResponse | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/deals/workspace-pulse`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(String(r.status));
-        return r.json();
-      })
-      .then((body: PulseResponse) => {
-        if (!cancelled) setData(body);
-      })
-      .catch(() => {
-        // Section is supplementary; stay quiet on fetch failure.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const data = usePulsingFetch<PulseResponse>(`/api/deals/workspace-pulse`);
 
   if (!data) return null;
   const urgent = data.deals
