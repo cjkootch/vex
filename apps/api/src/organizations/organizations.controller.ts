@@ -15,7 +15,7 @@ import {
   Query,
   UseGuards,
 } from "@nestjs/common";
-import { count, desc, eq, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { createId } from "@vex/domain";
 import type { Queue } from "bullmq";
@@ -598,6 +598,254 @@ export class OrganizationsController {
   // -------------------------------------------------------------------
   // Sprint W — products + broker/supplier relationships
   // -------------------------------------------------------------------
+
+  /**
+   * Operational pulse for a counterparty. Aggregates the signals an
+   * operator needs at a glance on the org's hero band:
+   *
+   *   · Role counts across open deals (buyer / supplier / broker /
+   *     intermediary). Powers the role-badge strip.
+   *   · Recent open deals (top 10 by updatedAt) with role annotated.
+   *   · Lifetime closed-deal count + summed volume (any role).
+   *   · OFAC status + last screen; counterparty risk tier.
+   *   · Contact count (active memberships) and last touchpoint.
+   *
+   * One HTTP round-trip, a handful of queries — fine at VTC scale.
+   */
+  @Get(":id/pulse")
+  async pulse(@Param("id") id: string) {
+    return withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      const [org] = await tx
+        .select()
+        .from(schema.organizations)
+        .where(eq(schema.organizations.id, id))
+        .limit(1);
+      if (!org) throw new NotFoundException(`organization ${id} not found`);
+
+      const OPEN_STATUSES: Array<
+        "draft"
+        | "negotiating"
+        | "pending_approval"
+        | "approved"
+        | "loading"
+        | "in_transit"
+        | "delivered"
+      > = [
+        "draft",
+        "negotiating",
+        "pending_approval",
+        "approved",
+        "loading",
+        "in_transit",
+        "delivered",
+      ];
+
+      const [
+        buyerOpen,
+        supplierOpen,
+        participantRows,
+        closedVolumeRows,
+        closedCountRows,
+        latestScore,
+        contactCountRows,
+        lastTouchpoint,
+      ] = await Promise.all([
+        tx
+          .select({
+            id: schema.fuelDeals.id,
+            dealRef: schema.fuelDeals.dealRef,
+            status: schema.fuelDeals.status,
+            product: schema.fuelDeals.product,
+            volumeUsg: schema.fuelDeals.volumeUsg,
+            volumeUnit: schema.fuelDeals.volumeUnit,
+            updatedAt: schema.fuelDeals.updatedAt,
+          })
+          .from(schema.fuelDeals)
+          .where(
+            and(
+              eq(schema.fuelDeals.buyerOrgId, id),
+              inArray(schema.fuelDeals.status, OPEN_STATUSES),
+            ),
+          ),
+        tx
+          .select({
+            id: schema.fuelDeals.id,
+            dealRef: schema.fuelDeals.dealRef,
+            status: schema.fuelDeals.status,
+            product: schema.fuelDeals.product,
+            volumeUsg: schema.fuelDeals.volumeUsg,
+            volumeUnit: schema.fuelDeals.volumeUnit,
+            updatedAt: schema.fuelDeals.updatedAt,
+          })
+          .from(schema.fuelDeals)
+          .where(
+            and(
+              eq(schema.fuelDeals.sellerOrgId, id),
+              inArray(schema.fuelDeals.status, OPEN_STATUSES),
+            ),
+          ),
+        tx
+          .select({
+            dealId: schema.fuelDealParticipants.dealId,
+            partyType: schema.fuelDealParticipants.partyType,
+          })
+          .from(schema.fuelDealParticipants)
+          .where(eq(schema.fuelDealParticipants.orgId, id)),
+        tx
+          .select({
+            volumeUsg: schema.fuelDeals.volumeUsg,
+          })
+          .from(schema.fuelDeals)
+          .where(
+            and(
+              eq(schema.fuelDeals.status, "settled"),
+              or(
+                eq(schema.fuelDeals.buyerOrgId, id),
+                eq(schema.fuelDeals.sellerOrgId, id),
+              ),
+            ),
+          ),
+        tx
+          .select({ id: schema.fuelDeals.id })
+          .from(schema.fuelDeals)
+          .where(
+            and(
+              eq(schema.fuelDeals.status, "settled"),
+              or(
+                eq(schema.fuelDeals.buyerOrgId, id),
+                eq(schema.fuelDeals.sellerOrgId, id),
+              ),
+            ),
+          ),
+        tx
+          .select()
+          .from(schema.fuelDealCounterpartyScores)
+          .where(eq(schema.fuelDealCounterpartyScores.orgId, id))
+          .orderBy(desc(schema.fuelDealCounterpartyScores.scoredAt))
+          .limit(1),
+        tx
+          .select({ id: schema.contactOrgMemberships.contactId })
+          .from(schema.contactOrgMemberships)
+          .where(eq(schema.contactOrgMemberships.orgId, id)),
+        tx
+          .select({
+            channel: schema.touchpoints.channel,
+            occurredAt: schema.touchpoints.occurredAt,
+          })
+          .from(schema.touchpoints)
+          .where(eq(schema.touchpoints.orgId, id))
+          .orderBy(desc(schema.touchpoints.occurredAt))
+          .limit(1),
+      ]);
+
+      // Role classification from participant rows. Brokers + intermediaries
+      // live on fuel_deal_participants; buyer/supplier are on fuel_deals
+      // itself and already covered above.
+      let brokerDealIds = new Set<string>();
+      let intermediaryDealIds = new Set<string>();
+      for (const p of participantRows) {
+        if (
+          p.partyType === "supplier_broker" ||
+          p.partyType === "buyer_broker" ||
+          p.partyType === "broker"
+        ) {
+          brokerDealIds.add(p.dealId);
+        } else if (p.partyType === "intermediary") {
+          intermediaryDealIds.add(p.dealId);
+        }
+      }
+
+      // Combine open deals with role annotation. A single deal can land
+      // in multiple role buckets (rare but allowed — e.g. buyer + broker).
+      type OpenDealOut = {
+        dealId: string;
+        dealRef: string;
+        status: string;
+        product: string;
+        volumeUsg: number;
+        volumeUnit: string;
+        updatedAt: string;
+        role: string;
+      };
+      const openDealsMap = new Map<string, OpenDealOut>();
+      for (const d of buyerOpen) {
+        openDealsMap.set(d.id, {
+          dealId: d.id,
+          dealRef: d.dealRef,
+          status: d.status,
+          product: d.product,
+          volumeUsg: d.volumeUsg,
+          volumeUnit: d.volumeUnit,
+          updatedAt: d.updatedAt.toISOString(),
+          role: "buyer",
+        });
+      }
+      for (const d of supplierOpen) {
+        const existing = openDealsMap.get(d.id);
+        if (existing) {
+          existing.role = `${existing.role} + supplier`;
+        } else {
+          openDealsMap.set(d.id, {
+            dealId: d.id,
+            dealRef: d.dealRef,
+            status: d.status,
+            product: d.product,
+            volumeUsg: d.volumeUsg,
+            volumeUnit: d.volumeUnit,
+            updatedAt: d.updatedAt.toISOString(),
+            role: "supplier",
+          });
+        }
+      }
+
+      const openDeals = Array.from(openDealsMap.values())
+        .sort((a, b) =>
+          b.updatedAt.localeCompare(a.updatedAt),
+        )
+        .slice(0, 10);
+
+      const roleCounts = {
+        buyer: buyerOpen.length,
+        supplier: supplierOpen.length,
+        broker: brokerDealIds.size,
+        intermediary: intermediaryDealIds.size,
+      };
+
+      const lifetimeVolumeUsg = closedVolumeRows.reduce(
+        (acc, r) => acc + (r.volumeUsg ?? 0),
+        0,
+      );
+
+      const firstTouchpoint = lastTouchpoint[0] ?? null;
+
+      return {
+        org: {
+          id: org.id,
+          legalName: org.legalName,
+          domain: org.domain,
+          industry: org.industry,
+          status: org.status,
+          ofacStatus: org.ofacStatus,
+          ofacScreenedAt: org.ofacScreenedAt
+            ? org.ofacScreenedAt.toISOString()
+            : null,
+        },
+        roleCounts,
+        openDeals,
+        closedDealCount: closedCountRows.length,
+        lifetimeVolumeUsg,
+        contactCount: contactCountRows.length,
+        riskTier: latestScore[0]?.riskTier ?? null,
+        riskTierScoredAt: latestScore[0]?.scoredAt
+          ? latestScore[0].scoredAt.toISOString()
+          : null,
+        lastTouchpointAt: firstTouchpoint?.occurredAt
+          ? firstTouchpoint.occurredAt.toISOString()
+          : null,
+        lastTouchpointChannel: firstTouchpoint?.channel ?? null,
+      };
+    });
+  }
 
   @Get(":id/products")
   async listProducts(@Param("id") id: string): Promise<{

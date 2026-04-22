@@ -304,6 +304,20 @@ export class ContactsController {
     return { enrollments };
   }
 
+  /**
+   * Operational pulse for a contact. Aggregates the signals the
+   * contact detail page's hero band needs at a glance:
+   *   · primary org + every other org this contact represents
+   *   · open-deal count where contact is the buyer_contact
+   *   · last touchpoint timestamp + channel
+   *   · recent activity count (7d) across this contact
+   */
+  @Get(":id/pulse")
+  async pulse(@Param("id") id: string) {
+    const pulse = await this.service.contactPulse(this.tenant.tenantId, id);
+    return pulse;
+  }
+
   @Patch(":id")
   async update(@Param("id") id: string, @Body() raw: unknown) {
     const parsed = UpdateContactBody.safeParse(raw);
