@@ -435,33 +435,39 @@ const CONVERSATIONAL_OPENERS = new Set([
 ]);
 
 /**
- * Deterministic safety net for `outbound_call` proposals. The prompt
- * instructs Claude to set `aiMode=true` when the user's intent is
- * "have Vex call X" vs "dial X for me", but it's an optional field
- * and the model occasionally drops it — producing an operator-join
- * conference (hold music) when the operator clearly asked for an AI
- * call. Match the user's original message against a tight allowlist
- * of Vex-as-caller phrasings and force `aiMode=true` before the
- * proposal is persisted. Preserves an explicitly-set `aiMode=false`
- * so operators can still opt back into the conference path.
+ * Deterministic safety net for `outbound_call` proposals. Defaults
+ * `aiMode=true` for every chat-initiated call unless the user
+ * explicitly said they want to join the conference themselves
+ * ("I'll take the call", "join the call", "conference in", etc.).
+ *
+ * Why default on: the conference-bridge path requires an operator to
+ * click "join" — there's no UX surface doing that today, so an
+ * unsupervised conference call means the callee picks up to hold
+ * music. AI mode keeps the conversation moving; the user can still
+ * escalate via the Sprint I backup request flow.
+ *
+ * Preserves an explicitly-set `aiMode=false` so operators who *do*
+ * want to take the call themselves can opt back in.
  */
 export function enforceAiModeWhenVexIsTheCaller(
   actions: ProposedAction[],
   userMessage: string,
 ): ProposedAction[] {
-  if (!VEX_CALLER_RE.test(userMessage)) return actions;
+  const operatorWantsToJoin = OPERATOR_JOIN_RE.test(userMessage);
   return actions.map((a) => {
     if (a.kind !== "outbound_call") return a;
     if (a.payload["aiMode"] !== undefined) return a;
-    return { ...a, payload: { ...a.payload, aiMode: true } };
+    return {
+      ...a,
+      payload: { ...a.payload, aiMode: !operatorWantsToJoin },
+    };
   });
 }
 
-// "Have Vex call X", "AI call X", "Vex talks to X", "have the agent
-// call X". Deliberately narrow — "dial X", "call X and I'll join",
-// "ring X" should all keep the operator-join default.
-const VEX_CALLER_RE =
-  /\b(vex\s+(call|calls|talk|talks|dial|ring)|ai[-\s]?call|have\s+(vex|the\s+agent)\s+(call|talk|dial|ring))/i;
+// Matches phrases where the user wants the operator-join conference
+// flow instead of AI mode. Anything else defaults to aiMode=true.
+const OPERATOR_JOIN_RE =
+  /\b(i'?ll\s+(take|join|handle|be\s+on)|join\s+(the\s+)?call|conference\s+(in|me|us)|bridge\s+me|let\s+me\s+(join|take|handle))\b/i;
 
 function isConversationalOpener(message: string): boolean {
   const trimmed = message.trim().toLowerCase();
