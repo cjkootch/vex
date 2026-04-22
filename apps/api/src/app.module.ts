@@ -22,6 +22,7 @@ import { SearchModule } from "./search/search.module.js";
 import { StrategyModule } from "./strategy/strategy.module.js";
 import { VoiceModule } from "./voice/voice.module.js";
 import { VesselsModule } from "./vessels/vessels.module.js";
+import { PortsModule } from "./ports/ports.module.js";
 import { TenantThrottlerGuard } from "./throttler/tenant-throttler.guard.js";
 
 export interface AppModuleConfig {
@@ -46,6 +47,7 @@ export interface AppModuleConfig {
   strategy?: DynamicModule;
   voice?: DynamicModule;
   vessels?: DynamicModule;
+  ports?: DynamicModule;
   health?: DynamicModule;
   nextAuthSecret: string;
 }
@@ -106,6 +108,7 @@ export class AppModule {
     if (config.strategy) imports.push(config.strategy);
     if (config.voice) imports.push(config.voice);
     if (config.vessels) imports.push(config.vessels);
+    if (config.ports) imports.push(config.ports);
     if (config.health) imports.push(config.health);
     return {
       module: AppModule,
@@ -138,5 +141,6 @@ export {
   StrategyModule,
   VoiceModule,
   VesselsModule,
+  PortsModule,
   HealthModule,
 };

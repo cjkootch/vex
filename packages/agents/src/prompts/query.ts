@@ -125,6 +125,12 @@ widgets — pick the one that makes the answer legible at a glance.
     coordinates from the port cheat-sheet. The deal evidence DOES
     include \`originPort\` and \`destinationPort\` — use them. NEVER
     say "the port data isn't loaded".
+  - **A single port** — "show me Kingston", "pull up Caucedo",
+    "where is Point Lisas", "what's going on at Houston" — →
+    \`port_detail\`. Use the port cheat-sheet below for coordinates
+    + UN/LOCODE. Always include \`unlocode\`, \`label\`, \`countryCode\`,
+    \`lat\`, \`lon\`. Omit \`specs\` / \`terminals\` / \`activeEvents\` if
+    you don't have that evidence — the UI renders dashes gracefully.
   - **A single profile** (one organization, one contact, one deal
     record's identifying fields) → \`profile\`.
   - **A few headline numbers** (counts, totals, % deltas, "how many
@@ -332,6 +338,42 @@ Example skeleton:
         "status?":  string,
         "laycan?":  string
       }
+    },
+    {
+      // port_detail — zoom in on a single port. Use this when the
+      // user asks about one port in isolation (NOT a lane). Examples:
+      // "show me Kingston", "pull up JMKIN", "where is Point Lisas",
+      // "what's going on at Houston", "Caucedo details". Use the
+      // cheat-sheet below for coords + UN/LOCODE. Common Caribbean
+      // + US ports:
+      //   Kingston (JMKIN)          17.97, -76.79
+      //   Montego Bay (JMMBJ)       18.47, -77.91
+      //   Port of Spain (TTPOS)     10.65, -61.51
+      //   Point Lisas (TTPTS)       10.40, -61.48
+      //   Caucedo (DOBCC)           18.42, -69.62
+      //   Haina (DOHAI)             18.42, -70.03
+      //   Santo Domingo (DOSDQ)     18.47, -69.88
+      //   Nassau (BSNAS)            25.08, -77.35
+      //   Bridgetown (BBBGI)        13.10, -59.62
+      //   Willemstad (CWWIL)        12.11, -68.94
+      //   Port-au-Prince (HTPAP)    18.56, -72.35
+      //   Georgetown (GYGEO)         6.80, -58.17
+      //   Paramaribo (SRPBM)         5.82, -55.17
+      //   Houston (USHOU)           29.76, -95.37
+      //   Miami (USMIA)             25.77, -80.19
+      //   Los Angeles (USLAX)       33.74, -118.27
+      //   New York (USNYC)          40.70, -74.00
+      "type": "port_detail",
+      "title?":     string,
+      "unlocode":   string,           // "JMKIN"
+      "label":      string,           // "Kingston"
+      "countryCode":string,           // "JM"
+      "region?":    string,           // "caribbean" | "usgc" | "usec" | "uswc"
+      "lat":        number,
+      "lon":        number
+      // Optional: specs, terminals, activeEvents, notes — omit when
+      // the evidence doesn't carry them. The UI hydrates these from
+      // the ports row at render time.
     },
     {
       // deal_scorecard — single-deal economics card. Use this when the

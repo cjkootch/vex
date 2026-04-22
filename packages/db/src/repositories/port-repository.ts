@@ -116,6 +116,36 @@ export class PortRepository {
   }
 
   /**
+   * Resolve a free-form ref → port. Tries in order:
+   *   1. UN/LOCODE exact (5 chars upper) — "JMKIN" → Kingston
+   *   2. ULID exact — direct id lookup
+   *   3. Name ILIKE — "Kingston" → row whose name contains "kingston"
+   *
+   * Used by the chat-driven port.show flow where the user may type
+   * either a well-known LOCODE or the city name. Returns the first
+   * hit; callers can use `listByName` if they need multiple matches.
+   */
+  async findByRef(tx: Tx, ref: string): Promise<Port | null> {
+    const trimmed = ref.trim();
+    if (!trimmed) return null;
+    if (/^[A-Z0-9]{5}$/i.test(trimmed)) {
+      const byLocode = await this.findByUnlocode(tx, trimmed);
+      if (byLocode) return byLocode;
+    }
+    if (/^[0-9A-Z]{26}$/.test(trimmed)) {
+      const byId = await this.findById(tx, trimmed);
+      if (byId) return byId;
+    }
+    const [row] = await tx
+      .select()
+      .from(ports)
+      .where(sql`${ports.name} ILIKE ${"%" + trimmed + "%"}`)
+      .orderBy(asc(ports.name))
+      .limit(1);
+    return row ?? null;
+  }
+
+  /**
    * Alphabetical by name — the natural surface for picker UIs and for
    * the admin ports table. Uses the region index from the migration.
    */

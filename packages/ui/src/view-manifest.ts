@@ -191,6 +191,67 @@ const RouteMapPanel = z.object({
 });
 
 /**
+ * Single-port snapshot. Renders a Leaflet map zoomed to one port plus
+ * a spec card (terminals, limits, customs/port days, active events).
+ * Use when the operator asks "show me Kingston", "pull up Caucedo",
+ * etc — i.e. they want to look at one port, not a trade lane.
+ */
+const PortDetailPanel = z.object({
+  type: z.literal("port_detail"),
+  title: z.string().optional(),
+  /** UN/LOCODE (e.g. "JMKIN" for Kingston). */
+  unlocode: z.string().min(1).max(10),
+  /** Human-readable port name. */
+  label: z.string().min(1),
+  countryCode: z.string().length(2),
+  region: z.string().optional(),
+  lat: z.number().min(-90).max(90),
+  lon: z.number().min(-180).max(180),
+  /** Physical + operational specs. All optional — rows render as dashes. */
+  specs: z
+    .object({
+      maxDraftM: z.number().nullable().optional(),
+      maxLoaM: z.number().nullable().optional(),
+      maxBeamM: z.number().nullable().optional(),
+      maxDwtMt: z.number().nullable().optional(),
+      customsClearanceDaysMedian: z.number().int().nullable().optional(),
+      portDaysMedian: z.number().int().nullable().optional(),
+      congestionFactor: z.number().nullable().optional(),
+      workingHours: z.string().nullable().optional(),
+      pilotageRequired: z.boolean().optional(),
+    })
+    .optional(),
+  /** Terminal capability flags. */
+  terminals: z
+    .object({
+      fuel: z.boolean().optional(),
+      container: z.boolean().optional(),
+      bulk: z.boolean().optional(),
+      reefer: z.boolean().optional(),
+    })
+    .optional(),
+  /** Currently-active port events (closures, congestion, strikes). */
+  activeEvents: z
+    .array(
+      z.object({
+        eventType: z.string(),
+        severity: z.enum(["info", "warn", "critical"]).optional(),
+        title: z.string(),
+        body: z.string().nullable().optional(),
+        startsAt: z.string(),
+        endsAt: z.string().nullable().optional(),
+      }),
+    )
+    .optional(),
+  notes: z
+    .object({
+      tariff: z.string().nullable().optional(),
+      restrictedCargo: z.string().nullable().optional(),
+    })
+    .optional(),
+});
+
+/**
  * Single-deal scorecard — surfaces the calculator outputs (EBITDA,
  * margin, score, recommendation) plus compliance flags. Used when
  * the user asks about a specific deal's economics so the answer
@@ -309,6 +370,7 @@ export const ManifestPanel = z.discriminatedUnion("type", [
   DisambiguationPanel,
   ConfirmEntityPanel,
   RouteMapPanel,
+  PortDetailPanel,
   DealScorecardPanel,
   ApprovalFlowPanel,
   RiskHeatmapPanel,
