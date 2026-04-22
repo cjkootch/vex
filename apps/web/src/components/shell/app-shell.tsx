@@ -12,6 +12,7 @@ import { ContextChip, type ContextChipType } from "./context-chip";
 import { CommandPalette } from "./command-palette";
 import { FloatingVexWidget } from "./floating-vex-widget";
 import { NotificationsBell } from "./notifications-bell";
+import { StalledApprovalsBanner } from "./stalled-approvals-banner";
 import { VexLogo } from "@/components/brand/vex-logo";
 
 /**
@@ -360,6 +361,7 @@ function ShellLayout({ children }: { children: ReactNode }) {
         pending={pending}
         onOpenMobileNav={() => setMobileNavOpen(true)}
       />
+      <StalledApprovalsBanner />
       <CommandPalette />
       <FloatingVexWidget />
       <MobileNav

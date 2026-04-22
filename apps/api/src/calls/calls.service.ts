@@ -10,6 +10,7 @@ import {
 import type { Client as TemporalClient } from "@temporalio/client";
 import type { Redis } from "ioredis";
 import {
+  schema,
   withTenant,
   type ActivityRepository,
   type AgentRunRepository,
@@ -21,6 +22,7 @@ import {
   type TouchpointRepository,
   type WorkspaceRepository,
 } from "@vex/db";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import {
   WorkflowId,
   mintVoiceAccessToken,
@@ -366,6 +368,189 @@ export class CallsService {
         activity: activityOut,
         callee,
         ...(workflowStatus ? { workflow: { status: workflowStatus } } : {}),
+      };
+    });
+  }
+
+  /**
+   * Unified per-call debug surface. Joins every row the call pipeline
+   * touches so an operator staring at a "my call didn't ring" moment
+   * gets the whole story in one screen: approval status, agent run
+   * status, every audit event keyed off `metadata.workflow_id` (window
+   * rejection, suppression rejection, executor failure, twilio dial
+   * result, transcript processing), the voice_call activity, and
+   * Temporal's live workflow status.
+   *
+   * Events are returned in chronological order so the timeline
+   * reads top-down. Missing pieces (no activity, no agent run) come
+   * back as nulls — the UI decides how to render an incomplete run.
+   */
+  async getDebug(tenantId: string, workflowId: string): Promise<{
+    workflowId: string;
+    approval: {
+      id: string;
+      actionType: string;
+      decision: string;
+      createdAt: string;
+      decidedAt: string | null;
+      appliedAt: string | null;
+      appliedObjectId: string | null;
+      reviewerId: string | null;
+      proposedPayload: Record<string, unknown>;
+    } | null;
+    agentRun: {
+      id: string;
+      agentName: string;
+      status: string;
+      startedAt: string;
+      finishedAt: string | null;
+      costUsd: number | null;
+      error: string | null;
+    } | null;
+    activity: {
+      id: string;
+      type: string;
+      callSid: string | null;
+      status: string;
+      durationSeconds: number | null;
+      occurredAt: string;
+    } | null;
+    events: Array<{
+      id: string;
+      verb: string;
+      actorType: string | null;
+      actorId: string | null;
+      occurredAt: string;
+      metadata: Record<string, unknown>;
+    }>;
+    workflow: { status: string | null; reason: string | null } | null;
+  }> {
+    return withTenant(this.db, tenantId, async (tx) => {
+      const approval = await this.approvals.findByWorkflowId(tx, workflowId);
+
+      const activity = await this.activities.findByTypeAndSessionId(
+        tx,
+        "voice_call",
+        workflowId,
+      );
+
+      // Events filtered by three overlapping keys:
+      //   - metadata.workflow_id matches               (checks, executor)
+      //   - subject_type=approval + subject_id=approval.id  (approval lifecycle)
+      //   - subject_type=agent_run + subject_id=agentRun.id (agent run lifecycle)
+      // Dedupe by event.id; sort by occurredAt ascending.
+      const clauses = [
+        sql`${schema.events.metadata} ->> 'workflow_id' = ${workflowId}`,
+      ];
+      if (approval) {
+        clauses.push(
+          and(
+            eq(schema.events.subjectType, "approval"),
+            eq(schema.events.subjectId, approval.id),
+          )!,
+        );
+      }
+      let agentRun: Awaited<ReturnType<typeof this.agentRuns.findById>> = null;
+      if (approval?.agentRunId) {
+        agentRun = await this.agentRuns.findById(tx, approval.agentRunId);
+        if (agentRun) {
+          clauses.push(
+            and(
+              eq(schema.events.subjectType, "agent_run"),
+              eq(schema.events.subjectId, agentRun.id),
+            )!,
+          );
+        }
+      }
+      const rawEvents = await tx
+        .select()
+        .from(schema.events)
+        .where(or(...clauses))
+        .orderBy(desc(schema.events.occurredAt))
+        .limit(200);
+      const seen = new Set<string>();
+      const eventList = rawEvents
+        .filter((e) => {
+          if (seen.has(e.id)) return false;
+          seen.add(e.id);
+          return true;
+        })
+        .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime())
+        .map((e) => ({
+          id: e.id,
+          verb: e.verb,
+          actorType: e.actorType,
+          actorId: e.actorId,
+          occurredAt: e.occurredAt.toISOString(),
+          metadata: (e.metadata ?? {}) as Record<string, unknown>,
+        }));
+
+      let workflow: { status: string | null; reason: string | null } | null =
+        null;
+      if (this.temporal) {
+        try {
+          const handle = this.temporal.workflow.getHandle(workflowId);
+          const desc = await handle.describe();
+          workflow = {
+            status: desc.status.name,
+            reason:
+              typeof (desc as unknown as { closeEvent?: unknown }).closeEvent ===
+              "string"
+                ? ((desc as unknown as { closeEvent?: string }).closeEvent ?? null)
+                : null,
+          };
+        } catch {
+          workflow = null;
+        }
+      }
+
+      const activityOut = activity
+        ? {
+            id: activity.id,
+            type: activity.type,
+            callSid:
+              typeof activity.metadata["call_sid"] === "string"
+                ? (activity.metadata["call_sid"] as string)
+                : null,
+            status:
+              typeof activity.metadata["status"] === "string"
+                ? (activity.metadata["status"] as string)
+                : activity.result ?? "unknown",
+            durationSeconds: activity.durationSeconds,
+            occurredAt: activity.occurredAt.toISOString(),
+          }
+        : null;
+
+      return {
+        workflowId,
+        approval: approval
+          ? {
+              id: approval.id,
+              actionType: approval.actionType,
+              decision: approval.decision,
+              createdAt: approval.createdAt.toISOString(),
+              decidedAt: approval.decidedAt?.toISOString() ?? null,
+              appliedAt: approval.appliedAt?.toISOString() ?? null,
+              appliedObjectId: approval.appliedObjectId,
+              reviewerId: approval.reviewerId,
+              proposedPayload:
+                (approval.proposedPayload as Record<string, unknown>) ?? {},
+            }
+          : null,
+        agentRun: agentRun
+          ? {
+              id: agentRun.id,
+              agentName: agentRun.agentName,
+              status: agentRun.status,
+              startedAt: agentRun.startedAt?.toISOString() ?? agentRun.createdAt.toISOString(),
+              finishedAt: agentRun.finishedAt?.toISOString() ?? null,
+              costUsd: agentRun.costUsd,
+              error: agentRun.error,
+            }
+          : null,
+        activity: activityOut,
+        events: eventList,
+        workflow,
       };
     });
   }

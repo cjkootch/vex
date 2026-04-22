@@ -69,6 +69,21 @@ const DIGEST_TO_EMAIL = process.env["DIGEST_TO_EMAIL"] ?? "";
  *     for the website scrape).
  */
 async function main(): Promise<void> {
+  // Preflight: refuse to boot if the container is actually running
+  // apps/api's build. Both services build from the monorepo root and
+  // the default fly.toml pins the api Dockerfile — running
+  // `fly deploy -a vex-worker` without `-c fly.worker.toml` produces
+  // a 10-minute crashloop that looks nothing like a config error
+  // (the api's missing-secret check fires instead). A loud, explicit
+  // failure here turns that silent footgun into a one-line log.
+  const otelName = process.env["OTEL_SERVICE_NAME"];
+  if (otelName && otelName !== "vex-worker") {
+    throw new Error(
+      `worker boot refused: OTEL_SERVICE_NAME is "${otelName}", expected "vex-worker". ` +
+        `This usually means fly deploy used the wrong --config (try: fly deploy -c fly.worker.toml).`,
+    );
+  }
+
   const env = loadEnv();
 
   initOtel({
