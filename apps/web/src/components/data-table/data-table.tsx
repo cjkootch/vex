@@ -140,16 +140,16 @@ export function DataTable<T>({
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
           placeholder={filterPlaceholder}
-          className="w-64 rounded-md border border-line bg-muted/40 px-3 py-1.5 text-sm text-white placeholder:text-white/40 focus:border-accent focus:outline-none"
+          className="w-64 rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted transition-colors focus:border-accent focus:outline-none"
         />
-        <span className="text-xs text-white/50">
+        <span className="num text-xs text-text-muted">
           {filteredCount} {filteredCount === 1 ? "row" : "rows"}
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-line">
+      <div className="overflow-hidden rounded-lg border border-line-soft bg-surface-1/60 shadow-soft">
         <table className="min-w-full text-left text-sm">
-          <thead className="bg-muted/40 text-xs uppercase tracking-wide text-white/60">
+          <thead className="border-b border-line-soft bg-surface-2/50 text-eyebrow text-text-muted">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id}>
                 {headerGroup.headers.map((header) => {
@@ -195,13 +195,16 @@ export function DataTable<T>({
               <tr>
                 <td
                   colSpan={table.getAllLeafColumns().length}
-                  className="px-3 py-8 text-center text-sm text-white/50"
+                  className="px-3 py-10 text-center text-sm text-text-muted"
                 >
                   {emptyState ?? "No rows match the current filter."}
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              rows.map((row, rowIdx) => {
+                const id = getRowId ? getRowId(row.original) : row.id;
+                const isSelected = selectedIds?.has(id) ?? false;
+                return (
                 <tr
                   key={row.id}
                   onClick={onRowClick ? () => onRowClick(row.original) : undefined}
@@ -213,58 +216,61 @@ export function DataTable<T>({
                       : undefined
                   }
                   tabIndex={onRowClick ? 0 : undefined}
-                  className={`border-t border-line transition-colors hover:bg-muted/30 ${
-                    onRowClick ? "cursor-pointer" : ""
-                  }`}
+                  aria-selected={isSelected || undefined}
+                  className={`${rowIdx > 0 ? "border-t border-line-soft/60" : ""} transition-colors duration-150 ${
+                    isSelected
+                      ? "bg-accent-soft/40 hover:bg-accent-soft/50"
+                      : "hover:bg-white/[0.03]"
+                  } ${onRowClick ? "cursor-pointer" : ""}`}
                 >
                   {row.getVisibleCells().map((cell) => {
                     if (cell.column.id === "__selection") {
-                      const id = getRowId!(row.original);
-                      const checked = selectedIds?.has(id) ?? false;
+                      const checked = isSelected;
                       return (
-                        <td key={cell.id} className="px-3 py-2 w-9 align-middle">
+                        <td key={cell.id} className="px-3 py-2.5 w-9 align-middle">
                           <input
                             type="checkbox"
                             aria-label={`Select row ${id}`}
                             checked={checked}
                             onChange={(e) => toggleOne(id, e.target.checked)}
                             onClick={(e) => e.stopPropagation()}
-                            className="h-4 w-4 rounded border-line bg-canvas accent-accent"
+                            className="h-3.5 w-3.5 rounded border-line bg-surface-2 accent-accent"
                           />
                         </td>
                       );
                     }
                     return (
-                      <td key={cell.id} className="px-3 py-2 align-middle text-white/90">
+                      <td key={cell.id} className="px-3 py-2.5 align-middle text-text-primary/90">
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </td>
                     );
                   })}
                 </tr>
-              ))
+              );
+              })
             )}
           </tbody>
         </table>
       </div>
 
       {pageCount > 1 && (
-        <div className="flex items-center justify-end gap-2 text-xs text-white/60">
+        <div className="flex items-center justify-end gap-2 text-xs text-text-muted">
           <button
             type="button"
             onClick={() => table.previousPage()}
             disabled={!table.getCanPreviousPage()}
-            className="rounded border border-line px-2 py-1 disabled:opacity-30"
+            className="rounded-md border border-line-soft bg-surface-2/60 px-2 py-1 text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary disabled:opacity-30 disabled:hover:border-line-soft"
           >
             Prev
           </button>
-          <span>
+          <span className="num">
             Page {page} of {pageCount}
           </span>
           <button
             type="button"
             onClick={() => table.nextPage()}
             disabled={!table.getCanNextPage()}
-            className="rounded border border-line px-2 py-1 disabled:opacity-30"
+            className="rounded-md border border-line-soft bg-surface-2/60 px-2 py-1 text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary disabled:opacity-30 disabled:hover:border-line-soft"
           >
             Next
           </button>

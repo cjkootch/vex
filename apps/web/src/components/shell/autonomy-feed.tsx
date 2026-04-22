@@ -269,23 +269,30 @@ export function AutonomyFeed({
   return (
     <div className="flex h-full flex-col">
       {scope ? (
-        <div className="border-b border-line bg-muted/20 px-3 py-2">
-          <div className="text-[10px] uppercase tracking-wider text-white/40">
-            Scoped to
-          </div>
+        <div className="border-b border-line-soft bg-surface-2/60 px-3 py-2.5">
+          <div className="text-eyebrow text-text-muted">Scoped to</div>
           <div className="mt-0.5 flex items-center gap-2 text-xs">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-accent" />
-            <span className="truncate font-medium text-white/90">
+            <span
+              aria-hidden="true"
+              className="inline-block h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_6px_currentColor]"
+            />
+            <span className="truncate font-medium text-text-primary">
               {scope.label}
             </span>
-            <span className="text-white/40">· {scope.type}</span>
+            <span className="text-text-muted">· {scope.type}</span>
           </div>
         </div>
       ) : null}
       {suggestions && suggestions.length > 0 ? (
-        <div className="border-b border-line bg-canvas/60 px-2 py-2">
-          <div className="mb-1 px-1 text-[10px] uppercase tracking-wider text-accent">
-            Vex suggests
+        <div className="relative border-b border-line-soft bg-intel-soft/30 px-2 py-2.5">
+          <div className="mb-1.5 flex items-center gap-1.5 px-1">
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 rounded-full bg-accent shadow-[0_0_6px_currentColor]"
+            />
+            <span className="text-eyebrow text-accent-strong">
+              Vex suggests
+            </span>
           </div>
           <ul className="flex flex-col gap-1">
             {suggestions.map((s) => (
@@ -297,10 +304,15 @@ export function AutonomyFeed({
                     label: scope!.label,
                     ask: s.ask,
                   })}
-                  className="block rounded-md px-2 py-1.5 text-xs text-white/80 transition-colors hover:bg-accent/15 hover:text-white"
+                  className="group flex items-center justify-between rounded-md px-2 py-1.5 text-xs text-text-secondary transition-colors hover:bg-white/[0.04] hover:text-text-primary"
                 >
-                  {s.label}
-                  <span className="ml-1 text-accent">→</span>
+                  <span>{s.label}</span>
+                  <span
+                    aria-hidden="true"
+                    className="text-accent-strong transition-transform group-hover:translate-x-0.5"
+                  >
+                    →
+                  </span>
                 </Link>
               </li>
             ))}
@@ -351,33 +363,33 @@ function AutonomyRow({ run }: { run: AgentRunItem }) {
   const needsApproval =
     run.hasApproval && run.approvalStatus === "pending";
   return (
-    <li className="rounded-md border border-transparent px-2 py-2 text-sm transition hover:border-line hover:bg-white/5">
+    <li className="rounded-md border border-transparent px-2 py-2 text-sm transition-colors duration-150 hover:border-line-soft hover:bg-white/[0.03]">
       <div className="flex items-start gap-2">
         <span
           aria-hidden="true"
-          className={`mt-1.5 h-2 w-2 flex-shrink-0 rounded-full ${STATUS_DOT[run.status]}`}
+          className={`mt-1.5 h-1.5 w-1.5 flex-shrink-0 rounded-full ${STATUS_DOT[run.status]}`}
         />
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="rounded-sm bg-white/10 px-1.5 py-0.5 text-xs text-white/80">
+            <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium text-text-secondary">
               {agentLabel(run.agentName)}
             </span>
-            <span className="truncate text-xs text-white/40">
+            <span className="num truncate text-[11px] text-text-muted">
               {formatDistanceToNow(new Date(run.startedAt), {
                 addSuffix: true,
               })}
             </span>
-            <span className="ml-auto text-xs text-white/30">
+            <span className="num ml-auto text-[11px] text-text-muted">
               {formatCost(run.costUsd)}
             </span>
           </div>
-          <p className="mt-1 line-clamp-2 text-xs text-white/70">
+          <p className="mt-1 line-clamp-2 text-xs text-text-secondary">
             {run.summary}
           </p>
           {needsApproval ? (
             <Link
               href="/app/approvals"
-              className="mt-1 inline-block text-xs text-amber-300 hover:text-amber-200"
+              className="mt-1 inline-block text-xs font-medium text-amber-300 transition-colors hover:text-amber-200"
             >
               {vexCopy.approvals.needs_attention} →
             </Link>

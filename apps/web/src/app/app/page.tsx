@@ -211,18 +211,23 @@ function AppHomeInner() {
       )}
       {brief.handled.length > 0 && (
         <Section title="Vex handled" count={brief.handled.length} dim>
-          <ul className="space-y-1">
+          <ul className="divide-y divide-line-soft/60 overflow-hidden rounded-lg border border-line-soft bg-surface-1/60">
             {visibleHandled.map((h) => (
               <li
                 key={h.id}
-                className="flex items-center gap-3 rounded-md border border-line/50 bg-muted/10 px-2 py-1.5 text-xs text-white/70"
+                className="flex items-center gap-3 px-3 py-2 text-xs text-text-secondary"
               >
-                <span className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400" />
-                <span className="rounded bg-white/10 px-1.5 py-0.5 font-medium text-white/90">
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400 shadow-[0_0_6px_currentColor]"
+                />
+                <span className="rounded bg-intel-soft/60 px-1.5 py-0.5 font-medium text-accent-strong">
                   {h.agentName}
                 </span>
-                <span className="min-w-0 flex-1 truncate">{h.summary}</span>
-                <span className="text-white/40">
+                <span className="min-w-0 flex-1 truncate text-text-primary/90">
+                  {h.summary}
+                </span>
+                <span className="num-mono text-[11px] text-text-muted">
                   ${h.costUsd.toFixed(2)}
                 </span>
               </li>
@@ -233,7 +238,7 @@ function AppHomeInner() {
               type="button"
               onClick={() => setShowHandled((v) => !v)}
               aria-expanded={showHandled}
-              className="mt-2 text-xs text-white/50 hover:text-white/80"
+              className="mt-2 text-xs text-text-muted transition-colors hover:text-text-secondary"
             >
               {showHandled
                 ? "Show less"
@@ -476,17 +481,33 @@ function TopActionPill({
 function HomeSkeleton() {
   return (
     <main
-      className="mx-auto max-w-5xl space-y-10 px-8 py-10 text-white"
+      className="mx-auto max-w-5xl space-y-8 px-8 py-10"
       aria-busy="true"
     >
-      <div className="space-y-3">
-        <div className="h-6 w-2/3 rounded bg-white/10" />
-        <div className="h-3 w-24 rounded bg-white/5" />
+      <div className="flex items-end justify-between gap-6 border-b border-line-soft pb-6">
+        <div className="space-y-3">
+          <div className="h-2.5 w-20 animate-pulse rounded bg-white/5" />
+          <div className="h-8 w-80 animate-pulse rounded bg-white/[0.08]" />
+          <div className="h-3 w-32 animate-pulse rounded bg-white/5" />
+        </div>
+        <div className="flex gap-2">
+          <div className="h-7 w-28 animate-pulse rounded-full bg-white/5" />
+          <div className="h-7 w-36 animate-pulse rounded-full bg-white/5" />
+        </div>
+      </div>
+      <div className="h-14 w-full animate-pulse rounded-lg border border-line-soft bg-intel-soft/20" />
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        {[0, 1, 2].map((i) => (
+          <div
+            key={i}
+            className="h-20 w-full animate-pulse rounded-lg border border-line-soft bg-white/[0.02]"
+          />
+        ))}
       </div>
       {[0, 1, 2].map((i) => (
         <div key={i} className="space-y-2">
-          <div className="h-3 w-32 rounded bg-white/10" />
-          <div className="h-20 w-full rounded bg-white/5" />
+          <div className="h-2.5 w-32 animate-pulse rounded bg-white/5" />
+          <div className="h-20 w-full animate-pulse rounded-lg border border-line-soft bg-white/[0.02]" />
         </div>
       ))}
     </main>
@@ -495,14 +516,30 @@ function HomeSkeleton() {
 
 function NotReadyState({ message }: { message: string }) {
   return (
-    <main className="mx-auto max-w-xl space-y-4 px-8 py-20 text-center text-white">
-      <h1 className="text-xl font-semibold">Brief not ready</h1>
-      <p className="text-sm text-white/60">{message}</p>
+    <main className="mx-auto flex max-w-xl flex-col items-center gap-4 px-8 py-20 text-center">
+      <div
+        aria-hidden="true"
+        className="flex h-12 w-12 items-center justify-center rounded-full border border-line-soft bg-surface-2 text-text-muted"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          className="h-6 w-6"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 8v5M12 16.5v.01" strokeLinecap="round" />
+        </svg>
+      </div>
+      <h1 className="text-h1 text-text-primary">Brief not ready</h1>
+      <p className="text-sm text-text-secondary">{message}</p>
       <Link
         href="/app/chat"
-        className="inline-block rounded-md border border-line bg-muted/40 px-4 py-2 text-sm text-white/80 transition hover:border-white/30 hover:text-white"
+        className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-medium text-bg transition-colors hover:bg-accent/85"
       >
-        Ask Vex anything →
+        Ask Vex anything
+        <span aria-hidden="true">→</span>
       </Link>
     </main>
   );

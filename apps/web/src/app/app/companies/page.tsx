@@ -127,10 +127,11 @@ export default function CompaniesPage() {
 
   return (
     <div className="mx-auto flex h-full max-w-6xl flex-col gap-4 px-6 py-6">
-      <header className="flex items-baseline justify-between">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line-soft pb-5">
         <div>
-          <h1 className="text-xl font-semibold text-white">Companies</h1>
-          <p className="text-sm text-white/60">
+          <div className="text-eyebrow text-text-muted">Counterparties</div>
+          <h1 className="mt-1 text-title text-text-primary">Companies</h1>
+          <p className="mt-2 text-sm text-text-secondary">
             All organizations in your workspace. Click a name to research it with Vex.
           </p>
         </div>

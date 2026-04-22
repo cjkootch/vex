@@ -57,16 +57,20 @@ export function StalledApprovalsBanner(): React.ReactElement | null {
   if (visible.length === 0) return null;
 
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-bad/40 bg-bad/10 px-4 py-2 text-xs text-bad">
+    <div className="flex items-center justify-between gap-3 border-b border-bad/40 bg-bad/[0.08] px-4 py-2 text-xs text-bad">
       <div className="flex items-center gap-2">
-        <span className="font-medium">
+        <span
+          aria-hidden="true"
+          className="inline-block h-1.5 w-1.5 rounded-full bg-bad shadow-[0_0_6px_currentColor]"
+        />
+        <span className="font-semibold">
           {visible.length} approval{visible.length === 1 ? "" : "s"} stalled
         </span>
         <span className="text-bad/80">
           — approved but not applied. Worker may be down or workflow stuck.
         </span>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
         {visible.slice(0, 3).map((r) => {
           const linkTarget = r.workflowId
             ? `/app/calls/${r.workflowId}/debug`
@@ -75,7 +79,7 @@ export function StalledApprovalsBanner(): React.ReactElement | null {
             <Link
               key={r.id}
               href={linkTarget}
-              className="rounded border border-bad/60 bg-bad/20 px-2 py-0.5 font-mono text-[11px] hover:bg-bad/30"
+              className="num-mono rounded border border-bad/50 bg-bad/15 px-2 py-0.5 text-[11px] font-medium text-bad transition-colors hover:border-bad/70 hover:bg-bad/25"
               title={`${r.actionType} — ${r.agoSeconds}s ago`}
             >
               {r.actionType} · {formatAgo(r.agoSeconds)}
@@ -91,7 +95,7 @@ export function StalledApprovalsBanner(): React.ReactElement | null {
               return next;
             });
           }}
-          className="text-bad/70 hover:text-bad"
+          className="rounded p-0.5 text-bad/70 transition-colors hover:bg-bad/15 hover:text-bad"
           aria-label="Dismiss"
         >
           ✕
