@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { WorkspaceMode } from "@vex/ui";
-import type { DailyBrief } from "@vex/domain";
+import type { BriefPriority, DailyBrief } from "@vex/domain";
 import {
   WorkspaceModeProvider,
   useWorkspaceMode,
@@ -27,6 +27,8 @@ import { fetchWithRetry } from "@/lib/fetch-with-retry";
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 const PRIORITIES_COLLAPSED = 5;
 const PIPELINE_COLLAPSED = 4;
+const HANDLED_COLLAPSED = 3;
+const TOP_ACTIONS_COUNT = 3;
 
 interface BriefNotReady {
   status: "not_ready";
@@ -132,6 +134,27 @@ function AppHomeInner() {
     () => (brief ? brief.pipeline.slice(0, PIPELINE_COLLAPSED) : []),
     [brief],
   );
+  // Top actions are the most urgent priorities surfaced above the
+  // hero as a compact row — operator lands on /app and sees
+  // "here are the 3 things to do first" without scrolling through
+  // five sections. High-urgency items win; fall back to whatever's
+  // at the top of the list so the strip always populates when there
+  // are priorities at all.
+  const topActions = useMemo(() => {
+    if (!brief) return [];
+    const ranked = [...brief.priorities].sort((a, b) => {
+      const w = (p: typeof a) =>
+        p.urgency === "high" ? 0 : p.urgency === "medium" ? 1 : 2;
+      return w(a) - w(b);
+    });
+    return ranked.slice(0, TOP_ACTIONS_COUNT);
+  }, [brief]);
+  const visibleHandled = useMemo(() => {
+    if (!brief) return [];
+    return showHandled
+      ? brief.handled
+      : brief.handled.slice(0, HANDLED_COLLAPSED);
+  }, [brief, showHandled]);
 
   if (loading) return <HomeSkeleton />;
   if (notReady) return <NotReadyState message={notReady.message} />;
@@ -139,8 +162,14 @@ function AppHomeInner() {
     return <NotReadyState message={error ?? "Brief unavailable."} />;
 
   return (
-    <main className="mx-auto max-w-5xl space-y-10 px-8 py-10 text-white">
+    <main className="mx-auto max-w-5xl space-y-8 px-8 py-10 text-white">
       <Hero brief={brief} />
+      {brief.recommendedFocus ? (
+        <FocusBand focus={brief.recommendedFocus} />
+      ) : null}
+      {topActions.length > 0 ? (
+        <TopActionsStrip priorities={topActions} />
+      ) : null}
       <HeadsUpStrip />
       <HotLeadsCard />
       {brief.priorities.length > 0 && (
@@ -182,33 +211,34 @@ function AppHomeInner() {
       )}
       {brief.handled.length > 0 && (
         <Section title="Vex handled" count={brief.handled.length} dim>
-          <button
-            type="button"
-            onClick={() => setShowHandled((v) => !v)}
-            aria-expanded={showHandled}
-            className="text-xs text-white/50 hover:text-white/80"
-          >
-            {showHandled
-              ? "Hide"
-              : `Show what Vex did (${brief.handled.length})`}
-          </button>
-          {showHandled && (
-            <ul className="mt-3 space-y-1">
-              {brief.handled.map((h) => (
-                <li
-                  key={h.id}
-                  className="flex items-center gap-3 rounded-md px-2 py-1.5 text-xs text-white/60"
-                >
-                  <span className="rounded bg-white/10 px-1.5 py-0.5 text-white/80">
-                    {h.agentName}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{h.summary}</span>
-                  <span className="text-white/30">
-                    ${h.costUsd.toFixed(2)}
-                  </span>
-                </li>
-              ))}
-            </ul>
+          <ul className="space-y-1">
+            {visibleHandled.map((h) => (
+              <li
+                key={h.id}
+                className="flex items-center gap-3 rounded-md border border-line/50 bg-muted/10 px-2 py-1.5 text-xs text-white/70"
+              >
+                <span className="inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-400" />
+                <span className="rounded bg-white/10 px-1.5 py-0.5 font-medium text-white/90">
+                  {h.agentName}
+                </span>
+                <span className="min-w-0 flex-1 truncate">{h.summary}</span>
+                <span className="text-white/40">
+                  ${h.costUsd.toFixed(2)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {brief.handled.length > HANDLED_COLLAPSED && (
+            <button
+              type="button"
+              onClick={() => setShowHandled((v) => !v)}
+              aria-expanded={showHandled}
+              className="mt-2 text-xs text-white/50 hover:text-white/80"
+            >
+              {showHandled
+                ? "Show less"
+                : `Show ${brief.handled.length - HANDLED_COLLAPSED} more`}
+            </button>
           )}
         </Section>
       )}
@@ -230,7 +260,6 @@ function AppHomeInner() {
           </div>
         </Section>
       )}
-      <FocusFooter focus={brief.recommendedFocus} />
     </main>
   );
 }
@@ -328,15 +357,103 @@ function Section({
   );
 }
 
-function FocusFooter({ focus }: { focus: string }) {
-  if (!focus) return null;
+/**
+ * Promoted focus line. Was a footer at the very bottom of the page,
+ * which most operators never scrolled to. Now sits directly under
+ * the hero as the first piece of guidance Vex offers before any
+ * lists load — clickable into chat so the operator can immediately
+ * dig in or redirect.
+ */
+function FocusBand({ focus }: { focus: string }) {
+  const ask = `Walk me through today's focus: ${focus}`;
   return (
-    <footer className="rounded-lg border border-teal-400/40 bg-teal-400/5 px-5 py-4 text-sm text-white/80">
-      <span className="mr-2 font-semibold uppercase tracking-wider text-teal-300">
+    <Link
+      href={`/app/chat?ask=${encodeURIComponent(ask)}`}
+      className="flex items-start gap-3 rounded-lg border border-teal-400/40 bg-teal-400/10 px-5 py-4 text-sm text-white/90 transition-colors hover:bg-teal-400/15"
+    >
+      <span className="mt-0.5 flex-shrink-0 rounded bg-teal-400/25 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-teal-100">
         Focus
       </span>
-      {focus}
-    </footer>
+      <span className="flex-1 leading-snug">{focus}</span>
+      <span className="mt-0.5 flex-shrink-0 text-teal-300">→</span>
+    </Link>
+  );
+}
+
+/**
+ * Top-of-page strip showing the 1-3 most urgent priorities, each as
+ * an at-a-glance pill that the operator can act on without scrolling
+ * into the full Needs-your-attention list. Mirrors the primary
+ * action the PriorityCard would expose — approval first, then detail
+ * page, then Ask Vex fallback.
+ */
+function TopActionsStrip({
+  priorities,
+}: {
+  priorities: BriefPriority[];
+}) {
+  return (
+    <section aria-label="Top actions" className="flex flex-col gap-2">
+      <div className="flex items-baseline gap-2">
+        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-white/60">
+          Do first
+        </h2>
+        <span className="text-xs text-white/40">
+          · {priorities.length} quick action{priorities.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <ol className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        {priorities.map((p, i) => (
+          <TopActionPill key={p.id} index={i + 1} priority={p} />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function TopActionPill({
+  index,
+  priority,
+}: {
+  index: number;
+  priority: BriefPriority;
+}) {
+  const toneBorder =
+    priority.urgency === "high"
+      ? "border-red-500/60 bg-red-500/5"
+      : priority.urgency === "medium"
+        ? "border-amber-500/60 bg-amber-500/5"
+        : "border-line bg-muted/30";
+  const href = priority.approvalId
+    ? `/app/approvals/${priority.approvalId}`
+    : priority.objectType === "deal"
+      ? `/app/deals/${priority.objectId}`
+      : priority.objectType === "organization"
+        ? `/app/companies/${priority.objectId}`
+        : priority.objectType === "contact"
+          ? `/app/contacts/${priority.objectId}`
+          : priority.objectType === "campaign"
+            ? `/app/marketing/${priority.objectId}`
+            : `/app/chat?ask=${encodeURIComponent(priority.suggestedAction ?? priority.title)}`;
+  return (
+    <li>
+      <Link
+        href={href}
+        className={`flex h-full items-start gap-3 rounded-lg border px-3 py-2 transition-colors hover:bg-white/5 ${toneBorder}`}
+      >
+        <span className="mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full border border-white/20 bg-canvas/60 font-mono text-[10px] text-white/60">
+          {index}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium text-white">
+            {priority.title}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-white/50">
+            {priority.reason}
+          </div>
+        </div>
+      </Link>
+    </li>
   );
 }
 

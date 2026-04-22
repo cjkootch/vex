@@ -1,22 +1,24 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { KeyboardEvent, MouseEvent } from "react";
 import type { BriefPriority } from "@vex/domain";
+import { buildAskVexHref, type AskVexSubjectType } from "@/lib/ask-vex";
 
 /**
- * One priority card on the home screen. The whole card is a clickable
- * region (role=button, keyboard-actionable) that navigates to the
- * chat surface with a pre-filled ?ask= query param for deal and
- * organization priorities. The explicit action button in the bottom-
- * right (Review when the priority carries an approvalId, Ask Vex
- * otherwise) is a nested Link that stopPropagates so its navigation
- * target wins over the card-level navigation.
+ * One priority card on the home screen. Action-dense by design: the
+ * operator should see at a glance what this priority *is* and pick
+ * from two or three one-click next steps without another click-
+ * through. The old behaviour (whole-card nav into chat) hijacked
+ * clicks and hid the action set behind a single muted button.
  *
- * The chat page reading the ?ask= param and auto-sending is a
- * separate change set; shipping the URL shape now keeps the link
- * target stable across that refactor.
+ * Action set per priority type:
+ *
+ *   approval priorities        → [Review, Ask Vex]
+ *   deal / org / contact       → [View, Ask Vex] (+ Review if approvalId set)
+ *   campaign / unknown         → [Ask Vex] only
+ *
+ * Primary button is accent-filled; secondaries get muted borders so the
+ * scan reads left-to-right: reason → object → primary action.
  */
 
 export interface PriorityCardProps {
@@ -27,9 +29,9 @@ export interface PriorityCardProps {
 // Card tint + left-edge bar per urgency. Background tint is kept
 // subtle so a list of high-urgency cards doesn't overwhelm the eye.
 const URGENCY_CARD: Record<BriefPriority["urgency"], string> = {
-  high: "border-red-500/50 bg-red-500/5 hover:bg-red-500/10",
-  medium: "border-amber-500/50 bg-amber-500/5 hover:bg-amber-500/10",
-  low: "border-line bg-muted/40 hover:bg-muted/60",
+  high: "border-red-500/50 bg-red-500/5",
+  medium: "border-amber-500/50 bg-amber-500/5",
+  low: "border-line bg-muted/40",
 };
 
 const URGENCY_BAR: Record<BriefPriority["urgency"], string> = {
@@ -49,68 +51,99 @@ const OBJECT_DOT: Record<BriefPriority["objectType"], string> = {
   campaign: "bg-emerald-400",
 };
 
-function cardHref(priority: BriefPriority): string | null {
-  // Deals + organizations have a natural "show me X" chat prompt; the
-  // other object types don't get whole-card navigation.
-  if (priority.objectType === "deal") {
-    const ref = priority.objectRef ?? priority.objectId;
-    return `/app/chat?ask=${encodeURIComponent(`Show me deal ${ref}`)}`;
-  }
-  if (priority.objectType === "organization") {
-    return `/app/chat?ask=${encodeURIComponent(`Show me ${priority.title}`)}`;
-  }
-  return null;
+interface CardAction {
+  label: string;
+  href: string;
+  primary?: boolean;
 }
 
-function actionHref(priority: BriefPriority): string | null {
-  if (priority.approvalId) return "/app/approvals";
-  if (priority.suggestedAction) {
-    return `/app/chat?ask=${encodeURIComponent(`Help me with: ${priority.title}`)}`;
+/**
+ * Deep-link to the entity's detail page, when it has one. Approvals
+ * route through the shared /app/approvals inbox; campaigns go to
+ * /app/marketing/:id. Contact/deal/organization detail pages share
+ * the /app/<type>s/:id convention.
+ */
+function detailHref(priority: BriefPriority): string | null {
+  switch (priority.objectType) {
+    case "deal":
+      return `/app/deals/${priority.objectId}`;
+    case "organization":
+      return `/app/companies/${priority.objectId}`;
+    case "contact":
+      return `/app/contacts/${priority.objectId}`;
+    case "campaign":
+      return `/app/marketing/${priority.objectId}`;
+    case "approval":
+      return null;
   }
-  return null;
+}
+
+/**
+ * Scope the "Ask Vex" link to the priority's subject when possible so
+ * chat opens pre-filled with the right retrieval context. Approvals
+ * and campaigns share a campaign/approval-review conversation pattern.
+ */
+function askVexHref(priority: BriefPriority): string {
+  const suggested =
+    priority.suggestedAction ??
+    `Help me with: ${priority.title}. (${priority.reason})`;
+  const subjectTypeMap: Record<BriefPriority["objectType"], AskVexSubjectType | null> = {
+    deal: "deal",
+    organization: "organization",
+    contact: "contact",
+    campaign: "campaign",
+    approval: null,
+  };
+  const type = subjectTypeMap[priority.objectType];
+  if (!type) {
+    return `/app/chat?ask=${encodeURIComponent(suggested)}`;
+  }
+  return buildAskVexHref({
+    type,
+    id: priority.objectId,
+    label: priority.objectRef ?? priority.title,
+    ask: suggested,
+  });
+}
+
+/**
+ * Order matters — `actions[0]` renders as the primary button; the rest
+ * are secondary. When nothing but "Ask Vex" is available (unknown
+ * object type, no approval), the primary slot gets Ask Vex so there's
+ * always a call to action.
+ */
+function actionsFor(priority: BriefPriority): CardAction[] {
+  const actions: CardAction[] = [];
+  if (priority.approvalId) {
+    actions.push({
+      label: "Review",
+      href: `/app/approvals/${priority.approvalId}`,
+      primary: true,
+    });
+  }
+  const detail = detailHref(priority);
+  if (detail) {
+    actions.push({ label: "View", href: detail });
+  }
+  actions.push({
+    label: "Ask Vex",
+    href: askVexHref(priority),
+    primary: actions.length === 0,
+  });
+  return actions;
 }
 
 export function PriorityCard({ priority, onAction }: PriorityCardProps) {
-  const router = useRouter();
-  const cardTarget = cardHref(priority);
-  const actionTarget = actionHref(priority);
-  const actionLabel = priority.approvalId ? "Review" : "Ask Vex";
   const cardTint = URGENCY_CARD[priority.urgency];
   const barClass = URGENCY_BAR[priority.urgency];
   const dotClass = OBJECT_DOT[priority.objectType];
-
-  const go = (): void => {
-    if (cardTarget) router.push(cardTarget);
-  };
-
-  const onCardClick = (_e: MouseEvent<HTMLElement>): void => {
-    go();
-  };
-  const onCardKey = (e: KeyboardEvent<HTMLElement>): void => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      go();
-    }
-  };
-  const interactive = cardTarget !== null;
+  const actions = actionsFor(priority);
 
   return (
     <article
       data-card="priority"
       data-urgency={priority.urgency}
-      {...(interactive
-        ? {
-            role: "button",
-            tabIndex: 0,
-            onClick: onCardClick,
-            onKeyDown: onCardKey,
-          }
-        : {})}
-      className={`relative rounded-lg border p-4 transition ${cardTint} ${
-        interactive
-          ? "cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white/40"
-          : ""
-      }`}
+      className={`relative rounded-lg border p-4 transition hover:bg-muted/20 ${cardTint}`}
     >
       <div
         aria-hidden="true"
@@ -127,18 +160,22 @@ export function PriorityCard({ priority, onAction }: PriorityCardProps) {
             />
             {priority.objectRef ?? priority.objectType}
           </span>
-          {actionTarget ? (
-            <Link
-              href={actionTarget}
-              onClick={(e) => {
-                e.stopPropagation();
-                onAction?.();
-              }}
-              className="rounded-md border border-line bg-muted/40 px-3 py-1 text-xs text-white/80 transition hover:border-white/30 hover:text-white"
-            >
-              {actionLabel}
-            </Link>
-          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            {actions.map((a) => (
+              <Link
+                key={a.label}
+                href={a.href}
+                {...(onAction ? { onClick: onAction } : {})}
+                className={
+                  a.primary
+                    ? "rounded-md bg-accent px-3 py-1 text-xs font-medium text-bg transition-colors hover:bg-accent/85"
+                    : "rounded-md border border-line bg-muted/40 px-3 py-1 text-xs text-white/80 transition hover:border-white/30 hover:text-white"
+                }
+              >
+                {a.label}
+              </Link>
+            ))}
+          </div>
         </div>
       </div>
     </article>
