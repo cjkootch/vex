@@ -469,13 +469,6 @@ export function enforceAiModeWhenVexIsTheCaller(
 const OPERATOR_JOIN_RE =
   /\b(i'?ll\s+(take|join|handle|be\s+on)|join\s+(the\s+)?call|conference\s+(in|me|us)|bridge\s+me|let\s+me\s+(join|take|handle))\b/i;
 
-// Legacy narrow regex, kept exported for the test suite. Matches
-// the original "have vex call X" phrasings — still useful for
-// telemetry ("was this call proactively triggered?") even though
-// the default is no longer gated on it.
-const VEX_CALLER_RE =
-  /\b(vex\s+(call|calls|talk|talks|dial|ring)|ai[-\s]?call|have\s+(vex|the\s+agent)\s+(call|talk|dial|ring))/i;
-
 function isConversationalOpener(message: string): boolean {
   const trimmed = message.trim().toLowerCase();
   if (trimmed.length === 0) return true;
