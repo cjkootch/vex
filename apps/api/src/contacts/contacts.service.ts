@@ -259,8 +259,9 @@ export class ContactsService {
       );
       if (created.kind === "duplicate") {
         throw new ConflictException({
-          message: `contact with email ${created.matchedEmail} already exists`,
+          message: duplicateMessage(created),
           existingContactId: created.contact.id,
+          duplicateReason: created.reason,
         });
       }
       const contact = created.contact;
@@ -685,6 +686,19 @@ export class ContactsService {
       const memberships = await this.memberships.listByContact(tx, args.contactId);
       return { contact, memberships };
     });
+  }
+}
+
+function duplicateMessage(
+  dup: { reason: "email" | "phone" | "name_and_org"; matchedValue: string },
+): string {
+  switch (dup.reason) {
+    case "email":
+      return `contact with email ${dup.matchedValue} already exists`;
+    case "phone":
+      return `contact with phone ${dup.matchedValue} already exists`;
+    case "name_and_org":
+      return `contact with this name already exists on the same company`;
   }
 }
 

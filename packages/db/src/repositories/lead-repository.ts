@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { LeadStatus } from "@vex/domain";
 import type { Tx } from "../client.js";
@@ -29,14 +29,23 @@ export class LeadRepository {
    * the website-chat normalizer to find the lead row created on
    * conversation.started when the follow-up conversation.ended event
    * arrives later.
+   *
+   * Indexed via `leads_external_keys_gin_idx` (migration 0021) using
+   * JSONB containment so the query is O(log n) rather than a
+   * full-table scan.
    */
   async findByExternalKey(
     tx: Tx,
     system: string,
     key: string,
   ): Promise<Lead | null> {
-    const rows = await tx.select().from(leads);
-    return rows.find((row) => row.externalKeys[system] === key) ?? null;
+    const probe = JSON.stringify({ [system]: key });
+    const [row] = await tx
+      .select()
+      .from(leads)
+      .where(sql`${leads.externalKeys} @> ${probe}::jsonb`)
+      .limit(1);
+    return row ?? null;
   }
 
   async create(

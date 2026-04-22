@@ -69,6 +69,12 @@ export const organizations = pgTable(
     tenantIdx: index("organizations_tenant_idx").on(t.tenantId),
     statusIdx: index("organizations_status_idx").on(t.status),
     domainIdx: index("organizations_domain_idx").on(t.domain),
+    // GIN index for external_keys containment lookups (findByExternalKey,
+    // upsertByExternalKey). See migration 0021.
+    externalKeysGinIdx: index("organizations_external_keys_gin_idx").using(
+      "gin",
+      t.externalKeys,
+    ),
   }),
 );
 

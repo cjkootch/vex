@@ -63,17 +63,24 @@ describe("OrganizationRepository", () => {
     expect(result).toEqual(row);
   });
 
-  it("findByExternalKey filters by external_keys in-memory", async () => {
-    const rows = [
-      { id: "a", tenantId: "t", externalKeys: { apollo: "x" }, fieldConfidence: {} },
-      { id: "b", tenantId: "t", externalKeys: { apollo: "y" }, fieldConfidence: {} },
-    ];
+  // findByExternalKey now filters in SQL via `external_keys @> $1::jsonb`
+  // (backed by the organizations_external_keys_gin_idx index added in
+  // migration 0021). Behaviour is verified end-to-end by the webhook
+  // / marketing integration tests against a real Postgres; the unit
+  // contract here just checks null vs. first-row pass-through through
+  // the fake tx harness.
+  it("findByExternalKey returns the first row the tx yields", async () => {
+    const row = { id: "a", tenantId: "t", externalKeys: { apollo: "x" }, fieldConfidence: {} };
     const repo = new OrganizationRepository();
-    const result = await repo.findByExternalKey(fakeTx({ select: rows }), "apollo", "y");
-    expect(result?.id).toBe("b");
+    const result = await repo.findByExternalKey(
+      fakeTx({ select: [row] }),
+      "apollo",
+      "x",
+    );
+    expect(result?.id).toBe("a");
   });
 
-  it("findByExternalKey returns null when no org matches", async () => {
+  it("findByExternalKey returns null when the tx yields no rows", async () => {
     const repo = new OrganizationRepository();
     const result = await repo.findByExternalKey(fakeTx({ select: [] }), "apollo", "nope");
     expect(result).toBeNull();
@@ -81,15 +88,42 @@ describe("OrganizationRepository", () => {
 });
 
 describe("ContactRepository.findByEmail", () => {
-  it("matches emails case-insensitively across the emails array", async () => {
-    const rows = [
-      { id: "c1", tenantId: "t", orgId: "o", fullName: "A", emails: ["a@x.test"] },
-      { id: "c2", tenantId: "t", orgId: "o", fullName: "B", emails: ["B@X.Test", "alt@x.test"] },
-    ];
+  // Case-insensitive matching across the jsonb emails array now runs
+  // inside Postgres via `jsonb_array_elements_text` + `lower()`. The
+  // integration suite (apps/api test/webhooks/*) exercises this; the
+  // unit harness here only confirms the tx pass-through contract.
+  it("returns the first row the tx yields", async () => {
+    const row = { id: "c2", tenantId: "t", orgId: "o", fullName: "B", emails: ["B@X.Test"] };
     const repo = new ContactRepository();
-    expect((await repo.findByEmail(fakeTx({ select: rows }), "b@x.test"))?.id).toBe("c2");
-    expect((await repo.findByEmail(fakeTx({ select: rows }), "A@X.TEST"))?.id).toBe("c1");
-    expect(await repo.findByEmail(fakeTx({ select: rows }), "missing@x.test")).toBeNull();
+    expect(
+      (await repo.findByEmail(fakeTx({ select: [row] }), "b@x.test"))?.id,
+    ).toBe("c2");
+  });
+
+  it("returns null when the tx yields no rows", async () => {
+    const repo = new ContactRepository();
+    expect(await repo.findByEmail(fakeTx({ select: [] }), "missing@x.test")).toBeNull();
+  });
+
+  it("short-circuits to null on empty input", async () => {
+    const repo = new ContactRepository();
+    // Empty input never hits the db.
+    expect(await repo.findByEmail(fakeTx({ select: [] }), "   ")).toBeNull();
+  });
+});
+
+describe("normalizePhone", () => {
+  it("strips formatting and keeps the leading plus", async () => {
+    const { normalizePhone } = await import("./contact-repository.js");
+    expect(normalizePhone("+1 (832) 492-7169")).toBe("+18324927169");
+    expect(normalizePhone("832.492.7169")).toBe("8324927169");
+  });
+
+  it("rejects strings with fewer than 7 digits", async () => {
+    const { normalizePhone } = await import("./contact-repository.js");
+    expect(normalizePhone("+1 555")).toBeNull();
+    expect(normalizePhone("")).toBeNull();
+    expect(normalizePhone("abc")).toBeNull();
   });
 });
 

@@ -27,6 +27,13 @@ export const leads = pgTable(
     orgIdx: index("leads_org_idx").on(t.orgId),
     contactIdx: index("leads_contact_idx").on(t.contactId),
     statusIdx: index("leads_status_idx").on(t.status),
+    // GIN index for external_keys containment — the website-chat
+    // normalizer looks up a lead by conversation_id on conversation.ended.
+    // See migration 0021.
+    externalKeysGinIdx: index("leads_external_keys_gin_idx").using(
+      "gin",
+      t.externalKeys,
+    ),
   }),
 );
 
