@@ -3,6 +3,7 @@ import {
   startVoiceBridge,
   FUEL_LEAD_QUALIFIER_INSTRUCTIONS,
   OPT_OUT_TOOL,
+  SCHEDULE_CALLBACK_TOOL,
   VOICEMAIL_INSTRUCTIONS,
   type RealtimeClientEvent,
   type RealtimeServerEvent,
@@ -545,5 +546,150 @@ describe("OPT_OUT_TOOL schema", () => {
   it("requires a reason string", () => {
     expect(OPT_OUT_TOOL.name).toBe("opt_out_contact");
     expect(OPT_OUT_TOOL.parameters.required).toEqual(["reason"]);
+  });
+});
+
+describe("SCHEDULE_CALLBACK_TOOL schema", () => {
+  it("requires dueAt + note", () => {
+    expect(SCHEDULE_CALLBACK_TOOL.name).toBe("schedule_callback");
+    expect(SCHEDULE_CALLBACK_TOOL.parameters.required).toEqual([
+      "dueAt",
+      "note",
+    ]);
+  });
+});
+
+describe("startVoiceBridge — schedule_callback", () => {
+  let onEscalate2: ReturnType<typeof vi.fn> &
+    ((a: EscalateArgs) => Promise<void>);
+
+  beforeEach(() => {
+    onEscalate2 = vi
+      .fn<[EscalateArgs], Promise<void>>()
+      .mockResolvedValue(undefined) as typeof onEscalate2;
+  });
+
+  const flushMicrotasks = async (): Promise<void> => {
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  };
+
+  it("invokes onScheduleCallback with a valid dueAt + note and keeps the call open", async () => {
+    const twilio = makeFakeTwilio();
+    const realtime = makeFakeRealtime();
+    const onScheduleCallback = vi
+      .fn<
+        [
+          {
+            dueAt: string;
+            note: string;
+            workflowId: string;
+            tenantId: string;
+            callId: string;
+          },
+        ],
+        Promise<void>
+      >()
+      .mockResolvedValue(undefined);
+
+    const handle = startVoiceBridge(twilio, realtime, {
+      workflowId: "wf-cb",
+      tenantId: "t-cb",
+      instructions: "talk",
+      tools: [SCHEDULE_CALLBACK_TOOL],
+      onEscalate: onEscalate2,
+      onScheduleCallback,
+      mode: "talkback",
+    });
+
+    twilio.emit(START_MSG);
+    realtime.emit({
+      type: "response.function_call_arguments.done",
+      name: "schedule_callback",
+      call_id: "tool-cb-1",
+      arguments: JSON.stringify({
+        dueAt: "2026-04-25T15:00:00Z",
+        note: "callee wants to talk pricing after supplier decision",
+      }),
+      response_id: "resp-cb-1",
+    });
+
+    await flushMicrotasks();
+
+    expect(onScheduleCallback).toHaveBeenCalledTimes(1);
+    expect(onScheduleCallback.mock.calls[0]?.[0]).toMatchObject({
+      dueAt: "2026-04-25T15:00:00Z",
+      workflowId: "wf-cb",
+      tenantId: "t-cb",
+    });
+
+    const ack = realtime.sent.find(
+      (e): e is Extract<RealtimeClientEvent, { type: "conversation.item.create" }> =>
+        e.type === "conversation.item.create",
+    );
+    expect(ack).toBeDefined();
+    const out = JSON.parse(ack!.item.output) as { ok?: boolean };
+    expect(out.ok).toBe(true);
+
+    // Call stays open — schedule_callback is not terminal.
+    expect(handle.stats().closed).toBe(false);
+    expect(handle.stats().callbacksScheduled).toBe(1);
+  });
+
+  it("rejects an invalid dueAt without calling the handler", async () => {
+    const twilio = makeFakeTwilio();
+    const realtime = makeFakeRealtime();
+    const onScheduleCallback = vi
+      .fn()
+      .mockResolvedValue(undefined);
+
+    startVoiceBridge(twilio, realtime, {
+      workflowId: "wf-cb",
+      tenantId: "t-cb",
+      instructions: "talk",
+      tools: [SCHEDULE_CALLBACK_TOOL],
+      onEscalate: onEscalate2,
+      onScheduleCallback,
+      mode: "talkback",
+    });
+
+    twilio.emit(START_MSG);
+    realtime.emit({
+      type: "response.function_call_arguments.done",
+      name: "schedule_callback",
+      call_id: "tool-cb-2",
+      arguments: JSON.stringify({
+        dueAt: "tomorrow at 3pm",
+        note: "",
+      }),
+      response_id: "resp-cb-2",
+    });
+
+    await flushMicrotasks();
+
+    expect(onScheduleCallback).not.toHaveBeenCalled();
+
+    const ack = realtime.sent.find(
+      (e): e is Extract<RealtimeClientEvent, { type: "conversation.item.create" }> =>
+        e.type === "conversation.item.create",
+    );
+    expect(ack).toBeDefined();
+    const out = JSON.parse(ack!.item.output) as {
+      ok?: boolean;
+      error?: string;
+    };
+    expect(out.ok).toBe(false);
+    expect(out.error).toBe("invalid_dueAt_format");
+  });
+});
+
+describe("prompt — schedule_callback + backchannels", () => {
+  it("tells the AI to fire schedule_callback when callee asks for a later time", () => {
+    expect(FUEL_LEAD_QUALIFIER_INSTRUCTIONS).toMatch(/schedule_callback/);
+  });
+
+  it("encourages brief acknowledgments so the line doesn't feel dead", () => {
+    expect(FUEL_LEAD_QUALIFIER_INSTRUCTIONS).toMatch(
+      /mm-hmm|acknowledgments|backchannel/i,
+    );
   });
 });

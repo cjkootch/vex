@@ -7,6 +7,7 @@ import {
   ESCALATION_TOOL,
   FUEL_LEAD_QUALIFIER_INSTRUCTIONS,
   OPT_OUT_TOOL,
+  SCHEDULE_CALLBACK_TOOL,
   startVoiceBridge,
   type RealtimeClientEvent,
   type RealtimeServerEvent,
@@ -77,6 +78,19 @@ export interface VoiceStreamServerConfig {
     tenantId: string;
     callId: string;
     reason: string;
+  }) => Promise<void>;
+  /**
+   * Invoked when the AI fires `schedule_callback`. Handler should
+   * create a `follow_up.schedule` approval / DB row so the callback
+   * commitment survives the transcript. Tool fires unconditionally
+   * when registered (below); bridge keeps the call open regardless.
+   */
+  onScheduleCallback?: (args: {
+    workflowId: string;
+    tenantId: string;
+    callId: string;
+    dueAt: string;
+    note: string;
   }) => Promise<void>;
   log: (level: "info" | "warn" | "error", msg: string, meta?: object) => void;
   /** Injection point for tests — returns a fake duplex transport. */
@@ -236,15 +250,19 @@ export class VoiceStreamServer {
         ? FUEL_LEAD_QUALIFIER_INSTRUCTIONS
         : (this.config.instructions ?? ESCALATION_LISTENER_INSTRUCTIONS));
 
-    // Tools: escalation always; opt-out when a handler is wired so
-    // the callee's "take me off your list" request produces a real
-    // contact.opt_out. In listen-only mode the AI still needs both
-    // tools registered so the prompt's opt-out path stays valid when
-    // a human is driving the callee side.
-    const tools =
-      args.mode === "talkback" || this.config.onDoNotContact
-        ? [ESCALATION_TOOL, OPT_OUT_TOOL]
-        : [ESCALATION_TOOL];
+    // Tools registered per mode + which handlers are wired. Escalation
+    // always. Opt-out whenever a handler is configured OR we're in
+    // talkback mode (the prompt relies on the tool being callable).
+    // Schedule-callback only when the handler is wired — the AI has a
+    // viable fallback (acknowledge verbally, let post-call parse the
+    // transcript) when it's not.
+    const tools: typeof ESCALATION_TOOL[] = [ESCALATION_TOOL];
+    if (args.mode === "talkback" || this.config.onDoNotContact) {
+      tools.push(OPT_OUT_TOOL);
+    }
+    if (this.config.onScheduleCallback) {
+      tools.push(SCHEDULE_CALLBACK_TOOL);
+    }
 
     const handle = startVoiceBridge(twilio, realtime, {
       workflowId: args.workflowId,
@@ -263,6 +281,13 @@ export class VoiceStreamServer {
         ? {
             onDoNotContact: async (payload) => {
               await this.config.onDoNotContact!(payload);
+            },
+          }
+        : {}),
+      ...(this.config.onScheduleCallback
+        ? {
+            onScheduleCallback: async (payload) => {
+              await this.config.onScheduleCallback!(payload);
             },
           }
         : {}),

@@ -42,6 +42,7 @@ export {
   FUEL_LEAD_QUALIFIER_INSTRUCTIONS,
   VOICEMAIL_INSTRUCTIONS,
   OPT_OUT_TOOL,
+  SCHEDULE_CALLBACK_TOOL,
   type RealtimeClientEvent,
   type RealtimeServerEvent,
   type RealtimeToolDefinition,

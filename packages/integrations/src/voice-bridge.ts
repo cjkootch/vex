@@ -198,6 +198,21 @@ export interface VoiceBridgeConfig {
     callId: string;
   }) => Promise<void> | void;
   /**
+   * Invoked when the AI fires the `schedule_callback` tool because the
+   * callee asked to be called back at a specific time. Handler should
+   * create a `follow_up.schedule` approval (or equivalent DB write)
+   * so the commitment doesn't get lost in the transcript. Bridge
+   * does NOT close the call on this tool — the AI usually confirms
+   * the time and wraps naturally.
+   */
+  onScheduleCallback?: (args: {
+    dueAt: string;
+    note: string;
+    workflowId: string;
+    tenantId: string;
+    callId: string;
+  }) => Promise<void> | void;
+  /**
    * Sprint K was listen-only; Sprint L adds `"talkback"` — the AI
    * speaks back into the call via Twilio Stream's outbound media
    * messages. In talkback mode the session is configured with audio
@@ -240,6 +255,7 @@ export interface VoiceBridgeHandle {
     framesReturned: number;
     escalations: number;
     optOuts: number;
+    callbacksScheduled: number;
     closed: boolean;
   };
 }
@@ -278,6 +294,7 @@ export function startVoiceBridge(
   let framesReturned = 0;
   let escalations = 0;
   let optOuts = 0;
+  let callbacksScheduled = 0;
   let closed = false;
   let callId: string | null = null;
   let streamSid: string | null = null;
@@ -420,6 +437,10 @@ export function startVoiceBridge(
         }
         if (event.name === "opt_out_contact") {
           void handleOptOut(event);
+          return;
+        }
+        if (event.name === "schedule_callback") {
+          void handleScheduleCallback(event);
           return;
         }
         log("warn", `unknown tool invoked: ${event.name}`, {
@@ -600,6 +621,100 @@ export function startVoiceBridge(
     }
   }
 
+  async function handleScheduleCallback(
+    event: Extract<
+      RealtimeServerEvent,
+      { type: "response.function_call_arguments.done" }
+    >,
+  ): Promise<void> {
+    let parsed: { dueAt?: unknown; note?: unknown } = {};
+    try {
+      parsed = JSON.parse(event.arguments) as typeof parsed;
+    } catch {
+      log("warn", "schedule-callback args not JSON; dropping", {
+        workflowId: config.workflowId,
+      });
+    }
+    const dueAt = typeof parsed.dueAt === "string" ? parsed.dueAt : "";
+    const note = typeof parsed.note === "string" ? parsed.note : "";
+    const valid = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z$/.test(
+      dueAt,
+    );
+
+    const toolOk = async (message: string): Promise<void> => {
+      realtime.send({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: event.call_id,
+          output: JSON.stringify({ ok: true, message }),
+        },
+      });
+      if (mode === "talkback") {
+        realtime.send({
+          type: "response.create",
+          response: { modalities: ["audio", "text"] },
+        });
+      }
+    };
+    const toolErr = async (err: string): Promise<void> => {
+      realtime.send({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: event.call_id,
+          output: JSON.stringify({
+            ok: false,
+            error: err,
+            message:
+              "Couldn't schedule the callback automatically. Confirm verbally and tell the callee the team will note it manually.",
+          }),
+        },
+      });
+      if (mode === "talkback") {
+        realtime.send({
+          type: "response.create",
+          response: { modalities: ["audio", "text"] },
+        });
+      }
+    };
+
+    if (!valid) {
+      log("warn", "schedule-callback got invalid dueAt", {
+        workflowId: config.workflowId,
+        dueAt,
+      });
+      await toolErr("invalid_dueAt_format");
+      return;
+    }
+    try {
+      if (config.onScheduleCallback) {
+        await config.onScheduleCallback({
+          dueAt,
+          note,
+          workflowId: config.workflowId,
+          tenantId: config.tenantId,
+          callId: callId ?? "unknown",
+        });
+      }
+      callbacksScheduled += 1;
+      await toolOk(
+        "Callback scheduled. Confirm the time back to the callee naturally and carry on.",
+      );
+      log("info", "schedule-callback fired", {
+        workflowId: config.workflowId,
+        dueAt,
+      });
+    } catch (err) {
+      log(
+        "error",
+        `schedule-callback handler threw: ${(err as Error).message}`,
+        { workflowId: config.workflowId },
+      );
+      await toolErr((err as Error).message);
+    }
+  }
+
   return {
     close: cleanup,
     stats: () => ({
@@ -607,6 +722,7 @@ export function startVoiceBridge(
       framesReturned,
       escalations,
       optOuts,
+      callbacksScheduled,
       closed,
     }),
   };
@@ -741,7 +857,11 @@ If any of these happen, say "Let me connect you right now — one moment" and fi
 
 If the line goes quiet for 8+ seconds, gently check: "Are you still there?" Try once. If still quiet after a second try, politely close: "I'll have our team follow up by email — thank you for your time."
 
-If the callee says "call me back later" or "not a good time", acknowledge and offer to schedule: "What's a better time? I'll have the team reach out then." End warmly.
+If the callee says "call me back later" or "not a good time":
+1. Ask for a specific time: "What's a better time? Morning or afternoon, and roughly when?"
+2. Fire the \`schedule_callback\` tool with that time as a UTC ISO-8601 timestamp (convert from their local tz) and a short note of what they want to discuss.
+3. Confirm back verbally: "Great — I've got us down for Thursday at 2pm your time. Talk then."
+4. End warmly.
 
 ## Close — always deliver this in the last 20 seconds
 
@@ -750,9 +870,11 @@ Summarise what you heard ("So to recap: you're moving about 200k gallons a month
 ## Voice style
 
 - Warm, professional, unhurried. You're not a telemarketer.
+- Use brief acknowledgments while they're talking — "mm-hmm", "got it", "okay" — so the line doesn't feel dead. Don't overuse; one backchannel per beat is plenty.
 - Avoid corporate jargon ("synergy", "leverage", "solutions") and AI tells ("I understand you are interested in...").
 - Never repeat the full phrase "Vector Trade Capital" more than once per call — after the intro, use "we" or "our trading desk".
-- Barge-in friendly — if the callee interrupts, stop talking and listen.
+- Barge-in friendly — if the callee interrupts, stop talking immediately and listen. Don't finish your sentence.
+- Contractions over formal ("we're" not "we are", "I'll" not "I will"). Phone voice, not legal brief.
 `.trim();
 
 /**
@@ -791,5 +913,37 @@ export const OPT_OUT_TOOL: RealtimeToolDefinition = {
       },
     },
     required: ["reason"],
+  },
+};
+
+/**
+ * Tool the AI fires when the callee asks to be called back at a
+ * specific time ("call me back at 3pm", "try me tomorrow morning",
+ * "not a good time — reach out next week"). Creates a follow-up
+ * commitment in the Vex queue so the promise doesn't die in the
+ * transcript. The bridge does NOT end the call — the AI confirms
+ * the time verbally and either continues the conversation or wraps
+ * naturally.
+ */
+export const SCHEDULE_CALLBACK_TOOL: RealtimeToolDefinition = {
+  type: "function",
+  name: "schedule_callback",
+  description:
+    "Schedule a follow-up call at a specific future time. Fire when the callee asks to be reached later or says this isn't a good time but offers a better window. Convert natural phrasing to a UTC ISO-8601 timestamp — assume the callee's local tz from earlier context. Prefer rounding to the top of the hour when they say 'afternoon' or 'tomorrow'.",
+  parameters: {
+    type: "object",
+    properties: {
+      dueAt: {
+        type: "string",
+        description:
+          "ISO-8601 UTC timestamp when the callback is due, e.g. '2026-04-23T15:00:00Z'. Must match that format exactly.",
+      },
+      note: {
+        type: "string",
+        description:
+          "One-sentence context for the person picking up the callback (under 30 words). What does the callee want to discuss?",
+      },
+    },
+    required: ["dueAt", "note"],
   },
 };
