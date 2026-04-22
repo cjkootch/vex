@@ -20,7 +20,7 @@ function outboundCall(
 }
 
 describe("enforceAiModeWhenVexIsTheCaller", () => {
-  it("sets aiMode=true when the user asks Vex to call", () => {
+  it("defaults aiMode=true for 'Have Vex call X'", () => {
     const [action] = enforceAiModeWhenVexIsTheCaller(
       [outboundCall()],
       "Have Vex call Cole Kutschinski",
@@ -28,7 +28,7 @@ describe("enforceAiModeWhenVexIsTheCaller", () => {
     expect(action?.payload["aiMode"]).toBe(true);
   });
 
-  it("sets aiMode=true for 'AI call X'", () => {
+  it("defaults aiMode=true for 'AI call X'", () => {
     const [action] = enforceAiModeWhenVexIsTheCaller(
       [outboundCall()],
       "AI call Cole",
@@ -36,28 +36,52 @@ describe("enforceAiModeWhenVexIsTheCaller", () => {
     expect(action?.payload["aiMode"]).toBe(true);
   });
 
-  it("sets aiMode=true for 'have the agent talk to X'", () => {
+  it("defaults aiMode=true for a plain 'Call X'", () => {
     const [action] = enforceAiModeWhenVexIsTheCaller(
       [outboundCall()],
-      "have the agent talk to Cole about pipeline",
+      "Call Cole about the Q3 rice tender",
     );
     expect(action?.payload["aiMode"]).toBe(true);
   });
 
-  it("leaves aiMode alone when the phrase implies operator dial", () => {
+  it("defaults aiMode=true for 'Dial X for me'", () => {
     const [action] = enforceAiModeWhenVexIsTheCaller(
       [outboundCall()],
       "Dial Cole for me",
     );
-    expect(action?.payload["aiMode"]).toBeUndefined();
+    expect(action?.payload["aiMode"]).toBe(true);
   });
 
-  it("preserves an explicit aiMode=false", () => {
+  it("flips aiMode=false when the operator says they'll join the call", () => {
+    const [action] = enforceAiModeWhenVexIsTheCaller(
+      [outboundCall()],
+      "Call Cole and I'll take the call",
+    );
+    expect(action?.payload["aiMode"]).toBe(false);
+  });
+
+  it("flips aiMode=false on 'conference me in'", () => {
+    const [action] = enforceAiModeWhenVexIsTheCaller(
+      [outboundCall()],
+      "Dial Cole and conference me in",
+    );
+    expect(action?.payload["aiMode"]).toBe(false);
+  });
+
+  it("preserves an explicit aiMode=false regardless of phrasing", () => {
     const [action] = enforceAiModeWhenVexIsTheCaller(
       [outboundCall({ aiMode: false })],
       "Have Vex call Cole",
     );
     expect(action?.payload["aiMode"]).toBe(false);
+  });
+
+  it("preserves an explicit aiMode=true regardless of phrasing", () => {
+    const [action] = enforceAiModeWhenVexIsTheCaller(
+      [outboundCall({ aiMode: true })],
+      "I'll take the call with Cole",
+    );
+    expect(action?.payload["aiMode"]).toBe(true);
   });
 
   it("ignores non-outbound_call actions", () => {
