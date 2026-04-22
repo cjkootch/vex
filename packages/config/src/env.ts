@@ -258,6 +258,18 @@ export const EnvSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+
+  /**
+   * The workspace (tenant) every un-authenticated webhook delivery
+   * lands in. Set this per-environment — the seed value is a
+   * placeholder for local dev only. When multi-tenant delivery
+   * routing is added, this becomes the *fallback* when a payload
+   * doesn't carry enough metadata to pick a workspace.
+   */
+  DEFAULT_WORKSPACE_ID: z
+    .string()
+    .min(1)
+    .default("01HSEEDWRK0000000000000001"),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

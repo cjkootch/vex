@@ -38,7 +38,11 @@ export interface WebhooksModuleConfig {
    * When unset the inbound controller stores metadata only.
    */
   resendApiKey?: string | null;
-  twilioAuthToken: string;
+  /**
+   * Twilio auth token. Optional so the API can boot without a Twilio
+   * account; inbound Twilio webhooks then reject with "not_configured".
+   */
+  twilioAuthToken: string | null | undefined;
   websiteChatSecret: string;
   resolveTenant: WebhookTenantResolver;
 }

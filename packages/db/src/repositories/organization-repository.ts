@@ -222,7 +222,7 @@ export class OrganizationRepository {
       .where(
         and(
           eq(organizations.status, "active"),
-          or(lt(organizations.updatedAt, olderThan), sql`true`),
+          lt(organizations.updatedAt, olderThan),
         ),
       )
       .orderBy(asc(organizations.updatedAt))
