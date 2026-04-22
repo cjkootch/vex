@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ActivityTimeline } from "@/components/activity/activity-timeline";
 import { DocumentsPanel } from "@/components/documents/documents-panel";
 import { DealStatusMenu } from "@/components/crm/deal-status-menu";
@@ -11,6 +12,7 @@ import { EditDealForm } from "@/components/crm/edit-deal-form";
 import { VesselPanel } from "@/components/deals/vessel-panel";
 import { PortPanel } from "@/components/deals/port-panel";
 import { ReadinessPanel } from "@/components/deals/readiness-panel";
+import { ReadinessPill } from "@/components/deals/readiness-pill";
 import { Tabs } from "@/components/ui/tabs";
 import { AskVexButton } from "@/components/shell/ask-vex-button";
 
@@ -55,7 +57,9 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
   const [deal, setDeal] = useState<DealDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [activeTab, setActiveTab] = useState("overview");
+  const searchParams = useSearchParams();
+  const initialTab = searchParams?.get("tab") ?? "overview";
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [editOpen, setEditOpen] = useState(false);
 
   useEffect(() => {
@@ -109,6 +113,7 @@ export default function DealDetailPage({ params }: { params: { id: string } }) {
           <div className="flex items-center gap-3">
             <h1 className="font-mono text-2xl text-white">{deal.dealRef}</h1>
             <StatusPill status={deal.status} />
+            <ReadinessPill dealId={deal.id} />
             {deal.complianceHold && (
               <span className="rounded bg-bad/20 px-2 py-0.5 text-xs text-bad">
                 compliance hold
