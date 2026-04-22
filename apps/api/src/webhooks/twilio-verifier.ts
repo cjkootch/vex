@@ -4,11 +4,19 @@ import twilio from "twilio";
 const { validateRequest } = twilio;
 
 export interface TwilioVerifierOptions {
-  authToken: string;
+  /**
+   * Twilio auth token. When null/undefined the verifier treats every
+   * request as "twilio not configured" and rejects it — safer than a
+   * silent accept when the deployment doesn't own a Twilio account.
+   */
+  authToken: string | null | undefined;
 }
 
 export type TwilioVerifyResult = { ok: true } | { ok: false; reason: TwilioVerifyFailure };
-export type TwilioVerifyFailure = "missing_signature" | "invalid_signature";
+export type TwilioVerifyFailure =
+  | "missing_signature"
+  | "invalid_signature"
+  | "not_configured";
 
 /**
  * Twilio signs the full request URL plus the form-encoded body params.
@@ -24,6 +32,7 @@ export class TwilioVerifier {
     fullUrl: string,
     params: Record<string, string>,
   ): TwilioVerifyResult {
+    if (!this.options.authToken) return { ok: false, reason: "not_configured" };
     const sig = pickHeader(headers, "x-twilio-signature");
     if (!sig) return { ok: false, reason: "missing_signature" };
 
@@ -45,3 +54,4 @@ function pickHeader(
   }
   return undefined;
 }
+

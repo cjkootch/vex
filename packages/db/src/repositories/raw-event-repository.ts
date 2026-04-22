@@ -1,4 +1,5 @@
-import { and, desc, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { Tx } from "../client.js";
 import { rawEvents, type RawEvent } from "../schema/raw-events.js";
@@ -13,6 +14,20 @@ export class RawEventRepository {
   /**
    * Idempotent insert. Returns the existing id if `(tenantId, provider,
    * providerEventId)` already exists, otherwise inserts a new row.
+   *
+   * Race safety: raw_events is RANGE-partitioned by `received_at`, so
+   * Postgres requires `received_at` to be part of every unique index
+   * on the table. That means the physical unique index
+   * `(received_at, tenant_id, provider, provider_event_id)` doesn't
+   * actually enforce our logical dedupe key — two concurrent retries
+   * with different `received_at` both pass the existence check and
+   * both insert.
+   *
+   * Fix: wrap the check-then-insert in a `pg_advisory_xact_lock` keyed
+   * off `(tenantId, provider, providerEventId)`. The lock linearises
+   * concurrent callers for that one event; the second call re-checks
+   * under the lock and short-circuits to the first row. Lock releases
+   * automatically at transaction commit/rollback.
    */
   async insertIfNotExists(
     tx: Tx,
@@ -24,6 +39,11 @@ export class RawEventRepository {
     checksum: string | null,
     receivedAt: Date = new Date(),
   ): Promise<{ id: string; isNew: boolean }> {
+    const [lockA, lockB] = advisoryLockKeys(
+      `${tenantId}:${provider}:${providerEventId}`,
+    );
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(${lockA}, ${lockB})`);
+
     const [existing] = await tx
       .select({ id: rawEvents.id })
       .from(rawEvents)
@@ -68,4 +88,19 @@ export class RawEventRepository {
       .orderBy(desc(rawEvents.receivedAt))
       .limit(limit);
   }
+}
+
+/**
+ * Split a composite lock key into two int4s for
+ * `pg_advisory_xact_lock(int4, int4)`. Splits a SHA-256 into the first
+ * 8 bytes and reads two signed 32-bit ints. Collisions across distinct
+ * keys are harmless here — a collision means two unrelated events
+ * serialise together for a moment; correctness holds because the
+ * under-lock re-check still short-circuits on the right row.
+ */
+export function advisoryLockKeys(composite: string): [number, number] {
+  const digest = createHash("sha256").update(composite).digest();
+  const a = digest.readInt32BE(0);
+  const b = digest.readInt32BE(4);
+  return [a, b];
 }

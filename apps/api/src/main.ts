@@ -97,9 +97,12 @@ async function bootstrap(): Promise<void> {
   if (!env.RESEND_WEBHOOK_SECRET) {
     throw new Error("RESEND_WEBHOOK_SECRET is required to start the API");
   }
-  if (!env.TWILIO_AUTH_TOKEN) {
-    throw new Error("TWILIO_AUTH_TOKEN is required to start the API");
-  }
+  // Twilio is genuinely optional — the env schema already marks it so,
+  // and the downstream services (CallsModule, TwilioVerifier) handle
+  // the null case cleanly. Inbound Twilio webhooks reject with
+  // "not_configured" when the token is absent; CallsModule stays
+  // unregistered. Dropping the hard throw unblocks environments that
+  // haven't wired a Twilio account yet.
   if (!env.WEBSITE_CHAT_WEBHOOK_SECRET) {
     throw new Error(
       "WEBSITE_CHAT_WEBHOOK_SECRET is required to start the API",
@@ -242,7 +245,7 @@ async function bootstrap(): Promise<void> {
         ...(env.RESEND_API_KEY ? { resendApiKey: env.RESEND_API_KEY } : {}),
         twilioAuthToken: env.TWILIO_AUTH_TOKEN,
         websiteChatSecret: env.WEBSITE_CHAT_WEBHOOK_SECRET,
-        resolveTenant: () => "01HSEEDWRK0000000000000001",
+        resolveTenant: () => env.DEFAULT_WORKSPACE_ID,
       }),
       query: QueryModule.register({ db, retrieval, openai, anthropic, tavily, costLedger }),
       approvals: ApprovalsModule.register({
