@@ -87,19 +87,23 @@ export class EmailInboundNormalizer {
       ...(bodyHtml ? { body_html: bodyHtml } : {}),
     };
 
-    await this.deps.touchpoints.insert(this.deps.tx, raw.tenantId, {
-      // Mirror the outbound naming (`email.sent`) so the Inbox
-      // channelGroupFor classifier and timeline status-badge split
-      // work identically on inbound + outbound rows. A bare "email"
-      // fell through to `channelGroup = "other"` in the inbox UI
-      // because the classifier keys off `startsWith("email.")`.
-      channel: "email.received",
-      actor: "email_inbound",
-      occurredAt,
-      contactId: contact?.id ?? null,
-      orgId: contact?.orgId ?? null,
-      metadata,
-    });
+    const touchpoint = await this.deps.touchpoints.insert(
+      this.deps.tx,
+      raw.tenantId,
+      {
+        // Mirror the outbound naming (`email.sent`) so the Inbox
+        // channelGroupFor classifier and timeline status-badge split
+        // work identically on inbound + outbound rows. A bare "email"
+        // fell through to `channelGroup = "other"` in the inbox UI
+        // because the classifier keys off `startsWith("email.")`.
+        channel: "email.received",
+        actor: "email_inbound",
+        occurredAt,
+        contactId: contact?.id ?? null,
+        orgId: contact?.orgId ?? null,
+        metadata,
+      },
+    );
 
     const { event, isNew } = await this.deps.events.insertIfNotExists(
       this.deps.tx,
@@ -128,6 +132,11 @@ export class EmailInboundNormalizer {
       },
     );
 
-    return { status: "ok", eventId: event.id, isNewEvent: isNew };
+    return {
+      status: "ok",
+      eventId: event.id,
+      isNewEvent: isNew,
+      touchpointId: touchpoint.id,
+    };
   }
 }

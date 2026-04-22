@@ -13,6 +13,13 @@ export interface SendEmailRequest {
   /** Optional HTML body. When present Resend delivers a multipart. */
   html?: string;
   replyTo?: string;
+  /**
+   * Custom RFC-5322 headers passed through to Resend. Used for
+   * threading (In-Reply-To + References) when sending a reply to
+   * an inbound message — without these the recipient's mail client
+   * renders the reply as a new conversation.
+   */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -81,6 +88,7 @@ export function createResendClient(deps: ResendDeps) {
         text: req.text,
         ...(req.html !== undefined ? { html: req.html } : {}),
         ...(req.replyTo !== undefined ? { reply_to: req.replyTo } : {}),
+        ...(req.headers !== undefined ? { headers: req.headers } : {}),
       });
     },
   };

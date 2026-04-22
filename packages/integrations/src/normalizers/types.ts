@@ -46,6 +46,12 @@ export type NormalizerOutcome =
        * (e.g. lead_qualification) without re-querying.
        */
       leadId?: string;
+      /**
+       * Touchpoint the normalizer wrote. Populated by EmailInboundNormalizer
+       * so the processor can fan-out an `email_reply_draft` agent job keyed
+       * off the specific inbound message.
+       */
+      touchpointId?: string;
     }
   | { status: "skipped"; reason: string };
 

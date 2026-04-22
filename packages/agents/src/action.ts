@@ -21,6 +21,20 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     to: z.array(z.string().email()).min(1),
     subject: z.string().min(1),
     body: z.string().min(1),
+    /**
+     * RFC-5322 Message-ID of the email this message is a reply to.
+     * When set, the executor passes `In-Reply-To` + `References` headers
+     * to Resend so the recipient's mail client stitches the thread.
+     * Populated by the inbox Reply button and the email_reply_draft
+     * agent; omitted for fresh outbound emails.
+     */
+    inReplyTo: z.string().max(500).optional(),
+    /**
+     * Optional contact id — populated when Reply is triggered from a
+     * specific touchpoint so the applied email.sent touchpoint can be
+     * linked back to the same contact + org.
+     */
+    contactId: zUlid.optional(),
   }),
   z.object({
     kind: z.literal("crm.note"),

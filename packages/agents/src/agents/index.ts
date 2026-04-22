@@ -29,3 +29,7 @@ export {
   PortIntelligenceAgent,
   type PortIntelligenceInput,
 } from "./port-intelligence.js";
+export {
+  EmailReplyDraftAgent,
+  type EmailReplyDraftAgentInput,
+} from "./email-reply-draft.js";

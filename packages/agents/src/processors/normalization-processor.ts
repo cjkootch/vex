@@ -177,6 +177,23 @@ export function buildNormalizationProcessor(deps: NormalizationProcessorDeps) {
             // against the newer touchpoint metadata.
             `form:${outcome.leadId}:${raw.id}`,
           );
+        } else if (
+          raw.provider === "email_inbound" &&
+          outcome.isNewEvent &&
+          outcome.touchpointId
+        ) {
+          // Only draft for genuinely-new inbound emails — skipping
+          // the `isNewEvent === false` branch prevents double-drafts
+          // on webhook retries that re-enter the processor.
+          await addAgentJob(
+            deps.agentsQueue,
+            {
+              kind: "email_reply_draft",
+              workspace_id: tenantId,
+              input: { touchpoint_id: outcome.touchpointId },
+            },
+            `reply_draft:${outcome.touchpointId}`,
+          );
         }
       }
 

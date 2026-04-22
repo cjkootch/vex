@@ -32,6 +32,10 @@ export default function InboxTouchpointPage({
 }): React.ReactElement {
   const [detail, setDetail] = useState<TouchpointDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+  const [replySending, setReplySending] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [replyApprovalId, setReplyApprovalId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -50,6 +54,46 @@ export default function InboxTouchpointPage({
   useEffect(() => {
     void load();
   }, [load]);
+
+  const sendReply = useCallback(async () => {
+    const text = replyBody.trim();
+    if (text.length === 0) {
+      setReplyError("Type a reply first.");
+      return;
+    }
+    setReplySending(true);
+    setReplyError(null);
+    setReplyApprovalId(null);
+    try {
+      const res = await fetch(
+        `/api/communications/touchpoints/${params.id}/reply`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ body: text }),
+        },
+      );
+      const payload = (await res.json().catch(() => ({}))) as {
+        approvalId?: string;
+        error?: string;
+        message?: string;
+      };
+      if (!res.ok) {
+        throw new Error(
+          payload.message ?? payload.error ?? `${res.status} ${res.statusText}`,
+        );
+      }
+      if (!payload.approvalId) {
+        throw new Error("no approval id in response");
+      }
+      setReplyApprovalId(payload.approvalId);
+      setReplyBody("");
+    } catch (err) {
+      setReplyError((err as Error).message);
+    } finally {
+      setReplySending(false);
+    }
+  }, [params.id, replyBody]);
 
   if (error) {
     return (
@@ -195,6 +239,53 @@ export default function InboxTouchpointPage({
           {providerMessageId && (
             <Field label="Provider id" value={providerMessageId} mono small />
           )}
+        </section>
+      )}
+
+      {direction === "inbound" && from && (
+        <section className="rounded-lg border border-line bg-muted/10 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[11px] uppercase tracking-wide text-white/40">
+              Reply
+            </div>
+            <div className="font-mono text-[11px] text-white/50">
+              to {from}
+            </div>
+          </div>
+          <textarea
+            value={replyBody}
+            onChange={(e) => setReplyBody(e.target.value)}
+            placeholder="Write a reply…"
+            rows={6}
+            disabled={replySending}
+            className="w-full rounded-md border border-line bg-bg/60 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:border-accent focus:outline-none disabled:opacity-50"
+          />
+          <div className="mt-2 flex items-center justify-between gap-3">
+            <div className="flex-1 text-xs">
+              {replyError && (
+                <span className="text-bad">Error: {replyError}</span>
+              )}
+              {replyApprovalId && (
+                <span className="text-good">
+                  Sent. Tracking as{" "}
+                  <Link
+                    href={`/app/approvals/${replyApprovalId}`}
+                    className="underline hover:text-white"
+                  >
+                    approval {replyApprovalId.slice(0, 8)}…
+                  </Link>
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void sendReply()}
+              disabled={replySending || replyBody.trim().length === 0}
+              className="rounded-md bg-accent px-4 py-1.5 text-sm font-medium text-bg hover:bg-accent/80 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {replySending ? "Sending…" : "Send reply"}
+            </button>
+          </div>
         </section>
       )}
     </div>

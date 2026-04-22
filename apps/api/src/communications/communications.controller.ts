@@ -1,17 +1,29 @@
 import {
+  BadRequestException,
+  Body,
   Controller,
   Get,
+  HttpCode,
   Inject,
   NotFoundException,
   Param,
+  Post,
   Query,
   UseGuards,
 } from "@nestjs/common";
+import type { Queue } from "bullmq";
+import {
+  addApprovalExecutorJob,
+  type ApprovalExecutorJobData,
+} from "@vex/agents";
+import { createId } from "@vex/domain";
 import { JwtAuthGuard, TenantContext } from "../auth/index.js";
 import {
   withTenant,
   type ActivityRepository,
+  type ApprovalRepository,
   type Db,
+  type EventRepository,
   type TouchpointRepository,
 } from "@vex/db";
 
@@ -44,6 +56,15 @@ export const COMMUNICATIONS_TOUCHPOINT_REPO = Symbol(
 );
 export const COMMUNICATIONS_ACTIVITY_REPO = Symbol(
   "COMMUNICATIONS_ACTIVITY_REPO",
+);
+export const COMMUNICATIONS_APPROVAL_REPO = Symbol(
+  "COMMUNICATIONS_APPROVAL_REPO",
+);
+export const COMMUNICATIONS_EVENT_REPO = Symbol(
+  "COMMUNICATIONS_EVENT_REPO",
+);
+export const COMMUNICATIONS_APPROVAL_EXECUTOR_QUEUE = Symbol(
+  "COMMUNICATIONS_APPROVAL_EXECUTOR_QUEUE",
 );
 
 export type ChannelFilter = "email" | "sms" | "whatsapp" | "call";
@@ -99,6 +120,12 @@ export class CommunicationsController {
     private readonly touchpoints: TouchpointRepository,
     @Inject(COMMUNICATIONS_ACTIVITY_REPO)
     private readonly activities: ActivityRepository,
+    @Inject(COMMUNICATIONS_APPROVAL_REPO)
+    private readonly approvals: ApprovalRepository,
+    @Inject(COMMUNICATIONS_EVENT_REPO)
+    private readonly events: EventRepository,
+    @Inject(COMMUNICATIONS_APPROVAL_EXECUTOR_QUEUE)
+    private readonly approvalExecutorQueue: Queue<ApprovalExecutorJobData>,
   ) {}
 
   @Get()
@@ -279,6 +306,104 @@ export class CommunicationsController {
       campaignId: row.campaignId,
       metadata: (row.metadata ?? {}) as Record<string, unknown>,
     };
+  }
+
+  /**
+   * POST /communications/touchpoints/:id/reply — operator-initiated
+   * reply to an inbound email touchpoint. Builds the recipient +
+   * subject + In-Reply-To from the touchpoint's metadata, creates an
+   * `email.send` approval, and auto-decides it so the executor fires
+   * immediately. The approval row remains as the audit trail; the
+   * operator typing the body is the intent record.
+   *
+   * 400 if the touchpoint is not an inbound email (no recipient to
+   * reply to). 404 if the touchpoint belongs to another tenant (RLS).
+   */
+  @Post("touchpoints/:id/reply")
+  @HttpCode(202)
+  async reply(
+    @Param("id") id: string,
+    @Body() body: { body?: string; subject?: string },
+  ): Promise<{ approvalId: string }> {
+    const text = typeof body.body === "string" ? body.body.trim() : "";
+    if (text.length === 0) {
+      throw new BadRequestException("body required");
+    }
+    const touchpoint = await withTenant(this.db, this.tenant.tenantId, async (tx) =>
+      this.touchpoints.findById(tx, id),
+    );
+    if (!touchpoint) throw new NotFoundException();
+    const meta = (touchpoint.metadata ?? {}) as Record<string, unknown>;
+    const direction = typeof meta["direction"] === "string" ? meta["direction"] : null;
+    const from = typeof meta["from"] === "string" ? meta["from"] : null;
+    const originalSubject =
+      typeof meta["subject"] === "string" ? meta["subject"] : null;
+    const originalMessageId =
+      typeof meta["message_id"] === "string" ? meta["message_id"] : null;
+    if (direction !== "inbound" || !from) {
+      throw new BadRequestException(
+        "touchpoint is not an inbound email — nothing to reply to",
+      );
+    }
+    const replySubject = body.subject?.trim()
+      ? body.subject.trim()
+      : originalSubject
+        ? originalSubject.startsWith("Re:")
+          ? originalSubject
+          : `Re: ${originalSubject}`
+        : "Re:";
+
+    const { approvalId } = await withTenant(
+      this.db,
+      this.tenant.tenantId,
+      async (tx) => {
+        const approval = await this.approvals.create(tx, this.tenant.tenantId, {
+          actionType: "email.send",
+          proposedPayload: {
+            tier: "T2",
+            to: [from],
+            subject: replySubject,
+            body: text,
+            ...(originalMessageId ? { inReplyTo: originalMessageId } : {}),
+            ...(touchpoint.contactId ? { contactId: touchpoint.contactId } : {}),
+            source: "inbox_reply",
+            replied_to_touchpoint_id: touchpoint.id,
+          },
+        });
+        // Auto-decide: the operator composing + submitting is the
+        // approval intent. The row stays as an audit record so the
+        // Send shows up in /app/approvals alongside agent-proposed
+        // sends, not in a separate "direct" feed.
+        await this.approvals.decide(tx, approval.id, "auto_approved", null);
+        await this.events.insertIfNotExists(tx, this.tenant.tenantId, {
+          verb: "approval.created",
+          subjectType: "approval",
+          subjectId: approval.id,
+          actorType: "system",
+          actorId: "inbox_reply",
+          objectType: "approval",
+          objectId: approval.id,
+          occurredAt: new Date(),
+          idempotencyKey: `approval.created:${approval.id}`,
+          metadata: {
+            action_type: "email.send",
+            tier: "T2",
+            source: "inbox_reply",
+            replied_to_touchpoint_id: touchpoint.id,
+            audit_event_id: createId(),
+          },
+        });
+        return { approvalId: approval.id };
+      },
+    );
+
+    // Enqueue the executor so Resend actually fires the email.
+    await addApprovalExecutorJob(this.approvalExecutorQueue, {
+      approval_id: approvalId,
+      workspace_id: this.tenant.tenantId,
+    });
+
+    return { approvalId };
   }
 }
 
