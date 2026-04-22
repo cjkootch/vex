@@ -741,8 +741,8 @@ export class OrganizationsController {
       // Role classification from participant rows. Brokers + intermediaries
       // live on fuel_deal_participants; buyer/supplier are on fuel_deals
       // itself and already covered above.
-      let brokerDealIds = new Set<string>();
-      let intermediaryDealIds = new Set<string>();
+      const brokerDealIds = new Set<string>();
+      const intermediaryDealIds = new Set<string>();
       for (const p of participantRows) {
         if (
           p.partyType === "supplier_broker" ||
