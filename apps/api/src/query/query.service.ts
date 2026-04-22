@@ -491,6 +491,15 @@ const RANK_TIER: Record<number, "T0" | "T1" | "T2" | "T3"> = {
  * A single-item list is returned as-is — no need to wrap.
  * A bundle already in the list isn't nested (defensive); we flatten.
  * Tier bubbles up to the max across items.
+ *
+ * Each item is validated against `ActionDescriptor` before the
+ * bundle is emitted. An invalid item (e.g. the LLM proposed an
+ * `outbound_call` missing `toNumber`) is dropped and logged in
+ * `droppedItems` on the bundle's payload so the operator can see
+ * what got filtered + why. Without this guard, invalid items
+ * passed validation via the bundle's own `.passthrough()` items
+ * schema and only surfaced as executor failures at apply time —
+ * after the bundle had already auto-approved.
  */
 export function bundleActionsIfMultiple(
   actions: ProposedAction[],
@@ -508,18 +517,62 @@ export function bundleActionsIfMultiple(
   }
   if (flat.length <= 1) return flat;
 
-  const maxRank = flat.reduce((acc, a) => Math.max(acc, TIER_RANK[a.tier] ?? 1), 0);
+  // Validate each item. The bundle itself only passthroughs items;
+  // without this pre-check the executor is left holding the bag on
+  // malformed payloads the LLM hallucinated.
+  const valid: ProposedAction[] = [];
+  const droppedItems: Array<{
+    kind: string;
+    reason: string;
+    payload: Record<string, unknown>;
+  }> = [];
+  for (const item of flat) {
+    const candidate = {
+      kind: item.kind,
+      tier: item.tier,
+      ...item.payload,
+      ...(item.rationale !== undefined ? { rationale: item.rationale } : {}),
+    };
+    const parsed = ActionDescriptor.safeParse(candidate);
+    if (parsed.success) {
+      valid.push(item);
+    } else {
+      droppedItems.push({
+        kind: item.kind,
+        reason: parsed.error.issues
+          .map((iss) => `${iss.path.join(".") || "(root)"}: ${iss.message}`)
+          .join("; "),
+        payload: item.payload,
+      });
+    }
+  }
+
+  // If validation dropped us back to 0–1 valid items, there's
+  // nothing to bundle — return the surviving items as-is.
+  if (valid.length <= 1) return valid;
+
+  const maxRank = valid.reduce(
+    (acc, a) => Math.max(acc, TIER_RANK[a.tier] ?? 1),
+    0,
+  );
   const tier = RANK_TIER[maxRank] ?? "T2";
-  const summary = flat
+  const summary = valid
     .map((a) => a.kind)
     .slice(0, 5)
     .join(", ");
+  const rationale =
+    droppedItems.length > 0
+      ? `${valid.length} actions: ${summary}${valid.length > 5 ? ", …" : ""} (${droppedItems.length} invalid item${droppedItems.length === 1 ? "" : "s"} dropped: ${droppedItems.map((d) => d.kind).join(", ")})`
+      : `${valid.length} actions: ${summary}${valid.length > 5 ? ", …" : ""}`;
   return [
     {
       kind: "bundle",
       tier,
-      payload: { items: flat },
-      rationale: `${flat.length} actions: ${summary}${flat.length > 5 ? ", …" : ""}`,
+      payload: {
+        items: valid,
+        ...(droppedItems.length > 0 ? { _droppedItems: droppedItems } : {}),
+      },
+      rationale,
     },
   ];
 }
