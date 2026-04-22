@@ -8,6 +8,7 @@ import {
   type Approval,
   type Db,
   type EventRepository,
+  type Tx,
 } from "@vex/db";
 import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Client as TemporalClient } from "@temporalio/client";
@@ -469,7 +470,7 @@ function resolveWorkflowId(approval: Approval): string | null {
  * dispatch the existing payload unchanged.
  */
 async function trimBundleToSubset(
-  tx: import("@vex/db").Tx,
+  tx: Tx,
   approvals: ApprovalRepository,
   approvalId: string,
   selectedIndices: readonly number[],
