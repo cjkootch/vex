@@ -294,11 +294,15 @@ export class QueryService {
       queryResult.proposedActions,
       input.message,
     );
+    // Multi-action requests land as one approval, not N. The operator
+    // reviews the checklist as a single card and can per-item uncheck
+    // anything they want to skip before approving.
+    const bundledActions = bundleActionsIfMultiple(normalizedActions);
     const { created: createdApprovals, rejected: rejectedProposals } =
       await this.persistProposedActions(
         tenantId,
         input.agentRunId,
-        normalizedActions,
+        bundledActions,
       );
 
     return {
@@ -468,6 +472,57 @@ export function enforceAiModeWhenVexIsTheCaller(
 // flow instead of AI mode. Anything else defaults to aiMode=true.
 const OPERATOR_JOIN_RE =
   /\b(i'?ll\s+(take|join|handle|be\s+on)|join\s+(the\s+)?call|conference\s+(in|me|us)|bridge\s+me|let\s+me\s+(join|take|handle))\b/i;
+
+const TIER_RANK: Record<string, number> = { T0: 0, T1: 1, T2: 2, T3: 3 };
+const RANK_TIER: Record<number, "T0" | "T1" | "T2" | "T3"> = {
+  0: "T0",
+  1: "T1",
+  2: "T2",
+  3: "T3",
+};
+
+/**
+ * When a single chat turn produces multiple proposed actions, wrap
+ * them in one `bundle` approval so the operator reviews a single
+ * card instead of N scattered inbox rows. The operator can still
+ * per-item uncheck anything before approving — that subset handling
+ * lives on the approve endpoint.
+ *
+ * A single-item list is returned as-is — no need to wrap.
+ * A bundle already in the list isn't nested (defensive); we flatten.
+ * Tier bubbles up to the max across items.
+ */
+export function bundleActionsIfMultiple(
+  actions: ProposedAction[],
+): ProposedAction[] {
+  if (actions.length <= 1) return actions;
+  // Defensive flatten: if a caller already bundled upstream, unwrap.
+  const flat: ProposedAction[] = [];
+  for (const a of actions) {
+    if (a.kind === "bundle" && Array.isArray((a.payload as { items?: unknown }).items)) {
+      const nested = (a.payload as { items: ProposedAction[] }).items;
+      for (const n of nested) flat.push(n);
+    } else {
+      flat.push(a);
+    }
+  }
+  if (flat.length <= 1) return flat;
+
+  const maxRank = flat.reduce((acc, a) => Math.max(acc, TIER_RANK[a.tier] ?? 1), 0);
+  const tier = RANK_TIER[maxRank] ?? "T2";
+  const summary = flat
+    .map((a) => a.kind)
+    .slice(0, 5)
+    .join(", ");
+  return [
+    {
+      kind: "bundle",
+      tier,
+      payload: { items: flat },
+      rationale: `${flat.length} actions: ${summary}${flat.length > 5 ? ", …" : ""}`,
+    },
+  ];
+}
 
 function isConversationalOpener(message: string): boolean {
   const trimmed = message.trim().toLowerCase();

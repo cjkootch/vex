@@ -14,6 +14,17 @@ import { ApprovalsService } from "./approvals.service.js";
 
 const RejectBody = z.object({ reason: z.string().min(1).optional() });
 
+const ApproveBody = z.object({
+  /**
+   * When the approval wraps a `bundle`, the reviewer may check/uncheck
+   * individual items before approving. This array carries the indices
+   * of items to keep; any index not listed is moved to
+   * `_unselectedItems` on the payload and never executes. Omitted or
+   * empty → approve every item.
+   */
+  selectedIndices: z.array(z.number().int().min(0)).optional(),
+});
+
 const BulkDecideBody = z.object({
   ids: z.array(z.string().min(1)).min(1).max(50),
   decision: z.enum(["approve", "reject"]),
@@ -82,12 +93,22 @@ export class ApprovalsController {
   }
 
   @Post(":id/approve")
-  async approve(@Param("id") id: string) {
+  async approve(@Param("id") id: string, @Body() raw: unknown) {
+    // Optional `selectedIndices` body — when the approval is a
+    // `bundle`, the operator may approve only a subset of items
+    // by un-checking boxes in the UI. Omitted / empty array →
+    // approve every item. Array of integers → trim the bundle's
+    // items to that subset before auto-approving.
+    const parsed = ApproveBody.safeParse(raw ?? {});
+    const selectedIndices = parsed.success
+      ? parsed.data.selectedIndices
+      : undefined;
     const approval = await this.service.approve({
       tenantId: this.tenant.tenantId,
       workspaceId: this.tenant.workspaceId,
       approvalId: id,
       reviewerId: this.tenant.userId,
+      ...(selectedIndices ? { selectedIndices } : {}),
     });
     return { approval };
   }

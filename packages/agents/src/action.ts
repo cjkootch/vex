@@ -609,6 +609,49 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     note: z.string().min(1).max(2000),
     rationale: z.string().max(500).optional(),
   }),
+  // Bundle — one approval wrapping N sub-actions the operator can
+  // review as a checklist and approve / skip per-item. The chat path
+  // auto-bundles whenever a single user message produces multiple
+  // proposed actions, so the inbox doesn't fragment into three
+  // separate cards for one request ("merge X into Y, update phone,
+  // call them").
+  //
+  // Items are stored as raw JSONB (not re-validated as ActionDescriptors
+  // inside Zod because discriminatedUnion can't self-reference). Each
+  // item is independently validated + dispatched by the approval
+  // executor at apply time. Nested bundles are rejected at the
+  // runtime level, not here.
+  //
+  // Tier is always the max tier across items — a bundle containing
+  // any T3 can't auto-approve.
+  z.object({
+    kind: z.literal("bundle"),
+    tier: z.enum([
+      ApprovalTier.T0,
+      ApprovalTier.T1,
+      ApprovalTier.T2,
+      ApprovalTier.T3,
+    ]),
+    items: z
+      .array(
+        z
+          .object({
+            kind: z.string().min(1),
+            tier: z.enum([
+              ApprovalTier.T0,
+              ApprovalTier.T1,
+              ApprovalTier.T2,
+              ApprovalTier.T3,
+            ]),
+            payload: z.record(z.unknown()).optional(),
+            rationale: z.string().optional(),
+          })
+          .passthrough(),
+      )
+      .min(2)
+      .max(20),
+    rationale: z.string().min(1).max(1000),
+  }),
 ]);
 
 export type ActionDescriptorT = z.infer<typeof ActionDescriptor>;

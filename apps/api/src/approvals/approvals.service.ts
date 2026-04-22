@@ -9,7 +9,7 @@ import {
   type Db,
   type EventRepository,
 } from "@vex/db";
-import { and, desc, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import type { Client as TemporalClient } from "@temporalio/client";
 import { WorkflowId } from "@vex/integrations";
 import {
@@ -32,6 +32,13 @@ export interface DecisionArgs {
   reviewerId: string;
   /** When rejecting, the reviewer's reason — stored on the audit event. */
   reason?: string;
+  /**
+   * Optional item subset when the approval wraps a `bundle`. Integer
+   * indices into `proposed_payload.items` to keep; all other items
+   * are moved to `_unselectedItems` on the payload and skipped by
+   * the executor. Undefined / omitted → approve every item.
+   */
+  selectedIndices?: readonly number[];
 }
 
 export interface BulkDecisionArgs {
@@ -261,7 +268,24 @@ export class ApprovalsService {
 
   async approve(args: DecisionArgs): Promise<Approval> {
     const decided = await withTenant(this.db, args.tenantId, async (tx) => {
-      const approval = await this.approvals.decide(tx, args.approvalId, "approved", args.reviewerId);
+      // When the reviewer ticked/unticked items in a bundle, trim the
+      // payload to the selected subset before marking approved. The
+      // executor dispatches whatever items remain on the payload at
+      // apply time — it doesn't need to know about the subset choice.
+      if (args.selectedIndices) {
+        await trimBundleToSubset(
+          tx,
+          this.approvals,
+          args.approvalId,
+          args.selectedIndices,
+        );
+      }
+      const approval = await this.approvals.decide(
+        tx,
+        args.approvalId,
+        "approved",
+        args.reviewerId,
+      );
       await this.events.insertIfNotExists(tx, args.tenantId, {
         verb: "approval.approved",
         subjectType: "approval",
@@ -272,7 +296,12 @@ export class ApprovalsService {
         objectId: approval.id,
         occurredAt: new Date(),
         idempotencyKey: `approval.approved:${approval.id}`,
-        metadata: { action_type: approval.actionType },
+        metadata: {
+          action_type: approval.actionType,
+          ...(args.selectedIndices
+            ? { selected_indices: [...args.selectedIndices] }
+            : {}),
+        },
       });
       return approval;
     });
@@ -427,4 +456,53 @@ function resolveWorkflowId(approval: Approval): string | null {
     return WorkflowId.outboundCall(approval.agentRunId);
   }
   return WorkflowId.followUp(approval.agentRunId);
+}
+
+/**
+ * Narrow a `bundle` approval's items to the subset the reviewer
+ * checked, preserving the originals under `_unselectedItems` for
+ * audit. Called inside the same transaction that flips the decision,
+ * so a crash between the payload write and the decide insert rolls
+ * the whole thing back.
+ *
+ * A no-op for non-bundle approvals — the executor will simply
+ * dispatch the existing payload unchanged.
+ */
+async function trimBundleToSubset(
+  tx: import("@vex/db").Tx,
+  approvals: ApprovalRepository,
+  approvalId: string,
+  selectedIndices: readonly number[],
+): Promise<void> {
+  const existing = await approvals.findById(tx, approvalId);
+  if (!existing) throw new NotFoundException(`approval ${approvalId} not found`);
+  if (existing.actionType !== "bundle") return;
+  const payload = existing.proposedPayload as {
+    items?: unknown[];
+    [k: string]: unknown;
+  };
+  const rawItems = Array.isArray(payload.items) ? payload.items : [];
+  if (rawItems.length === 0) return;
+
+  const allowed = new Set(selectedIndices);
+  const kept: unknown[] = [];
+  const dropped: unknown[] = [];
+  rawItems.forEach((item, idx) => {
+    if (allowed.has(idx)) kept.push(item);
+    else dropped.push(item);
+  });
+
+  // Guard: if the operator unchecked every item, treat as reject-ish
+  // by leaving `items: []` — the executor handles the empty case
+  // with a no-op audit event.
+  await tx
+    .update(schema.approvals)
+    .set({
+      proposedPayload: {
+        ...payload,
+        items: kept,
+        _unselectedItems: dropped,
+      },
+    })
+    .where(eq(schema.approvals.id, approvalId));
 }

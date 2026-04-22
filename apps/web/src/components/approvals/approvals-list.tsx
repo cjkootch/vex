@@ -66,7 +66,11 @@ export function ApprovalsList() {
     );
   }
 
-  async function decide(id: string, action: "approve" | "reject"): Promise<void> {
+  async function decide(
+    id: string,
+    action: "approve" | "reject",
+    options?: { selectedIndices?: number[] },
+  ): Promise<void> {
     const target = items.find((i) => i.id === id);
     if (!target) return;
     setItems((prev) => prev.filter((i) => i.id !== id));
@@ -77,10 +81,14 @@ export function ApprovalsList() {
       return next;
     });
     try {
+      const body =
+        action === "approve" && options?.selectedIndices
+          ? { selectedIndices: options.selectedIndices }
+          : {};
       const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/${action}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const json = (await r.json()) as { approval: ApprovalRow };
@@ -352,10 +360,39 @@ function ApprovalCard({
   item: ApprovalRow;
   selected: boolean;
   onToggle: (id: string) => void;
-  onDecide: (id: string, action: "approve" | "reject") => void | Promise<void>;
+  onDecide: (
+    id: string,
+    action: "approve" | "reject",
+    options?: { selectedIndices?: number[] },
+  ) => void | Promise<void>;
 }) {
   const tier = stringField(item.proposedPayload, "tier") ?? "T?";
   const created = new Date(item.createdAt);
+
+  // Bundle cards carry their own per-item checklist state so the
+  // operator can un-tick items before approving. All items start
+  // checked. Non-bundle cards ignore this state.
+  const bundleItems = Array.isArray(item.proposedPayload["items"])
+    ? (item.proposedPayload["items"] as Array<Record<string, unknown>>)
+    : null;
+  const [bundleChecked, setBundleChecked] = useState<boolean[]>(() =>
+    bundleItems ? bundleItems.map(() => true) : [],
+  );
+  const isBundle = item.actionType === "bundle" && bundleItems !== null;
+  const toggleBundleIdx = (idx: number) => {
+    setBundleChecked((prev) => {
+      const next = [...prev];
+      next[idx] = !next[idx];
+      return next;
+    });
+  };
+  const anyChecked = isBundle ? bundleChecked.some(Boolean) : true;
+  const approveBundle = () => {
+    const indices = bundleChecked
+      .map((v, i) => (v ? i : -1))
+      .filter((i) => i >= 0);
+    return onDecide(item.id, "approve", { selectedIndices: indices });
+  };
 
   // Per-actionType body renderer. Each action that ships through chat
   // or an autonomous agent has its own renderer so the operator sees
@@ -364,6 +401,15 @@ function ApprovalCard({
   // action kinds we haven't built a dedicated renderer for yet.
   let body: JSX.Element;
   switch (item.actionType) {
+    case "bundle":
+      body = (
+        <BundleBody
+          payload={item.proposedPayload}
+          checked={bundleChecked}
+          onToggle={toggleBundleIdx}
+        />
+      );
+      break;
     case "campaign.enroll_batch":
       body = <EnrollBatchBody payload={item.proposedPayload} />;
       break;
@@ -421,10 +467,17 @@ function ApprovalCard({
           aria-label={`Select approval ${item.id}`}
         />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 text-xs text-white/50">
-            <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono">{item.actionType}</span>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+            <span className="num-mono rounded bg-surface-2 px-1.5 py-0.5 text-text-secondary">
+              {item.actionType}
+            </span>
+            {isBundle && bundleItems ? (
+              <span className="rounded-full border border-accent/40 bg-intel-soft/60 px-2 py-0.5 text-[10px] font-semibold tracking-wider2 text-accent-strong">
+                {bundleItems.length}-action bundle
+              </span>
+            ) : null}
             <span className="rounded bg-warn/20 px-1.5 py-0.5 text-warn">{tier}</span>
-            <span title={created.toISOString()}>
+            <span title={created.toISOString()} className="text-text-muted">
               {relativeTime(created)}
             </span>
           </div>
@@ -433,17 +486,22 @@ function ApprovalCard({
         <div className="flex flex-none gap-2">
           <button
             type="button"
-            onClick={() => onDecide(item.id, "approve")}
+            onClick={() =>
+              isBundle ? approveBundle() : onDecide(item.id, "approve")
+            }
+            disabled={isBundle && !anyChecked}
             data-testid="approve"
-            className="rounded-md bg-good px-3 py-1.5 text-sm font-medium text-canvas"
+            className="rounded-md bg-good px-3 py-1.5 text-sm font-medium text-canvas transition-colors hover:bg-good/90 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Approve
+            {isBundle
+              ? `Approve ${bundleChecked.filter(Boolean).length}`
+              : "Approve"}
           </button>
           <button
             type="button"
             onClick={() => onDecide(item.id, "reject")}
             data-testid="reject"
-            className="rounded-md border border-line px-3 py-1.5 text-sm text-white/70 hover:bg-white/5"
+            className="rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-sm text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary"
           >
             Reject
           </button>
@@ -459,6 +517,157 @@ interface PlanStepSummary {
   tier: string;
   auto_approve: boolean;
   delay_after_prior_ms?: number;
+}
+
+/**
+ * Bundle body — renders each sub-action as a row with a pre-checked
+ * box the operator can uncheck to skip an item before approving.
+ * Rows are ordered because the chat agent proposed them in that
+ * order and the executor dispatches in order (e.g. merge contact
+ * before updating their phone). Short summary lines come from a
+ * handful of kind-specific formatters; anything unknown falls back
+ * to "kind · tier" + a compact JSON preview.
+ */
+function BundleBody({
+  payload,
+  checked,
+  onToggle,
+}: {
+  payload: Record<string, unknown>;
+  checked: boolean[];
+  onToggle: (index: number) => void;
+}) {
+  const items = Array.isArray(payload["items"])
+    ? (payload["items"] as Array<Record<string, unknown>>)
+    : [];
+  const rationale = stringField(payload, "rationale");
+  return (
+    <div className="mt-3 flex flex-col gap-1.5">
+      {rationale ? (
+        <div className="text-sm text-text-secondary">{rationale}</div>
+      ) : null}
+      <ul className="mt-1 overflow-hidden rounded-md border border-line-soft bg-surface-1/60">
+        {items.map((it, idx) => {
+          const kind =
+            typeof it["kind"] === "string" ? (it["kind"] as string) : "?";
+          const tier =
+            typeof it["tier"] === "string" ? (it["tier"] as string) : null;
+          const itemPayload =
+            typeof it["payload"] === "object" && it["payload"] !== null
+              ? (it["payload"] as Record<string, unknown>)
+              : {};
+          const summary = bundleItemSummary(kind, itemPayload);
+          const isChecked = checked[idx] ?? true;
+          return (
+            <li
+              key={idx}
+              className={`flex items-start gap-3 border-b border-line-soft/60 px-3 py-2.5 last:border-b-0 transition-colors ${isChecked ? "" : "bg-surface-2/30 opacity-55"}`}
+            >
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={() => onToggle(idx)}
+                aria-label={`Include item ${idx + 1} (${kind})`}
+                className="mt-0.5 h-4 w-4 flex-shrink-0 cursor-pointer rounded border-line-soft bg-surface-2 accent-accent"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="num-mono rounded bg-surface-2 px-1.5 py-0.5 text-[11px] text-text-secondary">
+                    {kind}
+                  </span>
+                  {tier ? (
+                    <span className="rounded bg-warn/15 px-1.5 py-0.5 text-[10px] font-medium text-warn">
+                      {tier}
+                    </span>
+                  ) : null}
+                  {!isChecked ? (
+                    <span className="text-[10px] uppercase tracking-wider2 text-text-muted">
+                      Skipped
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 text-sm text-text-primary/90">
+                  {summary}
+                </div>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+function bundleItemSummary(
+  kind: string,
+  payload: Record<string, unknown>,
+): string {
+  const s = (k: string) =>
+    typeof payload[k] === "string" ? (payload[k] as string) : null;
+  switch (kind) {
+    case "contact.merge": {
+      const src = s("sourceContactId");
+      const tgt = s("targetContactId");
+      if (src && tgt) return `Merge ${short(src)} into ${short(tgt)}`;
+      return "Merge two contacts";
+    }
+    case "contact.update": {
+      const cid = s("contactId");
+      const patch = payload["patch"] as Record<string, unknown> | undefined;
+      if (patch && typeof patch === "object") {
+        const keys = Object.keys(patch);
+        return `Update ${keys.join(", ")} on contact ${cid ? short(cid) : ""}`.trim();
+      }
+      return `Update contact ${cid ? short(cid) : ""}`.trim();
+    }
+    case "outbound_call": {
+      const to = s("toNumber");
+      const aiMode = payload["aiMode"];
+      return `Call ${to ?? "contact"}${aiMode === true ? " · AI mode" : ""}`;
+    }
+    case "email.send": {
+      const subject = s("subject");
+      const toVal = payload["to"];
+      const toStr = Array.isArray(toVal)
+        ? (toVal as unknown[]).filter((v) => typeof v === "string").join(", ")
+        : typeof toVal === "string"
+          ? toVal
+          : "";
+      return `Email ${toStr || "recipient"}${subject ? ` — "${subject}"` : ""}`;
+    }
+    case "sms.send":
+    case "whatsapp.send": {
+      const to = s("to");
+      const body = s("body");
+      const preview = body ? body.slice(0, 60) + (body.length > 60 ? "…" : "") : "";
+      return `${kind === "whatsapp.send" ? "WhatsApp" : "SMS"} ${to ?? "contact"}${preview ? ` — "${preview}"` : ""}`;
+    }
+    case "follow_up.schedule": {
+      const title = s("title") ?? "follow-up";
+      const due = s("dueAt");
+      return `Schedule follow-up: ${title}${due ? ` (due ${due})` : ""}`;
+    }
+    case "deal.milestone": {
+      const milestone = s("milestone");
+      const dealId = s("dealId");
+      return `Milestone ${milestone ?? ""} on deal ${dealId ? short(dealId) : ""}`.trim();
+    }
+    case "touchpoint.log":
+      return `Log touchpoint · ${s("channel") ?? "channel"}`;
+    case "contact.opt_out":
+      return `Opt-out contact ${s("contactId") ? short(s("contactId")!) : ""}`.trim();
+    default:
+      // Compact preview for unknown kinds so the reviewer still has
+      // something to scan against.
+      return Object.entries(payload)
+        .slice(0, 3)
+        .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+        .join(" · ") || `(empty ${kind})`;
+  }
+}
+
+function short(id: string): string {
+  return id.length > 12 ? `${id.slice(0, 6)}…${id.slice(-4)}` : id;
 }
 
 /**
