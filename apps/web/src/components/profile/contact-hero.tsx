@@ -36,6 +36,10 @@ interface ContactPulse {
   lastTouchpointAt: string | null;
   lastTouchpointChannel: string | null;
   activityLast7d: number;
+  emailOpensLast7d: number;
+  emailClicksLast7d: number;
+  lastEmailOpenedAt: string | null;
+  lastEmailClickedAt: string | null;
 }
 
 export function ContactHero({
@@ -131,7 +135,7 @@ export function ContactHero({
           ) : null}
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-5 gap-y-3 border-t border-line-soft pt-4 sm:grid-cols-3 lg:grid-cols-5">
+        <dl className="grid grid-cols-2 gap-x-5 gap-y-3 border-t border-line-soft pt-4 sm:grid-cols-3 lg:grid-cols-6">
           <StatCell
             label="Email"
             value={email ?? "—"}
@@ -167,6 +171,26 @@ export function ContactHero({
             label="Activity (7d)"
             value={pulse ? String(pulse.activityLast7d) : "—"}
             sub="touchpoints"
+            numeric
+          />
+          <StatCell
+            label="Email eng. (7d)"
+            value={
+              pulse
+                ? pulse.emailOpensLast7d + pulse.emailClicksLast7d === 0
+                  ? "—"
+                  : `${pulse.emailOpensLast7d}o · ${pulse.emailClicksLast7d}c`
+                : "—"
+            }
+            sub={
+              pulse
+                ? pulse.lastEmailClickedAt
+                  ? `clicked ${formatDistanceToNow(new Date(pulse.lastEmailClickedAt), { addSuffix: true })}`
+                  : pulse.lastEmailOpenedAt
+                    ? `opened ${formatDistanceToNow(new Date(pulse.lastEmailOpenedAt), { addSuffix: true })}`
+                    : undefined
+                : undefined
+            }
             numeric
           />
         </dl>

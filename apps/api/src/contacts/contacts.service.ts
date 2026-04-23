@@ -445,6 +445,17 @@ export class ContactsService {
     lastTouchpointAt: string | null;
     lastTouchpointChannel: string | null;
     activityLast7d: number;
+    /**
+     * Email engagement in the trailing 7 days. Opens are noisy
+     * (gateway-prefetch, pixel caches) — callers typically render them
+     * with a weaker tone than clicks. `lastEmailEngagementAt` tracks
+     * the most-recent open OR click so the UI can show a single
+     * "recent engagement" cue without threading two timestamps.
+     */
+    emailOpensLast7d: number;
+    emailClicksLast7d: number;
+    lastEmailOpenedAt: string | null;
+    lastEmailClickedAt: string | null;
   }> {
     return withTenant(this.db, tenantId, async (tx) => {
       const contact = await this.contacts.findById(tx, contactId);
@@ -471,8 +482,13 @@ export class ContactsService {
       ];
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-      const [orgRows, openDealsRows, lastTouchpointRows, recentRows] =
-        await Promise.all([
+      const [
+        orgRows,
+        openDealsRows,
+        lastTouchpointRows,
+        recentRows,
+        emailEngagementRows,
+      ] = await Promise.all([
           tx
             .select({
               orgId: schema.contactOrgMemberships.orgId,
@@ -519,6 +535,24 @@ export class ContactsService {
                 gte(schema.touchpoints.occurredAt, sevenDaysAgo),
               ),
             ),
+          // Email engagement — pull all email-channel touchpoints for
+          // this contact in the last 7 days with their verb metadata.
+          // We filter client-side because JSONB path access via Drizzle
+          // is awkward and the row count is tiny.
+          tx
+            .select({
+              occurredAt: schema.touchpoints.occurredAt,
+              metadata: schema.touchpoints.metadata,
+            })
+            .from(schema.touchpoints)
+            .where(
+              and(
+                eq(schema.touchpoints.contactId, contactId),
+                eq(schema.touchpoints.channel, "email"),
+                gte(schema.touchpoints.occurredAt, sevenDaysAgo),
+              ),
+            )
+            .orderBy(desc(schema.touchpoints.occurredAt)),
         ]);
 
       const allOrgs = orgRows.map((r) => ({
@@ -531,6 +565,22 @@ export class ContactsService {
         allOrgs.find((o) => o.isPrimary) ?? allOrgs[0] ?? null;
 
       const firstTp = lastTouchpointRows[0] ?? null;
+
+      let emailOpensLast7d = 0;
+      let emailClicksLast7d = 0;
+      let lastEmailOpenedAt: Date | null = null;
+      let lastEmailClickedAt: Date | null = null;
+      for (const row of emailEngagementRows) {
+        const verb = (row.metadata as Record<string, unknown>)["verb"];
+        if (typeof verb !== "string") continue;
+        if (verb === "email.opened") {
+          emailOpensLast7d += 1;
+          if (!lastEmailOpenedAt) lastEmailOpenedAt = row.occurredAt;
+        } else if (verb === "email.clicked") {
+          emailClicksLast7d += 1;
+          if (!lastEmailClickedAt) lastEmailClickedAt = row.occurredAt;
+        }
+      }
 
       return {
         contact: {
@@ -554,6 +604,14 @@ export class ContactsService {
           : null,
         lastTouchpointChannel: firstTp?.channel ?? null,
         activityLast7d: recentRows.length,
+        emailOpensLast7d,
+        emailClicksLast7d,
+        lastEmailOpenedAt: lastEmailOpenedAt
+          ? lastEmailOpenedAt.toISOString()
+          : null,
+        lastEmailClickedAt: lastEmailClickedAt
+          ? lastEmailClickedAt.toISOString()
+          : null,
       };
     });
   }

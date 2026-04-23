@@ -69,8 +69,10 @@ import {
   S3Uploader,
   TEMPORAL_TASK_QUEUE,
   WorkflowId,
+  buildDefaultSignature,
   createResendClient,
   createTwilioClient,
+  renderEmailWithSignature,
   SlackNotifier,
   checkCallWindow,
   type TwilioClient,
@@ -274,6 +276,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       agentRuns: repos.agentRuns,
       deals: repos.deals,
       organizations: repos.organizations,
+      workspaces: repos.workspaces,
       contacts: repos.contacts,
       memberships: repos.memberships,
       campaigns: repos.campaigns,
@@ -573,6 +576,7 @@ export interface ApprovalExecutorDeps {
   agentRuns: AgentRunRepository;
   deals: FuelDealRepository;
   organizations: OrganizationRepository;
+  workspaces: WorkspaceRepository;
   contacts: ContactRepository;
   memberships: ContactOrgMembershipRepository;
   campaigns: CampaignRepository;
@@ -824,10 +828,27 @@ async function applyEmailSend(
   const headers = inReplyTo
     ? { "In-Reply-To": inReplyTo, References: inReplyTo }
     : undefined;
+
+  // Signature + HTML rendering. The AI drafts plain text; the
+  // renderer turns it into {text, html} with an appended signature.
+  // Workspace override wins; defaults fall back to the workspace
+  // name so even a fresh tenant sends something better than a raw
+  // body with no sign-off.
+  const workspace = await deps.workspaces.findById(deps.db, tenantId);
+  const configured = workspace?.settings?.email_signature;
+  const defaults = buildDefaultSignature({
+    companyName: workspace?.name ?? null,
+  });
+  const rendered = renderEmailWithSignature({
+    body,
+    ...(configured ? { signature: configured } : {}),
+    defaults,
+  });
   const result = await deps.resend.send({
     to,
     subject,
-    text: body,
+    text: rendered.text,
+    html: rendered.html,
     ...(headers ? { headers } : {}),
   });
   if (result.error) {

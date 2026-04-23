@@ -49,6 +49,13 @@ const SettingsPatchSchema = z
     source_priority: z.array(z.string().min(1)).optional(),
     feature_rollout: z.record(z.number().min(0).max(100)).optional(),
     sharing_enabled: z.boolean().optional(),
+    email_signature: z
+      .object({
+        html: z.string().max(4000).optional(),
+        text: z.string().max(2000).optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
