@@ -27,6 +27,7 @@ import {
   WorkflowId,
   mintVoiceAccessToken,
   type S3Uploader,
+  type SlackNotifier,
   type TwilioClient,
 } from "@vex/integrations";
 import type { ResendClient, VoiceSdkConfig } from "./calls.module.js";
@@ -41,6 +42,7 @@ import {
   CALLS_REDIS_CLIENT,
   CALLS_RESEND_CLIENT,
   CALLS_S3_UPLOADER,
+  CALLS_SLACK_NOTIFIER,
   CALLS_SUMMARIES_REPO,
   CALLS_TASK_QUEUE,
   CALLS_TOUCHPOINTS_REPO,
@@ -206,6 +208,8 @@ export class CallsService {
     private readonly resend: ResendClient | null,
     @Inject(CALLS_REDIS_CLIENT)
     private readonly redis: Redis | null,
+    @Inject(CALLS_SLACK_NOTIFIER)
+    private readonly slack: SlackNotifier | null,
   ) {}
 
   /**
@@ -845,7 +849,7 @@ export class CallsService {
     reason?: string;
     initiatedBy?: string;
   }): Promise<{ approvalId: string; existed: boolean }> {
-    return withTenant(this.db, args.tenantId, async (tx) => {
+    const result = await withTenant(this.db, args.tenantId, async (tx) => {
       const callApproval = await this.approvals.findByWorkflowId(tx, args.workflowId);
       if (!callApproval) {
         throw new NotFoundException(`call ${args.workflowId} not found`);
@@ -878,7 +882,11 @@ export class CallsService {
         return p?.workflow_id === args.workflowId;
       });
       if (existing) {
-        return { approvalId: existing.id, existed: true };
+        return {
+          approvalId: existing.id,
+          existed: true as const,
+          slackPayload: null,
+        };
       }
 
       const payload: {
@@ -924,11 +932,36 @@ export class CallsService {
         },
       });
 
+      // Grab the minimal identity context for the Slack nudge. Looked
+      // up inside the tx so RLS scopes it; the actual Slack POST fires
+      // outside the tx (a Slack outage can't roll back the escalation).
+      // Org name isn't resolved here — we don't have an OrganizationRepo
+      // injected and the Slack payload degrades gracefully without it.
+      const contactId = payload.callee_contact_id;
+      const contact = contactId
+        ? await this.contacts.findById(tx, contactId)
+        : null;
+      const slackPayload = {
+        workflowId: args.workflowId,
+        callSid,
+        calleeName: contact?.fullName ?? null,
+        calleeOrg: null,
+        reason: args.reason ?? null,
+        durationAtRequestSeconds: durationAtRequest,
+      };
+
       this.log.log(
         `backup requested for call ${args.workflowId} (approval=${approval.id})`,
       );
-      return { approvalId: approval.id, existed: false };
+      return { approvalId: approval.id, existed: false as const, slackPayload };
     });
+
+    // Post-commit Slack nudge. Null slack → no-op; notifier logs any
+    // network error internally so the escalation flow never fails here.
+    if (this.slack && result.slackPayload && !result.existed) {
+      await this.slack.notifyBackupRequest(result.slackPayload);
+    }
+    return { approvalId: result.approvalId, existed: result.existed };
   }
 
   /**

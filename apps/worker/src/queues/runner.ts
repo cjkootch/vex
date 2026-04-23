@@ -72,6 +72,7 @@ import {
   createResendClient,
   createTwilioClient,
   SlackNotifier,
+  checkCallWindow,
   type TwilioClient,
 } from "@vex/integrations";
 
@@ -451,6 +452,55 @@ function buildAgentProcessor(
         }
 
         return record;
+      }
+      case "chat_started_notification": {
+        // Lightweight Slack ping fired the moment a visitor identifies
+        // themselves on the marketing chatbot. Doesn't run an LLM —
+        // just relays {who, where, link} so the operator can react
+        // in real time. The qualification pass on conversation.ended
+        // still runs separately and produces the hot-lead nudge.
+        const leadId = data.input?.["lead_id"];
+        const conversationId = data.input?.["conversation_id"];
+        if (typeof leadId !== "string" || typeof conversationId !== "string") {
+          throw new Error(
+            "chat_started_notification job missing lead_id or conversation_id",
+          );
+        }
+        if (slack) {
+          const contactEmail =
+            typeof data.input?.["contact_email"] === "string"
+              ? (data.input["contact_email"] as string)
+              : null;
+          const at = contactEmail?.lastIndexOf("@") ?? -1;
+          const domain =
+            contactEmail && at !== -1
+              ? contactEmail.slice(at + 1).trim().toLowerCase()
+              : null;
+          await slack.notifyNewChat({
+            leadId,
+            contactId: null,
+            contactName:
+              typeof data.input?.["contact_name"] === "string"
+                ? (data.input["contact_name"] as string)
+                : null,
+            contactEmail,
+            orgName: domain,
+            pageUrl:
+              typeof data.input?.["page_url"] === "string"
+                ? (data.input["page_url"] as string)
+                : null,
+            referrer:
+              typeof data.input?.["referrer"] === "string"
+                ? (data.input["referrer"] as string)
+                : null,
+          });
+        }
+        return {
+          kind: "chat_started_notification",
+          conversation_id: conversationId,
+          lead_id: leadId,
+          notified: Boolean(slack),
+        };
       }
       case "reactivation_batch": {
         const contactIds = data.input?.["contact_ids"];
@@ -1014,6 +1064,27 @@ async function applyOutboundCall(
       approval.id,
       "outbound_call",
       `missing ${missing.join(" + ")}`,
+    );
+    return;
+  }
+
+  // Call-window gate — never dial before 9am or after 8pm in the
+  // recipient's local tz. Derives the zone from the phone number
+  // country + NANP area code (Caribbean area codes map to their own
+  // islands). Outside the window → record the block and skip; the
+  // operator can re-approve once the window opens. This is a belt-
+  // and-suspenders layer on top of any workflow-level scheduling.
+  const callWindow = checkCallWindow({ to: toNumber });
+  if (!callWindow.ok) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "outbound_call",
+      callWindow.reason === "invalid_number"
+        ? `invalid_phone_for_window_check: ${toNumber}`
+        : `outside_call_window: local ${callWindow.localHour ?? "?"}:00 in ${callWindow.timezone ?? "unknown"}`,
     );
     return;
   }

@@ -40,6 +40,26 @@ export interface HotLeadSlackPayload {
   source: string | null;
 }
 
+export interface NewChatSlackPayload {
+  leadId: string;
+  contactId: string | null;
+  contactName: string | null;
+  contactEmail: string | null;
+  orgName: string | null;
+  pageUrl: string | null;
+  referrer: string | null;
+}
+
+export interface BackupRequestSlackPayload {
+  workflowId: string;
+  callSid: string | null;
+  calleeName: string | null;
+  calleeOrg: string | null;
+  reason: string | null;
+  /** Seconds elapsed since the call connected, at the moment backup was requested. */
+  durationAtRequestSeconds: number;
+}
+
 export type SlackNotifyResult =
   | { ok: true }
   | { ok: false; reason: "disabled" | "timeout" | "http_error" | "exception" };
@@ -66,30 +86,67 @@ export class SlackNotifier {
   }
 
   async notifyHotLead(payload: HotLeadSlackPayload): Promise<SlackNotifyResult> {
+    return this.post(
+      buildHotLeadBlocks(payload, this.config.appBaseUrl),
+      fallbackText(payload),
+      payload.leadId,
+    );
+  }
+
+  /**
+   * Lighter notification fired when a visitor opens the marketing
+   * chatbot and identifies themselves (name + email gate). Goes out
+   * before any qualification — every chat session is a lead-quality
+   * signal worth knowing about, not just the ones that get parsed
+   * as hot. Cold or qualified-later chats still produce one of these.
+   */
+  async notifyNewChat(payload: NewChatSlackPayload): Promise<SlackNotifyResult> {
+    return this.post(
+      buildNewChatBlocks(payload, this.config.appBaseUrl),
+      newChatFallback(payload),
+      payload.leadId,
+    );
+  }
+
+  /**
+   * Fires when the AI on an outbound voice call escalates via the
+   * escalate_to_human tool — the callee is live on the phone asking
+   * for a human. Urgent by design: loud header, a Join-call deep link
+   * that drops the operator into the conference immediately.
+   */
+  async notifyBackupRequest(
+    payload: BackupRequestSlackPayload,
+  ): Promise<SlackNotifyResult> {
+    return this.post(
+      buildBackupRequestBlocks(payload, this.config.appBaseUrl),
+      backupRequestFallback(payload),
+      payload.workflowId,
+    );
+  }
+
+  private async post(
+    blocks: Array<Record<string, unknown>>,
+    text: string,
+    leadId: string,
+  ): Promise<SlackNotifyResult> {
     if (!this.config.webhookUrl) {
       return { ok: false, reason: "disabled" };
     }
-
-    const body = {
-      blocks: buildHotLeadBlocks(payload, this.config.appBaseUrl),
-      text: fallbackText(payload),
-    };
-
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const response = await this.fetchImpl(this.config.webhookUrl, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ blocks, text }),
         signal: controller.signal,
       });
       if (!response.ok) {
-        const text = await response.text().catch(() => "");
+        const respText = await response.text().catch(() => "");
         this.log("warn", "slack webhook non-2xx", {
           status: response.status,
-          text: text.slice(0, 200),
-          lead_id: payload.leadId,
+          text: respText.slice(0, 200),
+          lead_id: leadId,
         });
         return { ok: false, reason: "http_error" };
       }
@@ -99,7 +156,7 @@ export class SlackNotifier {
       const reason = name === "AbortError" ? "timeout" : "exception";
       this.log("warn", `slack webhook ${reason}`, {
         error: (err as Error).message,
-        lead_id: payload.leadId,
+        lead_id: leadId,
       });
       return { ok: false, reason };
     } finally {
@@ -189,6 +246,142 @@ export function buildHotLeadBlocks(
   }
 
   return blocks;
+}
+
+/**
+ * Block Kit blocks for a brand-new visitor chat. Carries the visitor
+ * identity + page context — no qualification needed.
+ */
+export function buildNewChatBlocks(
+  p: NewChatSlackPayload,
+  appBaseUrl: string | null,
+): Array<Record<string, unknown>> {
+  const headline = p.contactName
+    ? p.orgName
+      ? `💬 New website chat — ${p.contactName} · ${p.orgName}`
+      : `💬 New website chat — ${p.contactName}`
+    : "💬 New website chat";
+
+  const contextBits = [
+    p.contactEmail ? `\`${p.contactEmail}\`` : null,
+    p.pageUrl ? `<${p.pageUrl}|${shortUrl(p.pageUrl)}>` : null,
+    p.referrer ? `_via ${shortUrl(p.referrer)}_` : null,
+  ].filter((v): v is string => !!v);
+
+  const deepLinkUrl =
+    appBaseUrl && p.contactId
+      ? `${appBaseUrl.replace(/\/$/, "")}/app/contacts/${p.contactId}`
+      : appBaseUrl
+        ? `${appBaseUrl.replace(/\/$/, "")}/app/inbox`
+        : null;
+
+  const blocks: Array<Record<string, unknown>> = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: headline.slice(0, 150), emoji: true },
+    },
+  ];
+  if (contextBits.length > 0) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: contextBits.join(" · ") }],
+    });
+  }
+  if (deepLinkUrl) {
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Open contact", emoji: true },
+          url: deepLinkUrl,
+          style: "primary",
+        },
+      ],
+    });
+  }
+  return blocks;
+}
+
+function newChatFallback(p: NewChatSlackPayload): string {
+  const who = p.contactName
+    ? p.orgName
+      ? `${p.contactName} @ ${p.orgName}`
+      : p.contactName
+    : (p.contactEmail ?? "unknown visitor");
+  return `💬 New website chat: ${who}`;
+}
+
+/**
+ * Block Kit for an urgent "AI needs you on this call" nudge. Loud
+ * header, caller-identity context line, elapsed time, and a single
+ * Join-call primary button deep-linking into /app/calls/:workflowId
+ * where the existing LiveListenPanel can drop the operator into
+ * the conference via Voice SDK.
+ */
+export function buildBackupRequestBlocks(
+  p: BackupRequestSlackPayload,
+  appBaseUrl: string | null,
+): Array<Record<string, unknown>> {
+  const who = p.calleeName
+    ? p.calleeOrg
+      ? `${p.calleeName} · ${p.calleeOrg}`
+      : p.calleeName
+    : (p.calleeOrg ?? "caller");
+  const headline = `📞 AI needs backup — ${who}`;
+
+  const mm = Math.floor(p.durationAtRequestSeconds / 60);
+  const ss = p.durationAtRequestSeconds % 60;
+  const elapsed = `${mm}:${ss.toString().padStart(2, "0")}`;
+
+  const contextBits = [
+    `live · ${elapsed} in`,
+    p.reason ? `_"${p.reason.slice(0, 120)}"_` : null,
+  ].filter((v): v is string => !!v);
+
+  const joinUrl = appBaseUrl
+    ? `${appBaseUrl.replace(/\/$/, "")}/app/calls/${p.workflowId}`
+    : null;
+
+  const blocks: Array<Record<string, unknown>> = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: headline.slice(0, 150), emoji: true },
+    },
+    {
+      type: "context",
+      elements: [{ type: "mrkdwn", text: contextBits.join(" · ") }],
+    },
+  ];
+  if (joinUrl) {
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "Join call", emoji: true },
+          url: joinUrl,
+          style: "danger",
+        },
+      ],
+    });
+  }
+  return blocks;
+}
+
+function backupRequestFallback(p: BackupRequestSlackPayload): string {
+  const who = p.calleeName ?? p.calleeOrg ?? "caller";
+  return `📞 AI needs backup on call with ${who}`;
+}
+
+function shortUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname === "/" ? "" : u.pathname;
+    return `${u.host}${path}`.slice(0, 80);
+  } catch {
+    return url.slice(0, 80);
+  }
 }
 
 /**

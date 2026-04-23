@@ -186,6 +186,33 @@ export interface VoiceBridgeConfig {
     callId: string;
   }) => Promise<void> | void;
   /**
+   * Invoked when the AI fires the `opt_out_contact` tool. Handler is
+   * responsible for persisting the contact.opt_out (via apps/api) and
+   * suppressing future outreach. After the handler resolves, the bridge
+   * lets the AI deliver the goodbye line and then closes the call.
+   */
+  onDoNotContact?: (args: {
+    reason: string;
+    workflowId: string;
+    tenantId: string;
+    callId: string;
+  }) => Promise<void> | void;
+  /**
+   * Invoked when the AI fires the `schedule_callback` tool because the
+   * callee asked to be called back at a specific time. Handler should
+   * create a `follow_up.schedule` approval (or equivalent DB write)
+   * so the commitment doesn't get lost in the transcript. Bridge
+   * does NOT close the call on this tool — the AI usually confirms
+   * the time and wraps naturally.
+   */
+  onScheduleCallback?: (args: {
+    dueAt: string;
+    note: string;
+    workflowId: string;
+    tenantId: string;
+    callId: string;
+  }) => Promise<void> | void;
+  /**
    * Sprint K was listen-only; Sprint L adds `"talkback"` — the AI
    * speaks back into the call via Twilio Stream's outbound media
    * messages. In talkback mode the session is configured with audio
@@ -227,6 +254,8 @@ export interface VoiceBridgeHandle {
     framesForwarded: number;
     framesReturned: number;
     escalations: number;
+    optOuts: number;
+    callbacksScheduled: number;
     closed: boolean;
   };
 }
@@ -264,6 +293,8 @@ export function startVoiceBridge(
   let framesForwarded = 0;
   let framesReturned = 0;
   let escalations = 0;
+  let optOuts = 0;
+  let callbacksScheduled = 0;
   let closed = false;
   let callId: string | null = null;
   let streamSid: string | null = null;
@@ -400,13 +431,21 @@ export function startVoiceBridge(
         });
         return;
       case "response.function_call_arguments.done":
-        if (event.name !== "escalate_to_human") {
-          log("warn", `unknown tool invoked: ${event.name}`, {
-            workflowId: config.workflowId,
-          });
+        if (event.name === "escalate_to_human") {
+          void handleEscalation(event);
           return;
         }
-        void handleEscalation(event);
+        if (event.name === "opt_out_contact") {
+          void handleOptOut(event);
+          return;
+        }
+        if (event.name === "schedule_callback") {
+          void handleScheduleCallback(event);
+          return;
+        }
+        log("warn", `unknown tool invoked: ${event.name}`, {
+          workflowId: config.workflowId,
+        });
         return;
     }
   });
@@ -494,9 +533,198 @@ export function startVoiceBridge(
     }
   }
 
+  async function handleOptOut(
+    event: Extract<
+      RealtimeServerEvent,
+      { type: "response.function_call_arguments.done" }
+    >,
+  ): Promise<void> {
+    let parsed: { reason?: unknown } = {};
+    try {
+      parsed = JSON.parse(event.arguments) as { reason?: unknown };
+    } catch {
+      log("warn", "opt-out args not JSON; using empty reason", {
+        workflowId: config.workflowId,
+      });
+    }
+    const reason =
+      typeof parsed.reason === "string"
+        ? parsed.reason
+        : "callee requested opt-out";
+    const toolOk = async (message: string): Promise<void> => {
+      realtime.send({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: event.call_id,
+          output: JSON.stringify({ ok: true, message }),
+        },
+      });
+      if (mode === "talkback") {
+        realtime.send({
+          type: "response.create",
+          response: { modalities: ["audio", "text"] },
+        });
+      }
+    };
+    try {
+      if (config.onDoNotContact) {
+        await config.onDoNotContact({
+          reason,
+          workflowId: config.workflowId,
+          tenantId: config.tenantId,
+          callId: callId ?? "unknown",
+        });
+      }
+      optOuts += 1;
+      await toolOk(
+        "Contact marked as opted out. Deliver a short, respectful goodbye, then the system will hang up.",
+      );
+      // Give the AI ~4s to deliver its goodbye line, then cleanly tear
+      // down the call. Hard-cap on the goodbye so an aborted audio
+      // response doesn't leave the line hanging open.
+      setTimeout(() => {
+        if (closed) return;
+        log("info", "opt-out closing call", {
+          workflowId: config.workflowId,
+          reason,
+        });
+        cleanup();
+      }, 4_000);
+      log("info", "opt-out fired", {
+        workflowId: config.workflowId,
+        reason,
+      });
+    } catch (err) {
+      realtime.send({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: event.call_id,
+          output: JSON.stringify({
+            ok: false,
+            error: (err as Error).message,
+            message:
+              "Opt-out write failed — still close the call warmly; the system will log the failure for manual processing.",
+          }),
+        },
+      });
+      if (mode === "talkback") {
+        realtime.send({
+          type: "response.create",
+          response: { modalities: ["audio", "text"] },
+        });
+      }
+      log("error", `opt-out handler threw: ${(err as Error).message}`, {
+        workflowId: config.workflowId,
+      });
+    }
+  }
+
+  async function handleScheduleCallback(
+    event: Extract<
+      RealtimeServerEvent,
+      { type: "response.function_call_arguments.done" }
+    >,
+  ): Promise<void> {
+    let parsed: { dueAt?: unknown; note?: unknown } = {};
+    try {
+      parsed = JSON.parse(event.arguments) as typeof parsed;
+    } catch {
+      log("warn", "schedule-callback args not JSON; dropping", {
+        workflowId: config.workflowId,
+      });
+    }
+    const dueAt = typeof parsed.dueAt === "string" ? parsed.dueAt : "";
+    const note = typeof parsed.note === "string" ? parsed.note : "";
+    const valid = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z$/.test(
+      dueAt,
+    );
+
+    const toolOk = async (message: string): Promise<void> => {
+      realtime.send({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: event.call_id,
+          output: JSON.stringify({ ok: true, message }),
+        },
+      });
+      if (mode === "talkback") {
+        realtime.send({
+          type: "response.create",
+          response: { modalities: ["audio", "text"] },
+        });
+      }
+    };
+    const toolErr = async (err: string): Promise<void> => {
+      realtime.send({
+        type: "conversation.item.create",
+        item: {
+          type: "function_call_output",
+          call_id: event.call_id,
+          output: JSON.stringify({
+            ok: false,
+            error: err,
+            message:
+              "Couldn't schedule the callback automatically. Confirm verbally and tell the callee the team will note it manually.",
+          }),
+        },
+      });
+      if (mode === "talkback") {
+        realtime.send({
+          type: "response.create",
+          response: { modalities: ["audio", "text"] },
+        });
+      }
+    };
+
+    if (!valid) {
+      log("warn", "schedule-callback got invalid dueAt", {
+        workflowId: config.workflowId,
+        dueAt,
+      });
+      await toolErr("invalid_dueAt_format");
+      return;
+    }
+    try {
+      if (config.onScheduleCallback) {
+        await config.onScheduleCallback({
+          dueAt,
+          note,
+          workflowId: config.workflowId,
+          tenantId: config.tenantId,
+          callId: callId ?? "unknown",
+        });
+      }
+      callbacksScheduled += 1;
+      await toolOk(
+        "Callback scheduled. Confirm the time back to the callee naturally and carry on.",
+      );
+      log("info", "schedule-callback fired", {
+        workflowId: config.workflowId,
+        dueAt,
+      });
+    } catch (err) {
+      log(
+        "error",
+        `schedule-callback handler threw: ${(err as Error).message}`,
+        { workflowId: config.workflowId },
+      );
+      await toolErr((err as Error).message);
+    }
+  }
+
   return {
     close: cleanup,
-    stats: () => ({ framesForwarded, framesReturned, escalations, closed }),
+    stats: () => ({
+      framesForwarded,
+      framesReturned,
+      escalations,
+      optOuts,
+      callbacksScheduled,
+      closed,
+    }),
   };
 }
 
@@ -550,28 +778,187 @@ export const ESCALATION_TOOL: RealtimeToolDefinition = {
 
 /**
  * Sprint L — talkback persona for the outbound fuel-lead qualifier.
- * The AI actively converses with the callee as a Vex sales agent.
- * Kept short so per-minute token cost stays predictable; specific
- * sub-questions live in the AI's working memory, not the system prompt.
+ * The AI actively converses with the callee as a Vex sales assistant.
+ *
+ * Design commitments (encoded in the prompt below):
+ *   - Mandatory AI + recording disclosure in the opening two sentences
+ *     (CA SB-1001, NY AI Bot Disclosure, IL 815 ILCS 505/2ZZ, UT AI
+ *     Policy Act, EU AI Act Art. 50 — all require clear disclosure).
+ *   - Scope boundaries — no pricing, no credit terms, no contractual
+ *     commitments; those require a human trader.
+ *   - Immediate DNC compliance — if the callee opts out, fire the tool
+ *     and end the call. No negotiation, no retention attempts.
+ *   - Identity confirmation before discussing any account-specific data.
+ *   - Language matching — switch to Spanish / French / French Creole if
+ *     the callee does (Caribbean desk uses all three).
+ *   - Escalation path on confusion, frustration, or explicit human-ask.
+ *   - Goal-gradient summary at close so the transcript has an anchor.
+ *   - One question at a time, under 15s turns, barge-in friendly.
  */
 export const FUEL_LEAD_QUALIFIER_INSTRUCTIONS = `
-You are Vex, an AI sales assistant for Vector Trade Capital, a fuel trading company. You are on a live phone call with a lead who submitted an inquiry on the company's website.
+You are Vex, an AI assistant calling on behalf of Vector Trade Capital (VTC), a Caribbean physical commodity trading desk (fuel, food, agri). You are on a live outbound phone call with a lead who submitted an inquiry on our website.
 
-Your job: have a natural, warm, concise conversation to qualify the lead. Learn:
-- Approximate monthly fuel volume (gallons or barrels)
-- Product grades of interest (diesel, gasoline, jet, renewables, etc.)
-- Current supplier situation and any pain points
-- Timeline — when are they looking to start buying?
+## Opening (first 2 sentences — say BOTH, in order)
 
-Guidelines:
-- Start with a brief greeting and confirm they submitted the inquiry.
-- Ask ONE question at a time. Listen — don't monologue.
-- Keep every response under 15 seconds.
-- Match their energy: if they're curt, be curt; if they're chatty, be warm.
-- If they ask a question you don't know the answer to, say "I'll flag that for our team to follow up" — don't make up specifics about pricing or contracts.
-- If the caller asks to speak to a human, say "Let me connect you right now" and fire the escalate_to_human tool.
-- If the call goes quiet for 8+ seconds, gently check: "Are you still there?"
-- Close with a clear next step: "I'll have someone from our team send you a follow-up email within the hour. Sound good?" — then say goodbye.
+1. "Hi, this is Vex — I'm an AI assistant calling on behalf of Vector Trade Capital about [product/topic from their inquiry]."
+2. "This call may be recorded for quality and compliance. Is this a good time for a quick 90 seconds?"
 
-Never repeat the full phrase "Vector Trade Capital" more than once. Never read a script verbatim.
+Never skip, soften, or bury the AI disclosure. If the callee asks "are you real / a bot / a person?", answer immediately and honestly: "I'm an AI assistant — a human trader will follow up by email after this call."
+
+## Your job
+
+Have a natural, warm, concise conversation to qualify the lead. Learn — at most — these four things:
+- Approximate monthly volume (gallons, barrels, tonnes, whatever fits the product)
+- Product grade / SKU of interest (diesel, gasoline, jet, ULSD, rice, cooking oil, etc.)
+- Current supplier situation and pain points
+- Timeline — when are they looking to start moving volume?
+
+Ask ONE question at a time. Listen. Keep every turn under 15 seconds. Match the callee's energy: curt → curt, chatty → warm.
+
+## Language match
+
+If the callee speaks Spanish, French, or French Creole (Kreyòl), switch to that language immediately and stay in it. Don't announce the switch — just switch. If they mix languages, mirror them.
+
+## Hard scope boundaries — NEVER commit to any of these
+
+- No pricing, spreads, or quotes — EVER. "I can't quote pricing on this call — our trading desk will follow up with indicative pricing within one business day."
+- No credit terms or payment structures ("I'll have our team walk you through our standard terms.")
+- No contractual commitments or delivery windows ("A trader will confirm availability with a firm offer.")
+- No OFAC / compliance determinations ("Our compliance team handles that review before we can quote.")
+
+If they push for any of these, redirect to the email follow-up. Do NOT invent specifics.
+
+## Identity check — before discussing any existing account specifics
+
+If the callee mentions an existing relationship ("we have an open quote", "about our last order", etc.), confirm identity first:
+- "Before I pull anything up — can you confirm the company you're calling from and your role there?"
+
+Never share account or deal specifics until confirmed.
+
+## Do-not-contact / opt-out handling
+
+If you hear ANY of: "take me off your list", "don't call me again", "unsubscribe", "stop contacting me", "I'm going to sue", "this is harassment" — do ALL of the following in order:
+
+1. Acknowledge in one sentence: "Understood — I'll make sure we don't contact you again."
+2. Fire the \`opt_out_contact\` tool with a brief \`reason\`.
+3. Say a brief, respectful goodbye and end the call.
+
+Do NOT argue. Do NOT try to retain. Do NOT ask what changed. The opt-out is final.
+
+## Human handoff
+
+If any of these happen, say "Let me connect you right now — one moment" and fire \`escalate_to_human\`:
+- "Can I speak to a human / person / real agent / your manager"
+- The callee sounds frustrated after 2+ clarifications on the same point
+- Any legal, compliance, or urgent-delivery question beyond the scope above
+- Repeated "are you a bot" checks after you've already disclosed
+
+After firing escalate_to_human, STAY ON THE LINE and keep the callee comfortable:
+- Acknowledge the handoff: "Got it — I'm getting a teammate for you now. Usually takes about a minute."
+- Keep the conversation warm while you wait. Ask natural questions related to what they came to discuss — volume, timeline, pain points — but do NOT re-ask anything they've already answered. Summarize what you've heard and confirm it.
+- If 60 seconds pass and no teammate has joined, offer a callback instead:
+    "Apologies — my teammate's still on another line. Can I get you set up for a callback at a specific time instead? What works for you?"
+  Then use \`schedule_callback\` as described above and wrap warmly. Do NOT just keep waiting indefinitely.
+
+**When a teammate joins** (you'll know because you'll hear a new voice or receive a system hand-off prompt), deliver a **concise 10-second briefing** and drop:
+1. "Hey — this is [callee name from callee_org]. They came in about [topic]."
+2. "Key numbers so far: [volume, timeline, any price/terms mentioned]."
+3. "They're asking about [specific thing]."
+4. Say "All yours," then stop talking. Don't linger.
+
+Keep the briefing under 30 seconds. Don't editorialize. Don't repeat what the callee will say themselves in the next 10 seconds.
+
+## Silence + call-back
+
+If the line goes quiet for 8+ seconds, gently check: "Are you still there?" Try once. If still quiet after a second try, politely close: "I'll have our team follow up by email — thank you for your time."
+
+If the callee says "call me back later" or "not a good time":
+1. Ask for a specific time: "What's a better time? Morning or afternoon, and roughly when?"
+2. Fire the \`schedule_callback\` tool with that time as a UTC ISO-8601 timestamp (convert from their local tz) and a short note of what they want to discuss.
+3. Confirm back verbally: "Great — I've got us down for Thursday at 2pm your time. Talk then."
+4. End warmly.
+
+## Close — always deliver this in the last 20 seconds
+
+Summarise what you heard ("So to recap: you're moving about 200k gallons a month of ULSD into Point Lisas starting Q3 — does that sound right?"), state a specific next step with a time window ("I'll have Mike from our trading desk email you today with indicative pricing"), and say goodbye.
+
+## Voice style
+
+- Warm, professional, unhurried. You're not a telemarketer.
+- Use brief acknowledgments while they're talking — "mm-hmm", "got it", "okay" — so the line doesn't feel dead. Don't overuse; one backchannel per beat is plenty.
+- Avoid corporate jargon ("synergy", "leverage", "solutions") and AI tells ("I understand you are interested in...").
+- Never repeat the full phrase "Vector Trade Capital" more than once per call — after the intro, use "we" or "our trading desk".
+- Barge-in friendly — if the callee interrupts, stop talking immediately and listen. Don't finish your sentence.
+- Contractions over formal ("we're" not "we are", "I'll" not "I will"). Phone voice, not legal brief.
 `.trim();
+
+/**
+ * Short script the AI speaks into a voicemail box when Twilio's AMD
+ * reports the call was answered by a machine. Kept under 15 seconds at
+ * a normal speaking cadence — leaving a single, specific call-to-action
+ * and identifying as AI up-front to stay compliant with disclosure laws.
+ */
+export const VOICEMAIL_INSTRUCTIONS = `
+Leave a single short voicemail, then stop.
+
+Script (say verbatim, substituting the product/topic from the inquiry):
+"Hi, this is Vex — an AI assistant calling on behalf of Vector Trade Capital about your inquiry on [product]. I'll follow up by email within the hour with next steps, or feel free to reply to that email with a better time to talk. Thanks, and have a great day."
+
+Do not ask questions. Do not pause waiting for a response. Say the script once, then the system will hang up.
+`.trim();
+
+/**
+ * Tool the AI fires when the callee expresses intent to opt out of
+ * contact. The handler is responsible for persisting the opt-out +
+ * suppressing future outreach. The bridge auto-closes the call after
+ * the handler resolves so the AI doesn't keep the line open.
+ */
+export const OPT_OUT_TOOL: RealtimeToolDefinition = {
+  type: "function",
+  name: "opt_out_contact",
+  description:
+    "Mark this contact as opted out of all outbound contact. Fire IMMEDIATELY when the callee says take me off your list / don't call me / unsubscribe / stop contacting me / any legal threat or harassment complaint. Do not argue, do not try to retain.",
+  parameters: {
+    type: "object",
+    properties: {
+      reason: {
+        type: "string",
+        description:
+          "One-sentence reason for the opt-out (under 20 words). Quote the callee if useful.",
+      },
+    },
+    required: ["reason"],
+  },
+};
+
+/**
+ * Tool the AI fires when the callee asks to be called back at a
+ * specific time ("call me back at 3pm", "try me tomorrow morning",
+ * "not a good time — reach out next week"). Creates a follow-up
+ * commitment in the Vex queue so the promise doesn't die in the
+ * transcript. The bridge does NOT end the call — the AI confirms
+ * the time verbally and either continues the conversation or wraps
+ * naturally.
+ */
+export const SCHEDULE_CALLBACK_TOOL: RealtimeToolDefinition = {
+  type: "function",
+  name: "schedule_callback",
+  description:
+    "Schedule a follow-up call at a specific future time. Fire when the callee asks to be reached later or says this isn't a good time but offers a better window. Convert natural phrasing to a UTC ISO-8601 timestamp — assume the callee's local tz from earlier context. Prefer rounding to the top of the hour when they say 'afternoon' or 'tomorrow'.",
+  parameters: {
+    type: "object",
+    properties: {
+      dueAt: {
+        type: "string",
+        description:
+          "ISO-8601 UTC timestamp when the callback is due, e.g. '2026-04-23T15:00:00Z'. Must match that format exactly.",
+      },
+      note: {
+        type: "string",
+        description:
+          "One-sentence context for the person picking up the callback (under 30 words). What does the callee want to discuss?",
+      },
+    },
+    required: ["dueAt", "note"],
+  },
+};

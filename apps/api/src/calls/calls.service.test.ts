@@ -80,6 +80,7 @@ function buildService(overrides: {
     { insert: () => ({ id: "01HSTUBTP0" }) } as never, // touchpoints
     null, // resend
     null, // redis
+    null, // slack
   );
 
   return {
@@ -243,6 +244,7 @@ describe("CallsService.requestHumanBackup", () => {
       null,
       "",
       { insert: () => ({ id: "01HSTUBTP0" }) } as never,
+      null,
       null,
       null,
     );
@@ -446,6 +448,7 @@ describe("CallsService.mintJoinToken", () => {
       voiceSdk,
       "",
       { insert: () => ({ id: "01HSTUBTP0" }) } as never,
+      null,
       null,
       null,
     );

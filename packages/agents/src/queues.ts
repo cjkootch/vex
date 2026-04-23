@@ -47,6 +47,7 @@ export type AgentJobKind =
   | "research"
   | "follow_up"
   | "lead_qualification"
+  | "chat_started_notification"
   | "reactivation_batch"
   | "ofac_screening"
   | "freight_market"

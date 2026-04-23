@@ -14,6 +14,7 @@ import type {
 import type { Redis } from "ioredis";
 import type {
   S3Uploader,
+  SlackNotifier,
   TwilioClient,
   TwilioVoiceSdkDeps,
   createResendClient,
@@ -34,6 +35,7 @@ import {
   CALLS_EVENTS_REPO,
   CALLS_REDIS_CLIENT,
   CALLS_S3_UPLOADER,
+  CALLS_SLACK_NOTIFIER,
   CALLS_SUMMARIES_REPO,
   CALLS_TASK_QUEUE,
   CALLS_TOUCHPOINTS_REPO,
@@ -103,6 +105,12 @@ export interface CallsModuleConfig {
    * the in-memory store when null — demo calls still work.
    */
   redis: Redis | null;
+  /**
+   * Optional Slack notifier. When set, AI escalations on outbound
+   * calls post a "Join call" nudge. Null when SLACK_WEBHOOK_URL is
+   * absent — every notify becomes a no-op.
+   */
+  slack: SlackNotifier | null;
 }
 
 @Module({})
@@ -131,6 +139,7 @@ export class CallsModule {
         { provide: CALLS_APP_BASE_URL, useFactory: () => config.appBaseUrl },
         { provide: CALLS_RESEND_CLIENT, useFactory: () => config.resend },
         { provide: CALLS_REDIS_CLIENT, useFactory: () => config.redis },
+        { provide: CALLS_SLACK_NOTIFIER, useFactory: () => config.slack },
         CallsService,
       ],
     };
