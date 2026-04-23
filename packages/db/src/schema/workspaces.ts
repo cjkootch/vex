@@ -22,6 +22,21 @@ export interface WorkspaceSettings {
   feature_rollout?: Record<string, number>;
   /** Optional — absent on pre-Sprint-13 rows. Treat undefined as `false`. */
   sharing_enabled?: boolean;
+  /**
+   * Operator-configured outbound email signature. When absent, the send
+   * path generates a sensible default from workspace + owner context.
+   * HTML is appended to the rich-text part of the email; text is
+   * appended to the plain-text part. Both are optional; either (or both)
+   * can be user-customised without touching the other.
+   */
+  email_signature?: {
+    html?: string;
+    text?: string;
+    /** ISO-8601 timestamp of the last save. */
+    updated_at?: string;
+    /** User id of the last saver, or null for seed / default-populated values. */
+    updated_by?: string | null;
+  };
 }
 
 /**

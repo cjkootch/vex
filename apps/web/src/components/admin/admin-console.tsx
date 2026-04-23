@@ -9,6 +9,7 @@ import { RolloutTab } from "./rollout-tab";
 import { EvalsTab } from "./evals-tab";
 import { OfacTab } from "./ofac-tab";
 import { PortsTab } from "./ports-tab";
+import { EmailTab } from "./email-tab";
 
 export interface WorkspaceSettings {
   source_priority: string[];
@@ -17,9 +18,23 @@ export interface WorkspaceSettings {
   kill_all_agents: boolean;
   feature_rollout?: Record<string, number>;
   sharing_enabled?: boolean;
+  email_signature?: {
+    html?: string;
+    text?: string;
+    updated_at?: string;
+    updated_by?: string | null;
+  };
 }
 
-type TabKey = "agents" | "health" | "cost" | "rollout" | "evals" | "ofac" | "ports";
+type TabKey =
+  | "agents"
+  | "health"
+  | "cost"
+  | "rollout"
+  | "evals"
+  | "ofac"
+  | "ports"
+  | "email";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "agents", label: "Agents" },
@@ -29,6 +44,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "evals", label: "Evals" },
   { key: "ofac", label: "OFAC" },
   { key: "ports", label: "Ports" },
+  { key: "email", label: "Email" },
 ];
 
 /**
@@ -154,6 +170,9 @@ export function AdminConsole() {
       {activeTab === "evals" ? <EvalsTab /> : null}
       {activeTab === "ofac" ? <OfacTab /> : null}
       {activeTab === "ports" ? <PortsTab /> : null}
+      {activeTab === "email" ? (
+        <EmailTab settings={settings} onPatch={patchSettings} />
+      ) : null}
     </main>
   );
 }

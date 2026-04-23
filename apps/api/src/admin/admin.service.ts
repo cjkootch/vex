@@ -46,6 +46,9 @@ export interface SettingsPatch {
   source_priority?: string[] | undefined;
   feature_rollout?: Record<string, number> | undefined;
   sharing_enabled?: boolean | undefined;
+  email_signature?:
+    | { html?: string | undefined; text?: string | undefined }
+    | undefined;
 }
 
 export interface HealthMetrics {
@@ -151,7 +154,7 @@ export class AdminService {
       throw new ForbiddenException("cross-tenant settings write refused");
     }
     const current = await this.getSettings(workspaceId);
-    const next: WorkspaceSettings = mergeSettings(current, patch);
+    const next: WorkspaceSettings = mergeSettings(current, patch, actorUserId);
     // Same RLS story as getSettings — the update needs the tenant_id
     // session var, so the UPDATE has to run via tx. Route through the
     // repo so the test mock matches.
@@ -340,6 +343,7 @@ export class AdminService {
 function mergeSettings(
   current: WorkspaceSettings,
   patch: SettingsPatch,
+  actorUserId?: string,
 ): WorkspaceSettings {
   const next: WorkspaceSettings = { ...current };
   if (patch.enabled_agents !== undefined) next.enabled_agents = patch.enabled_agents;
@@ -348,6 +352,19 @@ function mergeSettings(
   if (patch.source_priority !== undefined) next.source_priority = patch.source_priority;
   if (patch.feature_rollout !== undefined) next.feature_rollout = patch.feature_rollout;
   if (patch.sharing_enabled !== undefined) next.sharing_enabled = patch.sharing_enabled;
+  if (patch.email_signature !== undefined) {
+    const merged: NonNullable<WorkspaceSettings["email_signature"]> = {
+      updated_at: new Date().toISOString(),
+      updated_by: actorUserId ?? null,
+    };
+    if (patch.email_signature.html !== undefined) {
+      merged.html = patch.email_signature.html;
+    }
+    if (patch.email_signature.text !== undefined) {
+      merged.text = patch.email_signature.text;
+    }
+    next.email_signature = merged;
+  }
   return next;
 }
 

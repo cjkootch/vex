@@ -67,6 +67,14 @@ export {
   type InboundEmailBody,
 } from "./resend.js";
 export {
+  renderEmailWithSignature,
+  buildDefaultSignature,
+  type EmailSignature,
+  type EmailRenderInput,
+  type EmailRenderOutput,
+  type DefaultSignatureInput,
+} from "./email-format.js";
+export {
   createTavilyClient,
   type TavilyClient,
   type TavilyDeps,
