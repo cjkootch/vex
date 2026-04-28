@@ -6,17 +6,24 @@ import type {
   ContactRepository,
   DocumentRepository,
   EventRepository,
+  FuelDealMarketContextRepository,
   LeadRepository,
   OrganizationProductRepository,
   OrganizationRepository,
+  ProcurSnapshotRepository,
   RetrievalService,
+  SignalRepository,
   SummaryRepository,
   ThreadRepository,
   TouchpointRepository,
   Tx,
   WorkspaceRepository,
 } from "@vex/db";
-import type { AnthropicAdapter, OpenAIAdapter } from "@vex/integrations";
+import type {
+  AnthropicAdapter,
+  OpenAIAdapter,
+  ProcurClient,
+} from "@vex/integrations";
 import type { CostLedger } from "@vex/telemetry";
 import type { ProposedAction } from "@vex/integrations";
 
@@ -50,6 +57,19 @@ export interface AgentContext {
   agentRuns: AgentRunRepository;
   workspaces: WorkspaceRepository;
   documents: DocumentRepository;
+  signals: SignalRepository;
+  /**
+   * Procur HTTP client. Always present on the runner; isEnabled() is
+   * false when env is unconfigured. Agents that call procur should
+   * check `isEnabled()` and degrade gracefully when false.
+   */
+  procur: ProcurClient;
+  /** Cache layer for procur intelligence — see ProcurEnrichmentAgent. */
+  procurSnapshots: ProcurSnapshotRepository;
+  /** Per-deal market context populated by DealMarketContextAgent. */
+  fuelDealMarketContext: FuelDealMarketContextRepository;
+  /** Snapshot freshness window. Fed from PROCUR_CACHE_TTL_DAYS env. */
+  procurCacheTtlDays: number;
 }
 
 /**

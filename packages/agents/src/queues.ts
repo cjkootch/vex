@@ -52,7 +52,8 @@ export type AgentJobKind =
   | "ofac_screening"
   | "freight_market"
   | "port_intelligence"
-  | "email_reply_draft";
+  | "email_reply_draft"
+  | "procur_enrichment";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;
