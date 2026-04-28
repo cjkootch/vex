@@ -9,6 +9,7 @@ import {
   LeadQualificationAgent,
   OFACScreeningAgent,
   PortIntelligenceAgent,
+  ProcurEnrichmentAgent,
   ReactivationBatchAgent,
   ResearchAgent,
   backpressureEngaged,
@@ -41,6 +42,7 @@ import {
   ContactRepository,
   DocumentRepository,
   EventRepository,
+  FuelDealMarketContextRepository,
   FuelDealRepository,
   LeadRepository,
   OrganizationProductRepository,
@@ -48,9 +50,11 @@ import {
   OrganizationRepository,
   PostgresCostLedger,
   PostgresCostLedgerRepository,
+  ProcurSnapshotRepository,
   RawEventRepository,
   FollowUpRepository,
   RetrievalService,
+  SignalRepository,
   SummaryRepository,
   ThreadRepository,
   TouchpointRepository,
@@ -70,6 +74,7 @@ import {
   TEMPORAL_TASK_QUEUE,
   WorkflowId,
   buildDefaultSignature,
+  createProcurClient,
   createResendClient,
   createTwilioClient,
   renderEmailWithSignature,
@@ -135,6 +140,18 @@ export interface QueueRunnerOptions {
   slack?: {
     webhookUrl: string;
     appBaseUrl: string | null;
+  } | null;
+  /**
+   * Procur HTTP API integration. Both fields required to enable;
+   * absence means every procur-dependent agent runs in disabled mode
+   * (returns `{ok:false, reason:"disabled"}` from every call). Lifted
+   * from `PROCUR_API_BASE_URL` / `PROCUR_API_TOKEN` in main.ts.
+   */
+  procur?: {
+    baseUrl: string | null;
+    apiToken: string | null;
+    timeoutMs?: number;
+    cacheTtlDays?: number;
   } | null;
   /**
    * Twilio callback URLs used by the Temporal-less outbound_call
@@ -216,6 +233,13 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
   const retrieval = new RetrievalService();
 
   const costLedgerRepo = new PostgresCostLedgerRepository();
+  const procurClient = createProcurClient({
+    baseUrl: options.procur?.baseUrl ?? null,
+    apiToken: options.procur?.apiToken ?? null,
+    ...(options.procur?.timeoutMs
+      ? { timeoutMs: options.procur.timeoutMs }
+      : {}),
+  });
   const runner = new AgentRunner({
     db,
     workspaces: repos.workspaces,
@@ -236,6 +260,13 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     costLedger,
     costLedgerRepo,
     retrieval,
+    signals: repos.signals,
+    procur: procurClient,
+    procurSnapshots: repos.procurSnapshots,
+    fuelDealMarketContext: repos.fuelDealMarketContext,
+    ...(options.procur?.cacheTtlDays
+      ? { procurCacheTtlDays: options.procur.cacheTtlDays }
+      : {}),
   });
 
   const slackNotifier = options.slack
@@ -561,6 +592,22 @@ function buildAgentProcessor(
         }
         return runner.run(
           new EmailReplyDraftAgent({ touchpointId: touchpointIdRaw }),
+          { workspaceId: data.workspace_id },
+        );
+      }
+      case "procur_enrichment": {
+        const orgIdRaw = data.input?.["organization_id"];
+        if (typeof orgIdRaw !== "string") {
+          throw new Error(
+            "procur_enrichment job missing input.organization_id",
+          );
+        }
+        const force = data.input?.["force"] === true;
+        return runner.run(
+          new ProcurEnrichmentAgent({
+            organizationId: orgIdRaw,
+            ...(force ? { force: true } : {}),
+          }),
           { workspaceId: data.workspace_id },
         );
       }
@@ -3380,5 +3427,8 @@ function buildRepos() {
     campaigns: new CampaignRepository(),
     campaignSteps: new CampaignStepRepository(),
     campaignEnrollments: new CampaignEnrollmentRepository(),
+    signals: new SignalRepository(),
+    procurSnapshots: new ProcurSnapshotRepository(),
+    fuelDealMarketContext: new FuelDealMarketContextRepository(),
   };
 }

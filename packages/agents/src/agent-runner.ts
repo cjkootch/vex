@@ -9,17 +9,24 @@ import {
   type Db,
   type DocumentRepository,
   type EventRepository,
+  type FuelDealMarketContextRepository,
   type LeadRepository,
   type OrganizationProductRepository,
   type OrganizationRepository,
+  type ProcurSnapshotRepository,
   type RetrievalService,
+  type SignalRepository,
   type SummaryRepository,
   type ThreadRepository,
   type TouchpointRepository,
   type Tx,
   type WorkspaceRepository,
 } from "@vex/db";
-import type { AnthropicAdapter, OpenAIAdapter } from "@vex/integrations";
+import type {
+  AnthropicAdapter,
+  OpenAIAdapter,
+  ProcurClient,
+} from "@vex/integrations";
 import type { CostLedger } from "@vex/telemetry";
 import { recordAgentSkipped } from "@vex/telemetry";
 import { ApprovalGate } from "./approval-gate.js";
@@ -84,6 +91,16 @@ export interface AgentRunnerDeps {
    */
   costLedgerRepo?: CostLedgerRepository;
   retrieval: RetrievalService;
+  signals: SignalRepository;
+  /**
+   * Procur HTTP client. Always present; isEnabled() short-circuits
+   * agents that depend on procur when env is unconfigured.
+   */
+  procur: ProcurClient;
+  procurSnapshots: ProcurSnapshotRepository;
+  fuelDealMarketContext: FuelDealMarketContextRepository;
+  /** Snapshot freshness window. Default 7. */
+  procurCacheTtlDays?: number;
 }
 
 export interface AgentRunRequest {
@@ -202,6 +219,11 @@ export class AgentRunner {
         approvals: this.deps.approvals,
         agentRuns: this.deps.agentRuns,
         workspaces: this.deps.workspaces,
+        signals: this.deps.signals,
+        procur: this.deps.procur,
+        procurSnapshots: this.deps.procurSnapshots,
+        fuelDealMarketContext: this.deps.fuelDealMarketContext,
+        procurCacheTtlDays: this.deps.procurCacheTtlDays ?? 7,
       };
 
       let output: AgentOutput;

@@ -94,6 +94,10 @@ function buildDeps(workspaceSettings: {
       openai: {} as never,
       costLedger: {} as never,
       retrieval: {} as never,
+      signals: {} as never,
+      procur: { isEnabled: () => false } as never,
+      procurSnapshots: {} as never,
+      fuelDealMarketContext: {} as never,
     },
   };
 }

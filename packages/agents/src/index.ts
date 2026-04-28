@@ -108,6 +108,7 @@ export {
   ReactivationBatchAgent,
   VesselIntelligenceAgent,
   EmailReplyDraftAgent,
+  ProcurEnrichmentAgent,
   sanctionsExposureRiskFor,
   type AgentContext,
   type AgentOutput,
@@ -120,6 +121,7 @@ export {
   type ReactivationBatchInput,
   type VesselIntelligenceInput,
   type EmailReplyDraftAgentInput,
+  type ProcurEnrichmentInput,
 } from "./agents/index.js";
 export {
   evaluateGate,

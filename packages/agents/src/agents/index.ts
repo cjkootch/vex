@@ -33,3 +33,7 @@ export {
   EmailReplyDraftAgent,
   type EmailReplyDraftAgentInput,
 } from "./email-reply-draft.js";
+export {
+  ProcurEnrichmentAgent,
+  type ProcurEnrichmentInput,
+} from "./procur-enrichment.js";

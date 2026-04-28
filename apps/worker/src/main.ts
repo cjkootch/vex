@@ -173,6 +173,15 @@ async function main(): Promise<void> {
           appBaseUrl: env.WEB_BASE_URL ?? env.APP_BASE_URL ?? null,
         }
       : null,
+    procur:
+      env.PROCUR_API_BASE_URL && env.PROCUR_API_TOKEN
+        ? {
+            baseUrl: env.PROCUR_API_BASE_URL,
+            apiToken: env.PROCUR_API_TOKEN,
+            timeoutMs: env.PROCUR_TIMEOUT_MS,
+            cacheTtlDays: env.PROCUR_CACHE_TTL_DAYS,
+          }
+        : null,
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
   // Sprint 12 — the OutboundCallWorkflow needs Twilio + S3 + reachable
