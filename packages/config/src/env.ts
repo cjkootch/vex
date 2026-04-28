@@ -225,6 +225,26 @@ export const EnvSchema = z.object({
    */
   SLACK_WEBHOOK_URL: z.string().url().optional(),
 
+  /**
+   * Procur HTTP API integration. When BOTH variables are set, vex's
+   * ProcurClient + ProcurEnrichmentAgent + DealMarketContextAgent +
+   * CampaignTargetingAgent + SupplierSourcingAgent become live and
+   * call into procur for counterparty intelligence + market context.
+   * When either is unset, every procur call short-circuits to
+   * `{ ok: false, reason: "disabled" }` and downstream agents
+   * gracefully degrade to internal-data-only behaviour.
+   *
+   * Format:
+   *   PROCUR_API_BASE_URL=https://procur.example.com/api
+   *   PROCUR_API_TOKEN=<long-lived bearer token issued by procur>
+   */
+  PROCUR_API_BASE_URL: z.string().url().optional(),
+  PROCUR_API_TOKEN: z.string().min(1).optional(),
+  /** Per-request timeout for procur calls. Default 10s. */
+  PROCUR_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+  /** Snapshot freshness window. Default 7 days. */
+  PROCUR_CACHE_TTL_DAYS: z.coerce.number().int().positive().default(7),
+
   // Temporal
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
   TEMPORAL_NAMESPACE: z.string().default("default"),

@@ -81,6 +81,25 @@ export {
   type TavilySearchResponse,
   type TavilySearchResult,
 } from "./tavily.js";
+export {
+  createProcurClient,
+  buildProcurQueryHash,
+  type ProcurClient,
+  type ProcurClientConfig,
+  type ProcurResult,
+  type SupplierAnalysisResult,
+  type SupplierProfile,
+  type SupplierDisambiguation,
+  type SupplierNotFound,
+  type SupplierPricingAnalysisResult,
+  type RecentCargoesResult,
+  type OfferEvaluationResult,
+  type FindBuyersResult,
+  type FindSuppliersForTenderResult,
+  type FindDistressedSuppliersResult,
+  type BuyerPricingAnalysisResult,
+  type EntityNewsEvent,
+} from "./procur.js";
 export { pricing, tokensToUsdMicros, unitsToUsdMicros } from "./pricing.js";
 export {
   SlackNotifier,
