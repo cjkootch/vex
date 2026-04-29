@@ -16,7 +16,7 @@ import type {
   ToolRunner,
 } from "@vex/integrations";
 import { QUERY_SYSTEM_PROMPT, renderStrategyPreamble, ActionDescriptor } from "@vex/agents";
-import { createId, TenantId, type AgentRunId } from "@vex/domain";
+import { createId, isUlid, TenantId, type AgentRunId } from "@vex/domain";
 import { manifestFallback, validateManifest, type ViewManifest } from "@vex/ui";
 import type { CostLedger } from "@vex/telemetry";
 import { pricing, unitsToUsdMicros } from "@vex/integrations";
@@ -28,6 +28,7 @@ import {
   RETRIEVAL_SERVICE,
   TAVILY_CLIENT,
 } from "./tokens.js";
+import { extractOrgActionsFromPanels } from "./profile-panel-extractor.js";
 
 export interface HistoryTurn {
   role: "user" | "assistant";
@@ -284,6 +285,27 @@ export class QueryService {
         ? `${PREFIX}${rawAnswer}`
         : rawAnswer;
 
+    // Server-side panel-to-action extractor (Path B). The chat model
+    // is reliable at producing a profile panel with the right
+    // structured facts, but unreliable at also emitting the parallel
+    // proposed_actions JSON to persist them. Even with v7.22's
+    // mandatory rule the model skips action emission ~half the time
+    // and lies about completion. This step closes the gap
+    // deterministically: scan profile panels for known fields, emit
+    // the matching T1 actions, append to the model's list. Dedupes
+    // against anything the model DID emit so we don't double-tag.
+    const extractedActions = extractOrgActionsFromPanels({
+      panels: manifest.panels ?? [],
+      existingActions: queryResult.proposedActions,
+      isValidUlid: isUlid,
+    });
+    const allActions = [...queryResult.proposedActions, ...extractedActions];
+    if (extractedActions.length > 0) {
+      this.log.log(
+        `chat: extracted ${extractedActions.length} T1 actions from profile panels (model emitted ${queryResult.proposedActions.length})`,
+      );
+    }
+
     // Persist T2+ proposals as pending approvals so the chat-proposed
     // side effects (email.send, crm.create_deal, outbound_call, etc.)
     // actually land in /app/approvals where the operator can review
@@ -291,7 +313,7 @@ export class QueryService {
     // "I'll set up the call" without any row ever reaching the DB
     // and the approval-executor worker had nothing to act on.
     const normalizedActions = enforceAiModeWhenVexIsTheCaller(
-      queryResult.proposedActions,
+      allActions,
       input.message,
     );
     // Multi-action requests land as one approval, not N. The operator
