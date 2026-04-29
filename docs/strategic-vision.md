@@ -1,3 +1,28 @@
+> **IMPLEMENTATION STATUS — refreshed 2026-04-29**
+>
+> **The destination state described in this document is now substantially built.**
+>
+> When this document was written (2026-04-28), proactive matching was framed as the eventual capstone — to be deferred until reactive flows had ~90 days of operational data for calibration. **In the 24 hours after this document was committed, the entire intelligence stack was shipped as a coordinated 5-item arc**, capped by `match_queue` (migration 0050) and the proactive matching engine itself (commit `be127daf`, "item 5/5 — capstone").
+>
+> Shipped components of the destination state described in §8:
+> - All three intelligence layers (vessel, pricing, distress) — operational
+> - Crude basis differentials enabling specialty grade pricing
+> - Cargo trip inference from AIS port calls
+> - LLM-scored distress event extraction from EDGAR + RECAP
+> - Proactive match queue with daily 16:00 UTC digest email
+> - Push-to-vex chat tools and entity-profile buttons (the operator surface for actioning matches)
+> - Two-way procur ↔ vex integration via the `/api/intelligence/*` endpoints + vex's `/ingest/procur/leads`
+> - Procur healthcheck visible to vex operators
+>
+> Pending components:
+> - Origination partner schema and workflow (vex-side) — brief committed, execution not yet started
+> - Tender pursuit schema and workflow (vex-side) — brief committed, execution not yet started
+> - 90 days of operational data for matching engine calibration — by definition takes 90 days
+>
+> **Operational implication: the three discipline rules in §9 of this document are no longer aspirational.** They become operational from now — matches are landing in the queue daily, and how operators handle them determines whether the system becomes the moat described here or degrades into a tool nobody trusts.
+>
+> ---
+
 # Strategic Vision — Vex × Procur
 
 **Status:** strategic framing, not a build brief

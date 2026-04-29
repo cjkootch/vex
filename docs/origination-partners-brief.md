@@ -1,3 +1,28 @@
+> **IMPLEMENTATION STATUS — refreshed 2026-04-29**
+>
+> **Status: not yet started.** The brief is committed but no schema or agents have shipped yet.
+>
+> Procur-side: no work needed (procur acts purely as signal source via existing endpoints `find_distressed_suppliers`, `find_recent_cargoes`, `analyze_supplier`, `entity_news_events` — all live).
+>
+> Vex-side (all pending):
+> - `organizations.kind` enum extension (`origination_partner_candidate`, `origination_partner`)
+> - `origination_partnerships` schema
+> - `partner_deal_intros` schema
+> - `partner_kyc_records` schema
+> - `OriginationPartnerScoutAgent` (T1)
+> - `OriginationPartnerScoringAgent` (T1)
+> - Partner-facing intake surface at `/partner/*`
+> - Vetting workflow UI
+> - Discipline rule enforcement at the approval-gate level
+>
+> **Why this is deferred:** the proactive matching capstone was prioritized first, correctly. Origination partners are the next strategic-leverage workstream, but it's the most discipline-sensitive of all the briefs (see §2 — the Pattern A vs Pattern B boundary). It deserves real operator attention before code, not parallel execution while other things are landing.
+>
+> **Pre-execution check before starting:** the §9 discipline rules need to be operationalized before any partner is onboarded. Specifically: who reviews KYC dimensions, who approves pattern-A-adjacent edge cases, what the cooling-off period enforces in practice. The schema is straightforward; the operator culture around it is the harder problem.
+>
+> 7-day estimate from §11 stands.
+>
+> ---
+
 # Origination Partners — Network of Capital-Constrained Deal Sources
 
 **Status:** spec, not yet implemented
