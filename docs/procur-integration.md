@@ -1,3 +1,29 @@
+> **IMPLEMENTATION STATUS — refreshed 2026-04-29**
+>
+> **Status: foundation shipped, three of four touchpoints in flight.**
+>
+> Shipped:
+> - `packages/integrations/procur.ts` ProcurClient with caching, retry, telemetry (vex Slice 1.0, PR #237)
+> - `procur_intelligence_snapshots` schema (vex)
+> - `fuel_deal_market_context` schema (vex)
+> - `/admin/procur/healthcheck` endpoint + web proxy (Slice 1.2/1.3)
+> - `POST /ingest/procur/leads` — vex receives operator pushes from procur (Slice 1.4)
+> - Contact enrichments push back to procur (Slice 1.5) — *this is bidirectional flow that the brief explicitly deferred*; a constrained version was built because contact-quality data flowing both ways was found to be high-value enough to justify earlier
+> - `org.update_fields` action for patching org fields from procur research
+> - Procur-side: all 11 HTTP endpoints under `/api/intelligence/*` live behind `PROCUR_API_TOKEN`, Clerk bypass configured
+> - Procur-side: `entity-contact-enrichments` table receives the Slice 1.5 pushback
+>
+> Pending:
+> - **Touchpoint 1** (counterparty enrichment via `ProcurEnrichmentAgent`) — schema shipped, agent execution not yet wired into the campaign flow at the orchestration level
+> - **Touchpoint 2** (deal-context evaluation via `DealMarketContextAgent`) — `fuel_deal_market_context` schema shipped, agent not yet running on draft→live transitions
+> - **Touchpoint 3** (campaign targeting via `CampaignTargetingAgent`) — not yet implemented
+>
+> **Divergence from brief:** the bidirectional contact-enrichment flow was specifically called out in §11 of the original brief as not in v1 scope. Operational experience showed it was high-value enough to ship early. The privacy boundary called out in the original brief still holds — only contact-quality data flows back, not deal outcomes or pricing — so the architectural integrity is intact.
+>
+> The original 7-day estimate is on track; about 4 days of work remain to wire the three orchestration agents.
+>
+> ---
+
 # Vex × Procur Intelligence Integration
 
 **Status:** spec, not yet implemented
