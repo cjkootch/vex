@@ -2483,6 +2483,13 @@ async function emitExecutorFailed(
   actionType: string,
   reason: string,
 ): Promise<void> {
+  // eslint-disable-next-line no-console -- intentional: surface executor
+  // failures in `fly logs` so operators don't have to query the events
+  // table to debug. The audit event is the durable record; this line
+  // is the live-debugging signal.
+  console.error(
+    `[approval-executor] failed action=${actionType} approval=${approvalId} reason=${reason}`,
+  );
   await deps.events.insertIfNotExists(tx, tenantId, {
     verb: "approval.executor.failed",
     subjectType: "approval",
