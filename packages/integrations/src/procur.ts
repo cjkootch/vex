@@ -298,6 +298,49 @@ export interface ProcurClient {
     entitySlug: string;
     daysLookback?: number;
   }): Promise<ProcurResult<{ events: EntityNewsEvent[] }>>;
+
+  /**
+   * Push a vex-enriched contact back to procur. Slice 1.5 — closes the
+   * loop on per-contact web research: when vex's ContactEnrichmentAgent
+   * finds a confident email/title/phone for a contact at a procur-
+   * sourced organisation, we share the discovery so procur's entity
+   * graph stays current.
+   *
+   * Procur is expected to:
+   *   - Treat the push as a SUGGESTION, not a source-of-truth overwrite.
+   *     Procur's existing data (if any) wins; vex's lands as
+   *     `source: "vex"` for human review.
+   *   - Stamp the contact with a sourceUrl + confidence per field so
+   *     operators can audit / promote suggestions.
+   *   - Return 200 on accepted, 4xx if the entity isn't recognised.
+   *
+   * Vex side: only fires when (a) the org has `external_keys.procur`
+   * set, (b) at least one field landed on the contact with confidence
+   * ≥ 0.6, (c) procur is enabled.
+   */
+  shareContactEnrichment(args: {
+    entitySlug: string;
+    name: string;
+    fields: ContactEnrichmentFields;
+  }): Promise<ProcurResult<ContactEnrichmentShareResult>>;
+}
+
+export interface ContactEnrichmentField {
+  value: string;
+  confidence: number;
+  sourceUrl: string | null;
+}
+
+export interface ContactEnrichmentFields {
+  email?: ContactEnrichmentField;
+  title?: ContactEnrichmentField;
+  phone?: ContactEnrichmentField;
+  linkedinUrl?: ContactEnrichmentField;
+}
+
+export interface ContactEnrichmentShareResult {
+  contactId: string;
+  status: "created" | "updated" | "noop";
 }
 
 export function createProcurClient(config: ProcurClientConfig): ProcurClient {
@@ -502,7 +545,30 @@ export function createProcurClient(config: ProcurClientConfig): ProcurClient {
       )}`;
       return call<{ events: EntityNewsEvent[] }>("GET", path);
     },
+
+    async shareContactEnrichment(args) {
+      const path = `/intelligence/entity/${encodeURIComponent(args.entitySlug)}/contact-enrichment`;
+      return call<ContactEnrichmentShareResult>("POST", path, {
+        name: args.name,
+        fields: serializeFields(args.fields),
+        source: "vex",
+        enriched_at: new Date().toISOString(),
+      });
+    },
   };
+}
+
+function serializeFields(fields: ContactEnrichmentFields): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (!v) continue;
+    out[k] = {
+      value: v.value,
+      confidence: v.confidence,
+      source_url: v.sourceUrl,
+    };
+  }
+  return out;
 }
 
 /**

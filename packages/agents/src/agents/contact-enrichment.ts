@@ -1,6 +1,9 @@
 import { TenantId } from "@vex/domain";
 import type { Contact, Organization } from "@vex/db";
-import type { TavilySearchResult } from "@vex/integrations";
+import type {
+  ContactEnrichmentFields,
+  TavilySearchResult,
+} from "@vex/integrations";
 import { CONTACT_ENRICHMENT_SYSTEM_PROMPT } from "../prompts/contact-enrichment.js";
 import type { AgentContext, AgentOutput, IAgent } from "./types.js";
 
@@ -26,6 +29,12 @@ const TAVILY_MAX_RESULTS = 5;
 const ANTHROPIC_MAX_TOKENS = 800;
 /** Below this we don't trust the extraction enough to write to the contact row. */
 const MIN_CONFIDENCE_TO_APPLY = 0.4;
+/**
+ * Higher bar for pushing back to procur — we only share fields we'd
+ * stake our name on. Pattern-guess emails (~0.4) stay vex-side; verified
+ * scrapes (~0.6+) close the loop so procur's entity graph stays fresh.
+ */
+const MIN_CONFIDENCE_TO_SHARE = 0.6;
 
 /**
  * T1 web-research agent. Given a contact id, searches the public web
@@ -164,6 +173,12 @@ export class ContactEnrichmentAgent implements IAgent {
 
     const applied = await this.applyToContact(ctx, contact, extraction);
 
+    // Slice 1.5 — push the discovery back to procur when (a) the org
+    // came from procur originally and (b) we have at least one
+    // confidence-≥-0.6 field. Fail-soft: a failed share doesn't fail
+    // the agent run; we just log + record on the event.
+    const shared = await this.maybeShareToProcur(ctx, org, contact, extraction);
+
     await ctx.events.insertIfNotExists(ctx.tx, ctx.tenantId, {
       verb: "contact.enriched",
       subjectType: "contact",
@@ -186,6 +201,7 @@ export class ContactEnrichmentAgent implements IAgent {
           linkedin_url: extraction.linkedinUrl,
         },
         applied,
+        shared_to_procur: shared,
         rationale: extraction.rationale,
       },
     });
@@ -196,6 +212,7 @@ export class ContactEnrichmentAgent implements IAgent {
         contact_id: contact.id,
         org_id: org.id,
         applied,
+        shared_to_procur: shared,
         extraction_rationale: extraction.rationale,
       },
       proposedActions: [],
@@ -206,6 +223,71 @@ export class ContactEnrichmentAgent implements IAgent {
       rationale: applied.emailWritten
         ? `enriched: email found (confidence ${extraction.email?.confidence ?? 0})`
         : `no enrichment applied: ${extraction.rationale}`,
+    };
+  }
+
+  private async maybeShareToProcur(
+    ctx: AgentContext,
+    org: Organization,
+    contact: Contact,
+    extraction: ExtractionResult,
+  ): Promise<
+    | { ok: true; status: string; contactId: string }
+    | { ok: false; reason: string; message?: string }
+  > {
+    const procurSlug = (org.externalKeys as Record<string, string> | null)?.[
+      "procur"
+    ];
+    if (!procurSlug) {
+      return { ok: false, reason: "org_not_procur_sourced" };
+    }
+    if (!ctx.procur.isEnabled()) {
+      return { ok: false, reason: "procur_disabled" };
+    }
+    const fields: ContactEnrichmentFields = {};
+    if (
+      extraction.email &&
+      extraction.email.confidence >= MIN_CONFIDENCE_TO_SHARE
+    ) {
+      fields.email = extraction.email;
+    }
+    if (
+      extraction.title &&
+      extraction.title.confidence >= MIN_CONFIDENCE_TO_SHARE
+    ) {
+      fields.title = extraction.title;
+    }
+    if (
+      extraction.phone &&
+      extraction.phone.confidence >= MIN_CONFIDENCE_TO_SHARE
+    ) {
+      fields.phone = extraction.phone;
+    }
+    if (
+      extraction.linkedinUrl &&
+      extraction.linkedinUrl.confidence >= MIN_CONFIDENCE_TO_SHARE
+    ) {
+      fields.linkedinUrl = extraction.linkedinUrl;
+    }
+    if (Object.keys(fields).length === 0) {
+      return { ok: false, reason: "no_high_confidence_fields" };
+    }
+    const result = await ctx.procur.shareContactEnrichment({
+      entitySlug: procurSlug,
+      name: contact.fullName,
+      fields,
+    });
+    if (!result.ok) {
+      return {
+        ok: false,
+        reason: result.reason,
+        ...(result.message ? { message: result.message } : {}),
+      };
+    }
+    return {
+      ok: true,
+      status: result.data.status,
+      contactId: result.data.contactId,
     };
   }
 

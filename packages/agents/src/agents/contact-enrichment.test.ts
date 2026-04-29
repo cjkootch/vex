@@ -9,6 +9,11 @@ const ORG_ID = "org_001";
 interface CapturedWrites {
   patchCalls: Array<{ id: string; patch: Record<string, unknown> }>;
   events: Array<{ verb: string; metadata: Record<string, unknown> }>;
+  procurShareCalls: Array<{
+    entitySlug: string;
+    name: string;
+    fields: Record<string, unknown>;
+  }>;
 }
 
 function makeContext(overrides: {
@@ -20,7 +25,13 @@ function makeContext(overrides: {
     phones: string[];
     orgId: string | null;
   } | null;
-  org?: { id: string; legalName: string; domain: string | null; geo: unknown } | null;
+  org?: {
+    id: string;
+    legalName: string;
+    domain: string | null;
+    geo: unknown;
+    externalKeys?: Record<string, string>;
+  } | null;
   tavilyResult?:
     | {
         results: Array<{ title: string; url: string; content: string }>;
@@ -30,8 +41,16 @@ function makeContext(overrides: {
     | "throws";
   anthropicResponseText?: string;
   tavilyDisabled?: boolean;
+  procurEnabled?: boolean;
+  procurShareResult?:
+    | { ok: true; data: { contactId: string; status: string } }
+    | { ok: false; reason: string; message?: string };
 }): { ctx: AgentContext; writes: CapturedWrites } {
-  const writes: CapturedWrites = { patchCalls: [], events: [] };
+  const writes: CapturedWrites = {
+    patchCalls: [],
+    events: [],
+    procurShareCalls: [],
+  };
 
   const contacts = {
     findById: vi.fn().mockResolvedValue(
@@ -60,9 +79,23 @@ function makeContext(overrides: {
             legalName: "Armasuisse",
             domain: "armasuisse.ch",
             geo: { country: "CH" },
+            externalKeys: { procur: "armasuisse" },
           }
         : overrides.org,
     ),
+  };
+
+  const procur = {
+    isEnabled: vi.fn().mockReturnValue(overrides.procurEnabled ?? true),
+    shareContactEnrichment: vi.fn().mockImplementation(async (args) => {
+      writes.procurShareCalls.push(args);
+      return (
+        overrides.procurShareResult ?? {
+          ok: true,
+          data: { contactId: "procur_contact_1", status: "created" },
+        }
+      );
+    }),
   };
 
   const tavily = overrides.tavilyDisabled
@@ -133,6 +166,7 @@ function makeContext(overrides: {
     organizations: organizations as never,
     events: events as never,
     tavily: tavily as never,
+    procur: procur as never,
     procurCacheTtlDays: 7,
   } as unknown as AgentContext;
 
@@ -324,5 +358,138 @@ describe("ContactEnrichmentAgent", () => {
     const patch = writes.patchCalls[0]?.patch ?? {};
     expect(patch).toMatchObject({ emails: ["m.dupont@armasuisse.ch"] });
     expect(patch).not.toHaveProperty("title");
+  });
+
+  // -------------------------------------------------------------
+  // Slice 1.5 — push back to procur
+  // -------------------------------------------------------------
+
+  it("shares high-confidence enrichment back to procur when org has external_keys.procur", async () => {
+    const { ctx, writes } = makeContext({});
+    const agent = new ContactEnrichmentAgent({ contactId: CONTACT_ID });
+
+    const out = await agent.run(ctx);
+
+    expect(writes.procurShareCalls).toHaveLength(1);
+    expect(writes.procurShareCalls[0]).toMatchObject({
+      entitySlug: "armasuisse",
+      name: "M. Dupont",
+      fields: expect.objectContaining({
+        email: expect.objectContaining({
+          value: "m.dupont@armasuisse.ch",
+          confidence: 0.9,
+        }),
+        title: expect.objectContaining({ value: "Procurement Officer" }),
+      }),
+    });
+    expect(out.outputRefs["shared_to_procur"]).toMatchObject({
+      ok: true,
+      status: "created",
+      contactId: "procur_contact_1",
+    });
+    expect(writes.events[0]?.metadata["shared_to_procur"]).toMatchObject({
+      ok: true,
+    });
+  });
+
+  it("does not share when the org has no external_keys.procur", async () => {
+    const { ctx, writes } = makeContext({
+      org: {
+        id: ORG_ID,
+        legalName: "Some Org",
+        domain: null,
+        geo: null,
+        externalKeys: {}, // no procur key
+      },
+    });
+    const agent = new ContactEnrichmentAgent({ contactId: CONTACT_ID });
+
+    const out = await agent.run(ctx);
+    expect(writes.procurShareCalls).toHaveLength(0);
+    expect(out.outputRefs["shared_to_procur"]).toMatchObject({
+      ok: false,
+      reason: "org_not_procur_sourced",
+    });
+  });
+
+  it("does not share when procur is disabled", async () => {
+    const { ctx, writes } = makeContext({ procurEnabled: false });
+    const agent = new ContactEnrichmentAgent({ contactId: CONTACT_ID });
+
+    const out = await agent.run(ctx);
+    expect(writes.procurShareCalls).toHaveLength(0);
+    expect(out.outputRefs["shared_to_procur"]).toMatchObject({
+      ok: false,
+      reason: "procur_disabled",
+    });
+  });
+
+  it("does not share when no field clears the 0.6 share threshold", async () => {
+    // Email applies (0.5 ≥ 0.4 apply threshold) but doesn't share (0.5 < 0.6 share threshold)
+    const { ctx, writes } = makeContext({
+      anthropicResponseText: JSON.stringify({
+        email: {
+          value: "m.dupont@armasuisse.ch",
+          confidence: 0.5,
+          sourceUrl: "https://news.example.com",
+        },
+        title: null,
+        phone: null,
+        linkedinUrl: null,
+        rationale: "Mid-confidence guess.",
+      }),
+    });
+    const agent = new ContactEnrichmentAgent({ contactId: CONTACT_ID });
+
+    const out = await agent.run(ctx);
+    expect(writes.patchCalls).toHaveLength(1); // applied locally
+    expect(writes.procurShareCalls).toHaveLength(0); // but not shared
+    expect(out.outputRefs["shared_to_procur"]).toMatchObject({
+      ok: false,
+      reason: "no_high_confidence_fields",
+    });
+  });
+
+  it("survives a procur share failure (fail-soft)", async () => {
+    const { ctx, writes } = makeContext({
+      procurShareResult: { ok: false, reason: "exception", message: "fetch failed" },
+    });
+    const agent = new ContactEnrichmentAgent({ contactId: CONTACT_ID });
+
+    const out = await agent.run(ctx);
+    expect(writes.patchCalls).toHaveLength(1); // local enrichment still happened
+    expect(out.outputRefs["shared_to_procur"]).toMatchObject({
+      ok: false,
+      reason: "exception",
+      message: "fetch failed",
+    });
+    expect(out.internalWrites).toBe(2); // email + title written locally despite procur failure
+  });
+
+  it("only includes fields that clear the share threshold in the procur payload", async () => {
+    // Email at 0.9 (shares), title at 0.5 (applies but doesn't share)
+    const { ctx, writes } = makeContext({
+      anthropicResponseText: JSON.stringify({
+        email: {
+          value: "m.dupont@armasuisse.ch",
+          confidence: 0.9,
+          sourceUrl: "https://armasuisse.ch",
+        },
+        title: {
+          value: "Procurement Officer",
+          confidence: 0.5,
+          sourceUrl: null,
+        },
+        phone: null,
+        linkedinUrl: null,
+        rationale: "High-confidence email, low-confidence title.",
+      }),
+    });
+    const agent = new ContactEnrichmentAgent({ contactId: CONTACT_ID });
+
+    await agent.run(ctx);
+    const shared = writes.procurShareCalls[0];
+    expect(shared?.fields).toHaveProperty("email");
+    expect(shared?.fields).not.toHaveProperty("title");
   });
 });
