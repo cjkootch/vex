@@ -300,11 +300,23 @@ export class QueryService {
       isValidUlid: isUlid,
     });
     const allActions = [...queryResult.proposedActions, ...extractedActions];
-    if (extractedActions.length > 0) {
-      this.log.log(
-        `chat: extracted ${extractedActions.length} T1 actions from profile panels (model emitted ${queryResult.proposedActions.length})`,
-      );
-    }
+    // Always log the panel + extraction stats — Path B is silent when
+    // no actions come out, which made it hard to diagnose whether the
+    // extractor is running or the panels just don't match the
+    // mapping. This gives us one log line per chat turn we can grep.
+    const panelSummary = (manifest.panels ?? []).map((p) =>
+      p.type === "profile"
+        ? {
+            type: p.type,
+            objectType: p.objectType,
+            objectId: p.objectId,
+            fieldKeys: Object.keys(p.fields ?? {}),
+          }
+        : { type: p.type },
+    );
+    this.log.log(
+      `chat: panel-extractor panels=${JSON.stringify(panelSummary)} extracted=${extractedActions.length} model_emitted=${queryResult.proposedActions.length}`,
+    );
 
     // Persist T2+ proposals as pending approvals so the chat-proposed
     // side effects (email.send, crm.create_deal, outbound_call, etc.)
