@@ -79,7 +79,6 @@ import {
   createTwilioClient,
   renderEmailWithSignature,
   SlackNotifier,
-  checkCallWindow,
   type TwilioClient,
 } from "@vex/integrations";
 
@@ -1136,26 +1135,26 @@ async function applyOutboundCall(
     return;
   }
 
-  // Call-window gate — never dial before 9am or after 8pm in the
-  // recipient's local tz. Derives the zone from the phone number
-  // country + NANP area code (Caribbean area codes map to their own
-  // islands). Outside the window → record the block and skip; the
-  // operator can re-approve once the window opens. This is a belt-
-  // and-suspenders layer on top of any workflow-level scheduling.
-  const callWindow = checkCallWindow({ to: toNumber });
-  if (!callWindow.ok) {
-    await emitExecutorFailed(
-      tx,
-      deps,
-      tenantId,
-      approval.id,
-      "outbound_call",
-      callWindow.reason === "invalid_number"
-        ? `invalid_phone_for_window_check: ${toNumber}`
-        : `outside_call_window: local ${callWindow.localHour ?? "?"}:00 in ${callWindow.timezone ?? "unknown"}`,
-    );
-    return;
-  }
+  // Call-window gate intentionally disabled — operator runs the desk
+  // outside standard 9-20 local hours and the gate was producing
+  // false-positive blocks. The Temporal-workflow path also has its
+  // window check disabled (see outbound-call-workflow.ts). Re-enable
+  // by uncommenting both blocks if hours-of-operation policy returns.
+  //
+  // const callWindow = checkCallWindow({ to: toNumber });
+  // if (!callWindow.ok) {
+  //   await emitExecutorFailed(
+  //     tx,
+  //     deps,
+  //     tenantId,
+  //     approval.id,
+  //     "outbound_call",
+  //     callWindow.reason === "invalid_number"
+  //       ? `invalid_phone_for_window_check: ${toNumber}`
+  //       : `outside_call_window: local ${callWindow.localHour ?? "?"}:00 in ${callWindow.timezone ?? "unknown"}`,
+  //   );
+  //   return;
+  // }
   if (!deps.temporal) {
     // Fallback: no Temporal cluster configured. If we have Twilio +
     // a public API base URL for the TwiML callbacks, dial directly.
@@ -2484,6 +2483,13 @@ async function emitExecutorFailed(
   actionType: string,
   reason: string,
 ): Promise<void> {
+  // eslint-disable-next-line no-console -- intentional: surface executor
+  // failures in `fly logs` so operators don't have to query the events
+  // table to debug. The audit event is the durable record; this line
+  // is the live-debugging signal.
+  console.error(
+    `[approval-executor] failed action=${actionType} approval=${approvalId} reason=${reason}`,
+  );
   await deps.events.insertIfNotExists(tx, tenantId, {
     verb: "approval.executor.failed",
     subjectType: "approval",
