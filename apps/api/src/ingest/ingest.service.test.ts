@@ -191,7 +191,7 @@ describe("IngestService.ingestProcurLead", () => {
       leadId: "lead_1",
       orgId: "org_1",
       contacts: [{ contactId: "contact_1", outcome: "created" }],
-      vexUrl: "https://www.vexhq.ai/app/leads/lead_1",
+      vexUrl: "https://www.vexhq.ai/app/companies/org_1",
       wasExisting: false,
     });
   });
@@ -267,7 +267,7 @@ describe("IngestService.ingestProcurLead", () => {
       leadId: "lead_existing",
       orgId: "org_existing",
       contacts: [],
-      vexUrl: "https://www.vexhq.ai/app/leads/lead_existing",
+      vexUrl: "https://www.vexhq.ai/app/companies/org_existing",
       wasExisting: true,
     });
     expect(mocks.orgUpsert).not.toHaveBeenCalled();

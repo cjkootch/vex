@@ -99,6 +99,9 @@ export {
   type FindDistressedSuppliersResult,
   type BuyerPricingAnalysisResult,
   type EntityNewsEvent,
+  type ContactEnrichmentField,
+  type ContactEnrichmentFields,
+  type ContactEnrichmentShareResult,
 } from "./procur.js";
 export { pricing, tokensToUsdMicros, unitsToUsdMicros } from "./pricing.js";
 export {

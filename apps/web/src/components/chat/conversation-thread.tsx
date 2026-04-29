@@ -707,12 +707,61 @@ function RejectedProposalChips({
   );
 }
 
+/**
+ * Working-state indicator that escalates its message as time passes,
+ * so a long-running tool call (web search, retrieval) doesn't look
+ * hung. Server-side `/query/stream` is buffered today — the model
+ * may be running tool calls for several seconds before any token
+ * lands — so the perceived-responsiveness story has to live on the
+ * client until we wire SSE progress events.
+ *
+ *   t < 2s : just dots
+ *   t 2–6s : dots + "thinking…"
+ *   t 6–15s: dots + "looking up your data…"
+ *   t > 15s: dots + "searching the web — this can take a moment"
+ *
+ * The phrasing leans towards likely activities (Anthropic + Tavily +
+ * retrieval) without claiming to know what's actually happening
+ * server-side. Once the API streams real tool-use events we can swap
+ * this for the actual phase.
+ */
 function TypingIndicator() {
+  const [elapsedSec, setElapsedSec] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - start) / 1000));
+    }, 500);
+    return () => clearInterval(id);
+  }, []);
+
+  let label: string | null = null;
+  if (elapsedSec >= 15) {
+    label = "searching the web — this can take a moment";
+  } else if (elapsedSec >= 6) {
+    label = "looking up your data…";
+  } else if (elapsedSec >= 2) {
+    label = "thinking…";
+  }
+
   return (
-    <span className="inline-flex items-center gap-1" aria-label="Vex is typing">
-      <Dot delay={0} />
-      <Dot delay={0.18} />
-      <Dot delay={0.36} />
+    <span className="inline-flex items-center gap-2" aria-label="Vex is working">
+      <span className="inline-flex items-center gap-1">
+        <Dot delay={0} />
+        <Dot delay={0.18} />
+        <Dot delay={0.36} />
+      </span>
+      {label && (
+        <motion.span
+          key={label}
+          initial={{ opacity: 0, x: -4 }}
+          animate={{ opacity: 1, x: 0 }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+          className="text-xs text-white/50"
+        >
+          {label}
+        </motion.span>
+      )}
     </span>
   );
 }

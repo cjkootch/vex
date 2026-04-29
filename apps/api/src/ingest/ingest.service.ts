@@ -249,7 +249,7 @@ export class IngestService {
     return {
       ...inner,
       vexUrl: this.webAppBaseUrl
-        ? `${this.webAppBaseUrl.replace(/\/$/, "")}/app/leads/${inner.leadId}`
+        ? `${this.webAppBaseUrl.replace(/\/$/, "")}/app/companies/${inner.orgId}`
         : null,
     };
   }
