@@ -31,6 +31,11 @@ interface OrganizationDeal {
   role: "buyer" | "seller";
 }
 
+interface OrganizationNote {
+  body: string;
+  createdAt: string;
+}
+
 interface OrganizationDetail {
   id: string;
   legalName: string;
@@ -41,6 +46,10 @@ interface OrganizationDetail {
   sourceOfTruth: string | null;
   externalKeys: Record<string, string>;
   contactCount: number;
+  tags: string[];
+  kind: string | null;
+  country: string | null;
+  notes: OrganizationNote[];
   createdAt: string;
   updatedAt: string;
   contacts: OrganizationContact[];
@@ -244,27 +253,81 @@ export default function CompanyDetailPage({
 }
 
 function OverviewTab({ org }: { org: OrganizationDetail }) {
+  const tags = org.tags ?? [];
+  const notes = org.notes ?? [];
   return (
-    <section className="rounded-lg border border-line bg-muted/20 p-4">
-      <div className="grid grid-cols-[140px_1fr] gap-2 text-sm">
-        <span className="text-white/50">Status</span>
-        <span className="text-white/90">{org.status}</span>
-        <span className="text-white/50">Domain</span>
-        <span className="text-white/90">{org.domain ?? "—"}</span>
-        <span className="text-white/50">Industry</span>
-        <span className="text-white/90">{org.industry ?? "—"}</span>
-        <span className="text-white/50">Source</span>
-        <span className="text-white/90">{org.sourceOfTruth ?? "—"}</span>
-        <span className="text-white/50">External keys</span>
-        <span className="text-white/90 font-mono text-xs">
-          {Object.keys(org.externalKeys).length === 0
-            ? "—"
-            : Object.entries(org.externalKeys)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join(", ")}
-        </span>
-      </div>
-    </section>
+    <div className="space-y-3">
+      <section className="rounded-lg border border-line bg-muted/20 p-4">
+        <div className="grid grid-cols-[140px_1fr] gap-2 text-sm">
+          <span className="text-white/50">Status</span>
+          <span className="text-white/90">{org.status}</span>
+          <span className="text-white/50">Kind</span>
+          <span className="text-white/90">
+            {org.kind ? <KindBadge kind={org.kind} /> : "—"}
+          </span>
+          <span className="text-white/50">Country</span>
+          <span className="text-white/90">{org.country ?? "—"}</span>
+          <span className="text-white/50">Domain</span>
+          <span className="text-white/90">{org.domain ?? "—"}</span>
+          <span className="text-white/50">Industry</span>
+          <span className="text-white/90">{org.industry ?? "—"}</span>
+          <span className="text-white/50">Source</span>
+          <span className="text-white/90">{org.sourceOfTruth ?? "—"}</span>
+          <span className="text-white/50">Tags</span>
+          <span className="text-white/90">
+            {tags.length === 0 ? (
+              "—"
+            ) : (
+              <span className="flex flex-wrap gap-1.5">
+                {tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </span>
+            )}
+          </span>
+          <span className="text-white/50">External keys</span>
+          <span className="font-mono text-xs text-white/90">
+            {Object.keys(org.externalKeys).length === 0
+              ? "—"
+              : Object.entries(org.externalKeys)
+                  .map(([k, v]) => `${k}: ${v}`)
+                  .join(", ")}
+          </span>
+        </div>
+      </section>
+
+      {notes.length > 0 ? (
+        <section className="rounded-lg border border-line bg-muted/20 p-4">
+          <h3 className="mb-2 text-eyebrow text-text-muted">Research notes</h3>
+          <div className="space-y-3">
+            {notes.map((n, i) => (
+              <article
+                key={`${n.createdAt}-${i}`}
+                className="border-l-2 border-accent/40 pl-3 text-sm text-white/85"
+              >
+                <p className="whitespace-pre-wrap">{n.body}</p>
+                <p className="mt-1 text-xs text-text-muted">
+                  {new Date(n.createdAt).toLocaleString()}
+                </p>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function KindBadge({ kind }: { kind: string }) {
+  return (
+    <span className="rounded-full border border-line-soft bg-surface-2/60 px-2 py-0.5 text-xs uppercase tracking-wider text-white/80">
+      {kind}
+    </span>
   );
 }
 

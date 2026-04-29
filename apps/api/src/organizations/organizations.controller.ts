@@ -105,9 +105,18 @@ export interface OrganizationDealSummary {
   role: "buyer" | "seller";
 }
 
+export interface OrganizationNote {
+  body: string;
+  createdAt: string;
+}
+
 export interface OrganizationDetail extends OrganizationListRow {
   sourceOfTruth: string | null;
   externalKeys: Record<string, string>;
+  /** ISO 3166-1 alpha-2 from geo.country, populated by org.update_fields. */
+  country: string | null;
+  /** Most-recent crm.note bodies, newest first. Up to 5. */
+  notes: OrganizationNote[];
   contacts: OrganizationContactSummary[];
   deals: OrganizationDealSummary[];
 }
@@ -481,6 +490,7 @@ export class OrganizationsController {
         role: d.buyerOrgId === id ? "buyer" : "seller",
       }));
 
+      const country = (after.geo as { country?: unknown } | null)?.country;
       const detail: OrganizationDetail = {
         id: after.id,
         legalName: after.legalName,
@@ -493,6 +503,11 @@ export class OrganizationsController {
         contactCount: contacts.length,
         tags: after.tags ?? [],
         kind: after.kind,
+        country: typeof country === "string" ? country : null,
+        // After-PATCH detail; freshly-created or freshly-updated orgs
+        // typically don't have notes yet — leave empty rather than
+        // round-trip the events query for a likely-empty result.
+        notes: [],
         createdAt: after.createdAt.toISOString(),
         updatedAt: after.updatedAt.toISOString(),
         contacts: contacts.map((c) => ({
@@ -575,6 +590,36 @@ export class OrganizationsController {
           role: d.buyerOrgId === id ? "buyer" : "seller",
         }));
 
+        // Recent research notes (crm.note → organization.note_added).
+        // Surfaced inline on the org page so operators have research
+        // context for outreach without hunting the activity timeline.
+        const noteRows = await tx
+          .select({
+            metadata: schema.events.metadata,
+            occurredAt: schema.events.occurredAt,
+          })
+          .from(schema.events)
+          .where(
+            and(
+              eq(schema.events.subjectType, "organization"),
+              eq(schema.events.subjectId, id),
+              eq(schema.events.verb, "organization.note_added"),
+            ),
+          )
+          .orderBy(desc(schema.events.occurredAt))
+          .limit(5);
+        const notes: OrganizationNote[] = noteRows
+          .map((n) => {
+            const body = (n.metadata as { body?: unknown } | null)?.body;
+            return typeof body === "string" && body.trim().length > 0
+              ? { body: body.trim(), createdAt: n.occurredAt.toISOString() }
+              : null;
+          })
+          .filter((x): x is OrganizationNote => x !== null);
+
+        const country =
+          (row.geo as { country?: unknown } | null)?.country;
+
         const detail: OrganizationDetail = {
           id: row.id,
           legalName: row.legalName,
@@ -587,6 +632,8 @@ export class OrganizationsController {
           contactCount: contacts.length,
           tags: row.tags ?? [],
           kind: row.kind,
+          country: typeof country === "string" ? country : null,
+          notes,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),
           contacts: contacts.map((c) => ({
