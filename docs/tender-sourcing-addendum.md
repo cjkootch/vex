@@ -1,3 +1,27 @@
+> **IMPLEMENTATION STATUS — refreshed 2026-04-29**
+>
+> **Status: procur-side shipped, vex-side not yet started.**
+>
+> Procur-side (shipped):
+> - `GET /intelligence/proximity-suppliers` — haversine-distance refinery query against `known_entities`
+> - `GET /intelligence/opportunities/recent` — used by ProcurOpportunityWatcher
+> - `find-suppliers-for-tender` extended with `originBias` parameter
+> - `known_entities` lat/lng backfill via Wikidata (PR #244 in procur) — the prerequisite called out in §10 of this brief is done
+>
+> Vex-side (not yet started):
+> - `tender_pursuits` schema not yet created
+> - `tender_supplier_candidates` schema not yet created
+> - `bid_criteria` schema not yet created
+> - `ProcurOpportunityWatcher` agent not yet built
+> - `SupplierSourcingAgent` agent not yet built
+> - UI surfaces (tender queue, pursuit detail, bid criteria settings) not yet built
+>
+> **Recommendation:** the procur side is ready to feed this workflow. Once the parent integration touchpoints (especially `CampaignTargetingAgent`) are operational, the tender-sourcing addendum is the natural next workstream — same patterns, same approval-gate model, just inverted to source suppliers for tenders rather than buyers for offers.
+>
+> The 7-8 day estimate in §11 still applies. ~1.5 days of procur-side work is done; ~6 days of vex-side work remain.
+>
+> ---
+
 # Tender-Side Supplier Sourcing — Vex × Procur Integration Addendum
 
 **Status:** spec, not yet implemented
