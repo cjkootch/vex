@@ -4,7 +4,7 @@
 # and final CMD differ. Worker has no HTTP surface (no EXPOSE, no
 # PORT), it consumes BullMQ + Temporal queues.
 
-ARG CACHE_BUSTER=2026-04-20-worker-init
+ARG CACHE_BUSTER=2026-04-29-crm-note-executor
 
 FROM node:20-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0
