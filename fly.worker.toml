@@ -39,12 +39,28 @@ primary_region = "iad"
 # No [http_service] — this is a worker process, not an HTTP server.
 # Fly routes nothing to it; it pulls jobs from Redis + Temporal.
 #
-# Worker counts are managed with `fly scale count 1 -a vex-worker`
-# rather than a fly.toml directive — Fly v2's per-app machine count
-# is a runtime concern, not a build-time one. Without that floor,
-# stopping a machine via the UI or a failed deploy leaves the app
-# with zero machines and the BullMQ approval-executor queue silently
-# stalls.
+# ⚠️  REQUIRED ON FIRST DEPLOY (and any time machine count drops to 0):
+#
+#     fly scale count 1 -a vex-worker
+#
+# Worker counts are NOT a fly.toml directive in Fly v2 — they're a
+# runtime concern set via `fly scale`. Without this floor:
+#   - all machines stop after a deploy (auto-stop kicks in for
+#     non-HTTP apps with no traffic)
+#   - BullMQ jobs accumulate but never get consumed
+#   - approval-executor silently stalls
+#   - chat actions show "approved" but nothing applies
+#   - operators see blank org pages despite chat saying "updated"
+#
+# Hours of today's debug were exactly this. If you ever see worker
+# `fly status` showing all machines `stopped`, run the scale command
+# above OR `fly machine start <id> -a vex-worker` for each.
+#
+# When deploying from repo root, ALWAYS pass the config:
+#     fly deploy -c fly.worker.toml
+# Without -c, fly defaults to fly.toml (the API config) and rebuilds
+# the API image into the worker app — silent crash on
+# RESEND_WEBHOOK_SECRET at boot.
 
 [[vm]]
   memory = "2gb"
