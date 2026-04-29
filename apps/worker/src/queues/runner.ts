@@ -831,6 +831,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyOrgUpdateFields(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "crm.note") {
+          await applyCrmNote(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "deal.set_broker") {
           await applyDealSetBroker(tx, deps, workspace_id, approval);
           return;
@@ -2216,6 +2220,9 @@ async function dispatchBundleItem(
     case "org.update_fields":
       await applyOrgUpdateFields(tx, deps, tenantId, child);
       return true;
+    case "crm.note":
+      await applyCrmNote(tx, deps, tenantId, child);
+      return true;
     case "deal.set_broker":
       await applyDealSetBroker(tx, deps, tenantId, child);
       return true;
@@ -2518,6 +2525,56 @@ async function applyOrgUpdateFields(
       action_type: "org.update_fields",
       org_id: orgId,
       patch,
+    },
+  });
+}
+
+/**
+ * Append a free-form note to an organization's activity timeline.
+ * Body lands on an `organization.note_added` event so the operator
+ * can scroll back to it on the org page; no separate notes table.
+ *
+ * Fed by the chat agent's research-auto-capture path: when research
+ * produces a few paragraphs of analysis worth recalling later, the
+ * model emits one crm.note alongside the structured updates. T1 —
+ * appended automatically, fully reversible by deleting the event row.
+ */
+async function applyCrmNote(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { organizationId?: string; body?: string }
+    | null;
+  const orgId = payload?.organizationId;
+  const body = payload?.body;
+  if (!orgId || !body) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "crm.note",
+      "missing organizationId / body",
+    );
+    return;
+  }
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "organization.note_added",
+    subjectType: "organization",
+    subjectId: orgId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "crm.note",
+      org_id: orgId,
+      body,
     },
   });
 }

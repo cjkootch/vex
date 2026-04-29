@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.20.2026-04-29";
+export const QUERY_PROMPT_VERSION = "v7.21.2026-04-29";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -830,10 +830,18 @@ mappings:
           is idempotent server-side; over-proposing is fine, but
           skip products already present in the evidence pack's
           organization_products list.
-  - Notable ATTRIBUTES surface (state-owned, tier-1, north-africa,
-    joint-venture, integrated-major, family-business, etc.):
-        → propose org.tag (T1) with a short kebab-case slug for
-          each. Skip tags already on the org per evidence.
+  - Notable ATTRIBUTES surface — propose org.tag (T1) with a short
+    kebab-case slug for each. Skip tags already on the org per
+    evidence. Two flavours, both auto-tag-worthy:
+      • FACILITY TYPE — what kind of operation it is. Tag whichever
+        applies based on the research: "refinery", "terminal",
+        "trading-house", "producer", "distributor", "blender",
+        "lpg-importer", "marine-bunker", "wholesaler". Refineries
+        ALWAYS get tagged "refinery" so the operator can filter the
+        companies list to just refineries.
+      • DESCRIPTORS — ownership / scale / region: "state-owned",
+        "tier-1", "north-africa", "joint-venture", "integrated-major",
+        "family-business", "publicly-listed", "private-equity-backed".
   - SCALAR PROFILE FIELDS surface — official website / domain,
     industry classification, headquartered country:
         → propose org.update_fields (T1) with a \`patch\` object
