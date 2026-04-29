@@ -538,6 +538,40 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     notes: z.string().max(1000).optional(),
     rationale: z.string().max(500).optional(),
   }),
+  // org.update_fields: patch top-level scalar fields on an existing
+  // organization. Used by the chat agent's research-auto-capture path
+  // (query.ts v7.19+) to drop discovered facts onto the org row —
+  // domain, industry, and lat/lon for the headquarters. Tier T1
+  // (single-column updates, fully reversible). At least one patch
+  // field must be present; null clears.
+  //
+  // Out of scope here: tags (use org.tag), kind (use org.set_kind),
+  // products (use org.add_product), free-form notes (use crm.note).
+  // This action exists for fields that don't have a dedicated verb.
+  z.object({
+    kind: z.literal("org.update_fields"),
+    tier: z.literal(ApprovalTier.T1),
+    orgId: zUlid,
+    patch: z
+      .object({
+        domain: z.string().max(200).nullable().optional(),
+        industry: z.string().max(200).nullable().optional(),
+        /**
+         * Stamps `geo.country` (ISO 3166-1 alpha-2) on the org. Picked
+         * up by the route_map / port_detail panels and by procur
+         * intelligence calls that filter by country.
+         */
+        country: z.string().length(2).nullable().optional(),
+      })
+      .refine(
+        (p) =>
+          p.domain !== undefined ||
+          p.industry !== undefined ||
+          p.country !== undefined,
+        { message: "patch must include at least one field" },
+      ),
+    rationale: z.string().max(500).optional(),
+  }),
   // deal.set_broker: attach a buy-side or sell-side broker to an
   // existing deal with their own commission + payment terms.
   // Payment terms are free-form text so the agent can capture

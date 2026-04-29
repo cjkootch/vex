@@ -827,6 +827,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyOrgLinkRelationship(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "org.update_fields") {
+          await applyOrgUpdateFields(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "deal.set_broker") {
           await applyDealSetBroker(tx, deps, workspace_id, approval);
           return;
@@ -2209,6 +2213,9 @@ async function dispatchBundleItem(
     case "org.link_relationship":
       await applyOrgLinkRelationship(tx, deps, tenantId, child);
       return true;
+    case "org.update_fields":
+      await applyOrgUpdateFields(tx, deps, tenantId, child);
+      return true;
     case "deal.set_broker":
       await applyDealSetBroker(tx, deps, tenantId, child);
       return true;
@@ -2423,6 +2430,94 @@ async function applyOrgLinkRelationship(
       relationship_type: relationshipType,
       product: payload?.product ?? null,
       relationship_id: row.id,
+    },
+  });
+}
+
+/**
+ * Patch top-level scalar fields on an organization. Fed by the chat
+ * agent's research-auto-capture path: the model gathers facts via
+ * Tavily, decides on confident values for domain / industry /
+ * country, and emits an org.update_fields action so the operator
+ * sees the next time they open the org page.
+ *
+ * Single-column updates, fully reversible. `country` lands inside
+ * the `geo` jsonb (the rest of geo is preserved). `null` in any
+ * scalar clears it. Action validation already enforced "at least
+ * one field present".
+ */
+async function applyOrgUpdateFields(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        orgId?: string;
+        patch?: {
+          domain?: string | null;
+          industry?: string | null;
+          country?: string | null;
+        };
+      }
+    | null;
+  const orgId = payload?.orgId;
+  const patch = payload?.patch;
+  if (!orgId || !patch) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "org.update_fields",
+      "missing orgId / patch",
+    );
+    return;
+  }
+  const [existing] = await tx
+    .select()
+    .from(schema.organizations)
+    .where(eq(schema.organizations.id, orgId))
+    .limit(1);
+  if (!existing) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "org.update_fields",
+      `org ${orgId} not found`,
+    );
+    return;
+  }
+  const set: Record<string, unknown> = { updatedAt: new Date() };
+  if (patch.domain !== undefined) set["domain"] = patch.domain;
+  if (patch.industry !== undefined) set["industry"] = patch.industry;
+  if (patch.country !== undefined) {
+    const existingGeo = (existing.geo ?? {}) as Record<string, unknown>;
+    set["geo"] = patch.country === null
+      ? { ...existingGeo, country: null }
+      : { ...existingGeo, country: patch.country };
+  }
+  await tx
+    .update(schema.organizations)
+    .set(set)
+    .where(eq(schema.organizations.id, orgId));
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "organization.fields_updated",
+    subjectType: "organization",
+    subjectId: orgId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "org.update_fields",
+      org_id: orgId,
+      patch,
     },
   });
 }
