@@ -7,7 +7,12 @@
 ARG CACHE_BUSTER=2026-04-29-crm-note-executor
 
 FROM node:20-bookworm-slim AS base
+ARG CACHE_BUSTER
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# Reference CACHE_BUSTER in a layer so changing the ARG actually
+# invalidates Docker's cache (declaring an ARG without using it is
+# a no-op for cache-key purposes).
+RUN echo "cache-buster=$CACHE_BUSTER" > /tmp/cache-buster.txt
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /repo
 

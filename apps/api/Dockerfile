@@ -8,7 +8,15 @@
 ARG CACHE_BUSTER=2026-04-29-prompt-v7.22
 
 FROM node:20-bookworm-slim AS base
+ARG CACHE_BUSTER
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# Stamp CACHE_BUSTER into a layer so changing the ARG actually
+# invalidates the cache. Without this RUN reference, the ARG is
+# declared but never consumed — bumping the default value is a no-op
+# and Depot serves the previously-built layer regardless. The
+# bug-trap: chat agent ran v7.17 prompt for hours after we shipped
+# v7.18 → v7.22 because none of the rebuilds actually re-ran tsc.
+RUN echo "cache-buster=$CACHE_BUSTER" > /tmp/cache-buster.txt
 RUN corepack enable && corepack prepare pnpm@9.12.0 --activate
 WORKDIR /repo
 
