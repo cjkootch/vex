@@ -162,6 +162,17 @@ describe("IngestService.ingestProcurLead", () => {
         jobId: `procur_enrichment:${TENANT}:procur_lead:ch-armasuisse-2026-q2-007`,
       }),
     );
+    expect(mocks.queueAdd).toHaveBeenCalledWith(
+      "research",
+      expect.objectContaining({
+        kind: "research",
+        workspace_id: TENANT,
+        input: { organization_id: "org_1" },
+      }),
+      expect.objectContaining({
+        jobId: `research:${TENANT}:procur_lead:ch-armasuisse-2026-q2-007`,
+      }),
+    );
     expect(result).toEqual({
       leadId: "lead_1",
       orgId: "org_1",

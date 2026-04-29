@@ -156,20 +156,42 @@ export class IngestService {
     });
 
     if (!inner.wasExisting) {
-      try {
-        await addAgentJob(
+      // Two parallel enrichment passes for the new org:
+      //   - procur_enrichment: pulls supplier intelligence back from
+      //     procur (award history, distress signals, etc.)
+      //   - research: org-level web research via Anthropic — generates
+      //     a brief and may bump fit_score
+      // Both keyed on `procur_lead:${opportunityId}` so re-clicking
+      // the button doesn't pile on duplicate jobs.
+      const dedupe = `procur_lead:${payload.procurOpportunityId}`;
+      const enqueues: Array<Promise<void>> = [
+        addAgentJob(
           this.agentsQueue,
           {
             kind: "procur_enrichment",
             workspace_id: tenantId,
             input: { organization_id: inner.orgId },
           },
-          `procur_lead:${payload.procurOpportunityId}`,
-        );
-      } catch (err) {
-        this.log.warn(
-          `procur_enrichment enqueue failed for org=${inner.orgId}: ${(err as Error).message}`,
-        );
+          dedupe,
+        ),
+        addAgentJob(
+          this.agentsQueue,
+          {
+            kind: "research",
+            workspace_id: tenantId,
+            input: { organization_id: inner.orgId },
+          },
+          dedupe,
+        ),
+      ];
+      const results = await Promise.allSettled(enqueues);
+      for (const [i, r] of results.entries()) {
+        if (r.status === "rejected") {
+          const kind = i === 0 ? "procur_enrichment" : "research";
+          this.log.warn(
+            `${kind} enqueue failed for org=${inner.orgId}: ${(r.reason as Error).message}`,
+          );
+        }
       }
     }
 
