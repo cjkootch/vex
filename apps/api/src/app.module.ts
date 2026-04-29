@@ -16,6 +16,7 @@ import { FollowUpsModule } from "./follow-ups/follow-ups.module.js";
 import { ContactsModule } from "./contacts/contacts.module.js";
 import { DealsModule } from "./deals/deals.module.js";
 import { LeadsModule } from "./leads/leads.module.js";
+import { IngestModule } from "./ingest/ingest.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { MarketingModule } from "./marketing/marketing.module.js";
 import { SearchModule } from "./search/search.module.js";
@@ -39,6 +40,7 @@ export interface AppModuleConfig {
   contacts?: DynamicModule;
   deals?: DynamicModule;
   leads?: DynamicModule;
+  ingest?: DynamicModule;
   events?: DynamicModule;
   marketing?: DynamicModule;
   organizations?: DynamicModule;
@@ -50,6 +52,8 @@ export interface AppModuleConfig {
   ports?: DynamicModule;
   health?: DynamicModule;
   nextAuthSecret: string;
+  /** Bearer token for inbound ingest endpoints. Null = guard fails closed. */
+  vexApiToken: string | null;
 }
 
 /**
@@ -85,7 +89,10 @@ export class AppModule {
         { name: THROTTLER_NAMES.query, ttl: 60_000, limit: 10 },
         { name: THROTTLER_NAMES.webhooks, ttl: 60_000, limit: 500 },
       ]),
-      AuthModule.register({ nextAuthSecret: config.nextAuthSecret }),
+      AuthModule.register({
+        nextAuthSecret: config.nextAuthSecret,
+        vexApiToken: config.vexApiToken,
+      }),
       config.webhooks,
     ];
     if (config.query) imports.push(config.query);
@@ -99,6 +106,7 @@ export class AppModule {
     if (config.contacts) imports.push(config.contacts);
     if (config.deals) imports.push(config.deals);
     if (config.leads) imports.push(config.leads);
+    if (config.ingest) imports.push(config.ingest);
     if (config.events) imports.push(config.events);
     if (config.marketing) imports.push(config.marketing);
     if (config.organizations) imports.push(config.organizations);
@@ -134,6 +142,7 @@ export {
   ContactsModule,
   DealsModule,
   LeadsModule,
+  IngestModule,
   EventsModule,
   MarketingModule,
   OrganizationsModule,

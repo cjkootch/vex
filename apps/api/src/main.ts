@@ -23,6 +23,7 @@ import {
   FuelDealParticipantRepository,
   FuelDealRepository,
   FuelMarketRateRepository,
+  LeadRepository,
   OfacScreenRepository,
   PortRepository,
   VesselRepository,
@@ -76,6 +77,7 @@ import { DealsModule } from "./deals/deals.module.js";
 import { VesselsModule } from "./vessels/vessels.module.js";
 import { PortsModule } from "./ports/ports.module.js";
 import { LeadsModule } from "./leads/leads.module.js";
+import { IngestModule } from "./ingest/ingest.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { MarketingModule } from "./marketing/marketing.module.js";
 import { OrganizationsModule } from "./organizations/organizations.module.js";
@@ -125,6 +127,7 @@ async function bootstrap(): Promise<void> {
   const organizationRelationshipRepository =
     new OrganizationRelationshipRepository();
   const contactRepository = new ContactRepository();
+  const leadRepository = new LeadRepository();
   const summaryRepository = new SummaryRepository();
   const touchpointRepository = new TouchpointRepository();
   const followUpRepository = new FollowUpRepository();
@@ -245,6 +248,7 @@ async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.register({
       nextAuthSecret: env.NEXTAUTH_SECRET,
+      vexApiToken: env.VEX_API_TOKEN ?? null,
       webhooks: WebhooksModule.register({
         db,
         rawEventRepository,
@@ -319,6 +323,16 @@ async function bootstrap(): Promise<void> {
       vessels: VesselsModule.register({ db, vessels: vesselRepository }),
       ports: PortsModule.register({ db, ports: portRepository }),
       leads: LeadsModule.register({ db }),
+      ingest: IngestModule.register({
+        db,
+        organizations: organizationRepository,
+        contacts: contactRepository,
+        leads: leadRepository,
+        events: eventRepository,
+        agentsQueue: queues.agents,
+        defaultTenantId: env.DEFAULT_WORKSPACE_ID,
+        webAppBaseUrl: env.NEXTAUTH_URL ?? null,
+      }),
       events: EventsModule.register({ db }),
       marketing: MarketingModule.register({
         db,
