@@ -79,6 +79,10 @@ export interface OrganizationListRow {
   fitScore: number | null;
   status: string;
   contactCount: number;
+  /** Free-form tags applied via org.tag (refinery, state-owned, …). */
+  tags: string[];
+  /** Counterparty role: buyer / supplier / broker / etc. Null until classified. */
+  kind: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -166,6 +170,8 @@ export class OrganizationsController {
           fitScore: row.fitScore,
           status: row.status,
           contactCount: counts.get(row.id) ?? 0,
+          tags: row.tags ?? [],
+          kind: row.kind,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),
         }));
@@ -268,6 +274,8 @@ export class OrganizationsController {
         fitScore: organization.fitScore,
         status: organization.status,
         contactCount: 0,
+        tags: organization.tags ?? [],
+        kind: organization.kind,
         createdAt: organization.createdAt.toISOString(),
         updatedAt: organization.updatedAt.toISOString(),
       },
@@ -483,6 +491,8 @@ export class OrganizationsController {
         sourceOfTruth: after.sourceOfTruth,
         externalKeys: after.externalKeys,
         contactCount: contacts.length,
+        tags: after.tags ?? [],
+        kind: after.kind,
         createdAt: after.createdAt.toISOString(),
         updatedAt: after.updatedAt.toISOString(),
         contacts: contacts.map((c) => ({
@@ -575,6 +585,8 @@ export class OrganizationsController {
           sourceOfTruth: row.sourceOfTruth,
           externalKeys: row.externalKeys,
           contactCount: contacts.length,
+          tags: row.tags ?? [],
+          kind: row.kind,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),
           contacts: contacts.map((c) => ({

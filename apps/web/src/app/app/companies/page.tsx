@@ -20,6 +20,8 @@ interface OrganizationRow {
   fitScore: number | null;
   status: string;
   contactCount: number;
+  tags: string[];
+  kind: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -37,6 +39,7 @@ export default function CompaniesPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [industryFilter, setIndustryFilter] = useState<string>("");
   const [fitFilter, setFitFilter] = useState<FitFilter>("");
+  const [tagFilter, setTagFilter] = useState<string>("");
 
   useEffect(() => {
     let cancelled = false;
@@ -95,6 +98,7 @@ export default function CompaniesPage() {
     return organizations.filter((o) => {
       if (statusFilter && o.status !== statusFilter) return false;
       if (industryFilter && o.industry !== industryFilter) return false;
+      if (tagFilter && !(o.tags ?? []).includes(tagFilter)) return false;
       if (fitFilter) {
         const s = o.fitScore;
         if (fitFilter === "unknown" && s !== null) return false;
@@ -107,10 +111,29 @@ export default function CompaniesPage() {
       return (
         o.legalName.toLowerCase().includes(q) ||
         (o.domain?.toLowerCase().includes(q) ?? false) ||
-        (o.industry?.toLowerCase().includes(q) ?? false)
+        (o.industry?.toLowerCase().includes(q) ?? false) ||
+        (o.tags ?? []).some((t) => t.toLowerCase().includes(q))
       );
     });
-  }, [organizations, search, statusFilter, industryFilter, fitFilter]);
+  }, [organizations, search, statusFilter, industryFilter, fitFilter, tagFilter]);
+
+  // Build the tag facet from currently-loaded orgs. We only surface
+  // tags that actually appear on a row in this workspace — no point
+  // showing "refinery" as a filter option if there are no refineries
+  // tagged. Sorted by count desc so the most useful filters bubble
+  // up; ties break alphabetically for stability.
+  const tagFacet = useMemo(() => {
+    if (!organizations) return [] as Array<{ tag: string; count: number }>;
+    const counts = new Map<string, number>();
+    for (const o of organizations) {
+      for (const tag of o.tags ?? []) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    return Array.from(counts.entries())
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  }, [organizations]);
 
   const statusCounts = useMemo(() => {
     const all = organizations?.length ?? 0;
@@ -216,7 +239,8 @@ export default function CompaniesPage() {
     Boolean(search) ||
     statusFilter !== "active" ||
     Boolean(industryFilter) ||
-    Boolean(fitFilter);
+    Boolean(fitFilter) ||
+    Boolean(tagFilter);
 
   return (
     <div className="mx-auto flex h-full max-w-7xl flex-col gap-4 px-6 py-6">
@@ -296,6 +320,8 @@ export default function CompaniesPage() {
                     fitScore: null,
                     status: "active",
                     contactCount: 0,
+                    tags: [],
+                    kind: null,
                     createdAt: new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
                   },
@@ -361,6 +387,23 @@ export default function CompaniesPage() {
                 </select>
               </div>
             ) : null}
+            {tagFacet.length > 0 ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-eyebrow text-text-muted">Tag</span>
+                <select
+                  value={tagFilter}
+                  onChange={(e) => setTagFilter(e.target.value)}
+                  className="rounded-md border border-line-soft bg-surface-2/60 px-2 py-1 text-xs text-text-primary transition-colors focus:border-accent focus:outline-none"
+                >
+                  <option value="">All</option>
+                  {tagFacet.map(({ tag, count }) => (
+                    <option key={tag} value={tag}>
+                      {tag} ({count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             {anyFilterActive ? (
               <button
                 type="button"
@@ -369,6 +412,7 @@ export default function CompaniesPage() {
                   setStatusFilter("active");
                   setIndustryFilter("");
                   setFitFilter("");
+                  setTagFilter("");
                 }}
                 className="text-xs text-text-muted transition-colors hover:text-text-secondary"
               >
