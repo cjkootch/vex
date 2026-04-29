@@ -392,6 +392,15 @@ function actionKey(a: ProposedAction): string {
     return `org.add_product:${orgId}:${String(p["product"] ?? "")}`;
   if (a.kind === "org.set_kind")
     return `org.set_kind:${orgId}:${String(p["orgKind"] ?? "")}`;
-  if (a.kind === "org.update_fields") return `org.update_fields:${orgId}`;
+  if (a.kind === "org.update_fields") {
+    // Per-field dedupe: model and extractor often emit overlapping
+    // org.update_fields for the same org but with different patch
+    // keys (model: industry; extractor: country). Keying on orgId
+    // alone wiped both. Dedupe per (orgId, patch-field-set) so the
+    // executor gets the union of both, applied as one patch each.
+    const patch = (p["patch"] ?? {}) as Record<string, unknown>;
+    const keys = Object.keys(patch).sort().join(",");
+    return `org.update_fields:${orgId}:${keys}`;
+  }
   return `${a.kind}:${orgId}`;
 }

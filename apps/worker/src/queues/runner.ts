@@ -729,7 +729,14 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
       const approval = await deps.approvals.findById(tx, approval_id);
       if (!approval) return;
 
-      if (approval.decision === "approved") {
+      // T1 chat actions land as `auto_approved` (no operator gate);
+      // operator-reviewed T2/T3 land as `approved`. Both should
+      // execute through this dispatch — the gate only rejects
+      // `pending` (not yet decided) and `rejected`.
+      if (
+        approval.decision === "approved" ||
+        approval.decision === "auto_approved"
+      ) {
         if (approval.actionType === "deal.status_change") {
           await applyDealStatusChange(tx, deps, workspace_id, approval);
           return;
