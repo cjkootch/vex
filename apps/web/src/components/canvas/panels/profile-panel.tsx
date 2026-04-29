@@ -5,7 +5,27 @@ import type { ManifestPanel } from "@vex/ui";
 
 type ProfileProps = Extract<ManifestPanel, { type: "profile" }>;
 
+/**
+ * Map the prompt-canonical objectType to the actual web route segment.
+ * Profile panels reference entities by their domain-model name
+ * ("organization", "contact"), but the routes live under their plural
+ * page-folder names ("companies", "contacts"). Without this mapping
+ * the linkified profile-panel header 404s for orgs.
+ *
+ * Add to this map whenever a new entity type is added to the manifest.
+ */
+const ROUTE_SEGMENT_BY_OBJECT_TYPE: Record<string, string> = {
+  organization: "companies",
+  organizations: "companies",
+  contact: "contacts",
+  contacts: "contacts",
+  deal: "deals",
+  fuel_deal: "deals",
+  campaign: "marketing",
+};
+
 export function ProfilePanel({ objectType, objectId, fields }: ProfileProps) {
+  const segment = ROUTE_SEGMENT_BY_OBJECT_TYPE[objectType] ?? objectType;
   return (
     <section
       data-panel="profile"
@@ -13,7 +33,7 @@ export function ProfilePanel({ objectType, objectId, fields }: ProfileProps) {
     >
       <div className="mb-3 flex items-start justify-between">
         <Link
-          href={`/app/${encodeURIComponent(objectType)}/${encodeURIComponent(objectId)}`}
+          href={`/app/${encodeURIComponent(segment)}/${encodeURIComponent(objectId)}`}
           className="text-sm font-semibold text-white hover:underline"
         >
           {fields["Name"] ?? fields["name"] ?? objectId}
