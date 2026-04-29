@@ -92,7 +92,14 @@ export function extractOrgActionsFromPanels(
     }
 
     // org.tag — Ownership signals (state-owned / joint-venture / etc.)
-    const ownership = pickField(fields, ["Ownership", "Ownership Structure"]);
+    // "Structure" alone is what the model emits when it's referring
+    // to ownership structure — caught in production logs (the panel
+    // had Industry/Type/Country/Structure/Capacity/Products/Contact).
+    const ownership = pickField(fields, [
+      "Ownership",
+      "Ownership Structure",
+      "Structure",
+    ]);
     if (ownership) {
       for (const tag of ownershipToTags(ownership)) {
         out.push({

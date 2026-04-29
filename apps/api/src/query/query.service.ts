@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger } from "@nestjs/common";
+import type { Queue } from "bullmq";
 import {
   ApprovalRepository,
   EventRepository,
@@ -7,6 +8,10 @@ import {
   type Db,
   type RetrievalService,
 } from "@vex/db";
+import {
+  addApprovalExecutorJob,
+  type ApprovalExecutorJobData,
+} from "@vex/agents";
 import type {
   AnthropicAdapter,
   OpenAIAdapter,
@@ -22,8 +27,10 @@ import type { CostLedger } from "@vex/telemetry";
 import { pricing, unitsToUsdMicros } from "@vex/integrations";
 import {
   ANTHROPIC_ADAPTER,
+  APPROVAL_EXECUTOR_QUEUE,
   COST_LEDGER,
   DB_CLIENT,
+  DEFAULT_WORKSPACE_ID,
   OPENAI_ADAPTER,
   RETRIEVAL_SERVICE,
   TAVILY_CLIENT,
@@ -119,6 +126,10 @@ export class QueryService {
     @Inject(ANTHROPIC_ADAPTER) private readonly anthropic: AnthropicAdapter,
     @Inject(TAVILY_CLIENT) private readonly tavily: TavilyClient | null,
     @Inject(COST_LEDGER) private readonly costLedger: CostLedger,
+    @Inject(APPROVAL_EXECUTOR_QUEUE)
+    private readonly approvalExecutorQueue: Queue<ApprovalExecutorJobData>,
+    @Inject(DEFAULT_WORKSPACE_ID)
+    private readonly defaultWorkspaceId: string,
   ) {}
 
   /**
@@ -368,7 +379,17 @@ export class QueryService {
     agentRunId: AgentRunId | undefined,
     actions: ProposedAction[],
   ): Promise<{ created: CreatedApproval[]; rejected: RejectedProposal[] }> {
-    const tierCandidates = actions.filter((a) => APPROVAL_TIERS.has(a.tier));
+    // T1 actions used to be silently dropped here — only T2/T3 went
+    // into the approval queue. That broke the chat's auto-capture
+    // path: org.update_fields / org.tag / org.set_kind / crm.note
+    // are all T1 and never executed even though the model emitted
+    // them correctly. Now T1 lands as auto_approved approvals + an
+    // immediate executor enqueue, so the same worker dispatch the
+    // operator-approval path uses applies them. Operator never sees
+    // a gate; chat-driven mutations finally persist.
+    const persistable = actions.filter(
+      (a) => a.tier === "T1" || APPROVAL_TIERS.has(a.tier),
+    );
     // Validate each candidate against the ActionDescriptor zod schema
     // before persisting. Claude occasionally emits a shape that's
     // close-but-not-quite (missing toNumber on outbound_call, wrong
@@ -379,7 +400,7 @@ export class QueryService {
     // silently didn't land instead of wondering why chat ignored it.
     const pending: ProposedAction[] = [];
     const rejected: RejectedProposal[] = [];
-    for (const a of tierCandidates) {
+    for (const a of persistable) {
       const flattened = {
         kind: a.kind,
         tier: a.tier,
@@ -401,6 +422,8 @@ export class QueryService {
     }
     if (pending.length === 0) return { created: [], rejected };
     const created: CreatedApproval[] = [];
+    /** Approvals to enqueue post-tx (T1 auto-approved actions only). */
+    const autoApprovedIds: string[] = [];
     try {
       await withTenant(this.db, tenantId, async (tx) => {
         for (const action of pending) {
@@ -413,6 +436,12 @@ export class QueryService {
               ...(action.rationale ? { rationale: action.rationale } : {}),
             },
           });
+          // T1 auto-approves immediately. T2/T3 stay pending for the
+          // operator. Same approvals row shape, just different decision.
+          if (action.tier === "T1") {
+            await this.approvals.decide(tx, approval.id, "auto_approved", null);
+            autoApprovedIds.push(approval.id);
+          }
           await this.events.insertIfNotExists(tx, tenantId, {
             verb: "approval.created",
             subjectType: "approval",
@@ -428,6 +457,7 @@ export class QueryService {
               tier: action.tier,
               source: "chat",
               audit_event_id: createId(),
+              ...(action.tier === "T1" ? { auto_approved: true } : {}),
             },
           });
           created.push({
@@ -437,6 +467,22 @@ export class QueryService {
           });
         }
       });
+
+      // Enqueue executor for the auto-approved T1 batch. Done outside
+      // the tx so a Redis hiccup can't fail the approval row write —
+      // the row is the source of truth, the queue is the trigger.
+      for (const approvalId of autoApprovedIds) {
+        try {
+          await addApprovalExecutorJob(this.approvalExecutorQueue, {
+            approval_id: approvalId,
+            workspace_id: this.defaultWorkspaceId,
+          });
+        } catch (err) {
+          this.log.warn(
+            `T1 auto-approve executor enqueue failed for ${approvalId}: ${(err as Error).message}`,
+          );
+        }
+      }
     } catch (err) {
       this.log.warn(
         `failed to persist ${pending.length} chat-proposed action(s): ${(err as Error).message}`,

@@ -262,7 +262,16 @@ async function bootstrap(): Promise<void> {
         websiteChatSecret: env.WEBSITE_CHAT_WEBHOOK_SECRET,
         resolveTenant: () => env.DEFAULT_WORKSPACE_ID,
       }),
-      query: QueryModule.register({ db, retrieval, openai, anthropic, tavily, costLedger }),
+      query: QueryModule.register({
+        db,
+        retrieval,
+        openai,
+        anthropic,
+        tavily,
+        costLedger,
+        approvalExecutorQueue: queues.approvalExecutor,
+        defaultWorkspaceId: env.DEFAULT_WORKSPACE_ID,
+      }),
       approvals: ApprovalsModule.register({
         db,
         approvals: approvalRepository,
