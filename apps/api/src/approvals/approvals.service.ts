@@ -268,7 +268,26 @@ export class ApprovalsService {
   }
 
   async approve(args: DecisionArgs): Promise<Approval> {
+    // Idempotency for chat-driven auto-approved bundles. The chat UI
+    // shows Approve/Reject chips even on rows that already have
+    // decision=auto_approved (the chat T1 path); clicking Approve
+    // used to bubble a 500 ("could not be decided"). Treat as a no-op
+    // success — the executor already ran or is already enqueued.
+    const earlyExit = await withTenant(
+      this.db,
+      args.tenantId,
+      async (tx) => {
+        const row = await this.approvals.findById(tx, args.approvalId);
+        return row &&
+          (row.decision === "auto_approved" || row.decision === "approved")
+          ? row
+          : null;
+      },
+    );
+    if (earlyExit) return earlyExit;
+
     const decided = await withTenant(this.db, args.tenantId, async (tx) => {
+
       // When the reviewer ticked/unticked items in a bundle, trim the
       // payload to the selected subset before marking approved. The
       // executor dispatches whatever items remain on the payload at
