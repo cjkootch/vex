@@ -9,6 +9,7 @@ import type {
   PortRepository,
   WorkspaceRepository,
 } from "@vex/db";
+import type { ProcurClient } from "@vex/integrations";
 import { AdminController } from "./admin.controller.js";
 import { AdminService } from "./admin.service.js";
 import {
@@ -20,6 +21,7 @@ import {
   ADMIN_OFAC_SCREENS_REPO,
   ADMIN_ORGANIZATIONS_REPO,
   ADMIN_PORTS_REPO,
+  ADMIN_PROCUR_CLIENT,
   ADMIN_WORKSPACES_REPO,
 } from "./tokens.js";
 
@@ -47,6 +49,8 @@ export interface AdminModuleConfig {
   organizations: OrganizationRepository;
   ports: PortRepository;
   agentsQueue: Queue<AgentJobData>;
+  /** Procur HTTP client. Always present; isEnabled() = false when env is unset. */
+  procur: ProcurClient;
 }
 
 @Module({})
@@ -77,6 +81,7 @@ export class AdminModule {
           useFactory: () => config.agentsQueue,
         },
         { provide: ADMIN_PORTS_REPO, useFactory: () => config.ports },
+        { provide: ADMIN_PROCUR_CLIENT, useFactory: () => config.procur },
         AdminService,
       ],
     };

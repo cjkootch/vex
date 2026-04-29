@@ -28,6 +28,7 @@ import {
   type PortEvent,
   type PortRepository,
 } from "@vex/db";
+import type { ProcurClient } from "@vex/integrations";
 import { JwtAuthGuard, RequireRole, RolesGuard, TenantContext } from "../auth/index.js";
 import { AdminService } from "./admin.service.js";
 import {
@@ -38,6 +39,7 @@ import {
   ADMIN_OFAC_SCREENS_REPO,
   ADMIN_ORGANIZATIONS_REPO,
   ADMIN_PORTS_REPO,
+  ADMIN_PROCUR_CLIENT,
 } from "./tokens.js";
 import type { IntegrationStatus } from "./admin.module.js";
 
@@ -83,6 +85,8 @@ export class AdminController {
     private readonly agentsQueue: Queue<AgentJobData>,
     @Inject(ADMIN_PORTS_REPO)
     private readonly portsRepo: PortRepository,
+    @Inject(ADMIN_PROCUR_CLIENT)
+    private readonly procur: ProcurClient,
   ) {}
 
   @Get("settings")
@@ -142,6 +146,85 @@ export class AdminController {
   @Get("integrations")
   async getIntegrations(): Promise<{ integrations: IntegrationStatus[] }> {
     return { integrations: this.integrations };
+  }
+
+  /**
+   * Procur HTTP API healthcheck — runs a small battery of read-only
+   * calls against procur's `/intelligence/*` endpoints and returns
+   * each result verbatim. Useful for confirming env wiring,
+   * authentication, and what shape of data procur is returning at
+   * the moment.
+   *
+   * Query params (all optional):
+   *   ?supplier=<name>        — name to feed to analyzeSupplier
+   *   ?country=<ISO-2>        — country for findRecentCargoes
+   *   ?days=<number>          — lookback days for findRecentCargoes
+   *
+   * Failure semantics: every probe is surfaced as a `{ ok, ... }`
+   * object — no method ever throws past the controller. If procur
+   * is `disabled` (env unset) you'll get `disabled` rows for each
+   * probe; if procur is up but returning errors you'll see the
+   * specific `reason` per call.
+   */
+  @Get("procur/healthcheck")
+  async procurHealthcheck(
+    @Query("supplier") supplier?: string,
+    @Query("country") country?: string,
+    @Query("days") daysRaw?: string,
+  ): Promise<{
+    isEnabled: boolean;
+    probes: Array<{
+      method: string;
+      args: Record<string, unknown>;
+      result: unknown;
+    }>;
+  }> {
+    const supplierName = supplier?.trim() || "Refidomsa";
+    const buyerCountry = country?.trim()?.toUpperCase() || "DO";
+    const daysLookback = Number.parseInt(daysRaw ?? "30", 10) || 30;
+
+    const probes = await Promise.all([
+      (async () => ({
+        method: "analyzeSupplier",
+        args: { supplierName },
+        result: await this.procur.analyzeSupplier({ supplierName }),
+      }))(),
+      (async () => ({
+        method: "findRecentCargoes",
+        args: { destinationCountry: buyerCountry, daysLookback },
+        result: await this.procur.findRecentCargoes({
+          destinationCountry: buyerCountry,
+          daysLookback,
+        }),
+      }))(),
+      (async () => ({
+        method: "findDistressedSuppliers",
+        args: { countries: [buyerCountry] },
+        result: await this.procur.findDistressedSuppliers({
+          countries: [buyerCountry],
+        }),
+      }))(),
+      (async () => ({
+        method: "evaluateOffer",
+        args: {
+          categoryTag: "diesel",
+          buyerCountry,
+          offeredPriceUsd: 0.85,
+          offeredPriceUnit: "USD/L",
+        },
+        result: await this.procur.evaluateOffer({
+          categoryTag: "diesel",
+          buyerCountry,
+          offeredPriceUsd: 0.85,
+          offeredPriceUnit: "USD/L",
+        }),
+      }))(),
+    ]);
+
+    return {
+      isEnabled: this.procur.isEnabled(),
+      probes,
+    };
   }
 
   /**

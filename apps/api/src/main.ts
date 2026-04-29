@@ -50,6 +50,7 @@ import {
   SlackNotifier,
   TEMPORAL_TASK_QUEUE,
   createTemporalClient,
+  createProcurClient,
   createResendClient,
   createTavilyClient,
   createTwilioClient,
@@ -194,6 +195,15 @@ async function bootstrap(): Promise<void> {
   const tavily = env.TAVILY_API_KEY
     ? createTavilyClient({ apiKey: env.TAVILY_API_KEY })
     : null;
+
+  // Procur — counterparty intelligence + market context. Always
+  // construct the client; isEnabled() returns false when env is
+  // unset so dependent agents/endpoints degrade gracefully.
+  const procurClient = createProcurClient({
+    baseUrl: env.PROCUR_API_BASE_URL ?? null,
+    apiToken: env.PROCUR_API_TOKEN ?? null,
+    timeoutMs: env.PROCUR_TIMEOUT_MS,
+  });
 
   const voiceSessionStore = new VoiceSessionStore(redis);
   const voiceContextBuilder = new VoiceContextBuilder({
@@ -410,6 +420,7 @@ async function bootstrap(): Promise<void> {
         organizations: organizationRepository,
         ports: portRepository,
         agentsQueue: queues.agents,
+        procur: procurClient,
       }),
       ...(twilio && twilioVerifier
         ? {
