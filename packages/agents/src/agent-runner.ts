@@ -26,6 +26,7 @@ import type {
   AnthropicAdapter,
   OpenAIAdapter,
   ProcurClient,
+  TavilyClient,
 } from "@vex/integrations";
 import type { CostLedger } from "@vex/telemetry";
 import { recordAgentSkipped } from "@vex/telemetry";
@@ -101,6 +102,12 @@ export interface AgentRunnerDeps {
   fuelDealMarketContext: FuelDealMarketContextRepository;
   /** Snapshot freshness window. Default 7. */
   procurCacheTtlDays?: number;
+  /**
+   * Tavily web-search client. Null disables every web-research agent
+   * (ContactEnrichmentAgent in particular). Optional so unit tests
+   * don't have to mock it when the agent under test doesn't use it.
+   */
+  tavily?: TavilyClient | null;
 }
 
 export interface AgentRunRequest {
@@ -224,6 +231,7 @@ export class AgentRunner {
         procurSnapshots: this.deps.procurSnapshots,
         fuelDealMarketContext: this.deps.fuelDealMarketContext,
         procurCacheTtlDays: this.deps.procurCacheTtlDays ?? 7,
+        tavily: this.deps.tavily ?? null,
       };
 
       let output: AgentOutput;

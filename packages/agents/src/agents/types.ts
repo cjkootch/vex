@@ -23,6 +23,7 @@ import type {
   AnthropicAdapter,
   OpenAIAdapter,
   ProcurClient,
+  TavilyClient,
 } from "@vex/integrations";
 import type { CostLedger } from "@vex/telemetry";
 import type { ProposedAction } from "@vex/integrations";
@@ -70,6 +71,11 @@ export interface AgentContext {
   fuelDealMarketContext: FuelDealMarketContextRepository;
   /** Snapshot freshness window. Fed from PROCUR_CACHE_TTL_DAYS env. */
   procurCacheTtlDays: number;
+  /**
+   * Tavily web-search client. Null when TAVILY_API_KEY is unset; agents
+   * that depend on web research must check and degrade gracefully.
+   */
+  tavily: TavilyClient | null;
 }
 
 /**

@@ -245,6 +245,15 @@ export const EnvSchema = z.object({
   /** Snapshot freshness window. Default 7 days. */
   PROCUR_CACHE_TTL_DAYS: z.coerce.number().int().positive().default(7),
 
+  /**
+   * Long-lived bearer token validating the reverse direction —
+   * procur (or any future upstream) calling vex's ingest endpoints
+   * (`POST /ingest/procur/leads`). Must match the value procur sends
+   * in `Authorization: Bearer <…>`. When unset, the API-token guard
+   * fails closed — every ingest call returns 401.
+   */
+  VEX_API_TOKEN: z.string().min(1).optional(),
+
   // Temporal
   TEMPORAL_ADDRESS: z.string().default("localhost:7233"),
   TEMPORAL_NAMESPACE: z.string().default("default"),
