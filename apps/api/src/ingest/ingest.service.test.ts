@@ -38,11 +38,13 @@ function basePayload(
       country: "CH",
       entitySlug: "armasuisse",
     },
-    contact: {
-      name: "M. Dupont",
-      title: "Procurement Officer",
-      email: "m.dupont@armasuisse.ch",
-    },
+    contacts: [
+      {
+        name: "M. Dupont",
+        title: "Procurement Officer",
+        email: "m.dupont@armasuisse.ch",
+      },
+    ],
     estimatedValueUsd: 6_800_000,
     deadline: "2026-05-30",
     quantity: { amount: 8000, unit: "MT" },
@@ -52,16 +54,28 @@ function basePayload(
 
 function buildService(overrides: {
   existingLead?: { id: string; orgId: string; contactId: string | null } | null;
+  contactDedupeResults?: Array<
+    | { kind: "created"; contact: { id: string } }
+    | {
+        kind: "duplicate";
+        contact: { id: string };
+        reason: "email" | "phone" | "name_and_org";
+        matchedValue: string;
+      }
+  >;
 } = {}) {
   const orgUpsert = vi.fn().mockResolvedValue({ id: "org_1", legalName: "Armasuisse" });
   const orgCreateWithDedupe = vi.fn().mockResolvedValue({
     kind: "created",
     organization: { id: "org_1", legalName: "Armasuisse" },
   });
-  const contactCreateWithDedupe = vi.fn().mockResolvedValue({
-    kind: "created",
-    contact: { id: "contact_1" },
-  });
+  const contactCreateWithDedupe = vi.fn();
+  const dedupeResults = overrides.contactDedupeResults ?? [
+    { kind: "created", contact: { id: "contact_1" } },
+  ];
+  for (const r of dedupeResults) {
+    contactCreateWithDedupe.mockResolvedValueOnce(r);
+  }
   const leadFindByExternalKey = vi
     .fn()
     .mockResolvedValue(overrides.existingLead ?? null);
@@ -106,7 +120,7 @@ describe("IngestService.ingestProcurLead", () => {
     vi.clearAllMocks();
   });
 
-  it("creates org via external-key upsert, contact via dedupe-check, and lead with procur idempotency key", async () => {
+  it("creates org via external-key upsert, single contact via dedupe-check, and lead with procur idempotency key", async () => {
     const { service, mocks } = buildService();
 
     const result = await service.ingestProcurLead(basePayload());
@@ -176,10 +190,66 @@ describe("IngestService.ingestProcurLead", () => {
     expect(result).toEqual({
       leadId: "lead_1",
       orgId: "org_1",
-      contactId: "contact_1",
+      contacts: [{ contactId: "contact_1", outcome: "created" }],
       vexUrl: "https://www.vexhq.ai/app/leads/lead_1",
       wasExisting: false,
     });
+  });
+
+  it("ingests N contacts in payload, first becomes lead primary, returns outcome per contact", async () => {
+    const { service, mocks } = buildService({
+      contactDedupeResults: [
+        { kind: "created", contact: { id: "contact_1" } },
+        {
+          kind: "duplicate",
+          contact: { id: "contact_existing" },
+          reason: "email",
+          matchedValue: "j.smith@armasuisse.ch",
+        },
+        { kind: "created", contact: { id: "contact_3" } },
+      ],
+    });
+
+    const payload = basePayload({
+      contacts: [
+        { name: "M. Dupont", email: "m.dupont@armasuisse.ch" },
+        { name: "J. Smith", email: "j.smith@armasuisse.ch" },
+        { name: "P. Müller", email: "p.muller@armasuisse.ch" },
+      ],
+    });
+
+    const result = await service.ingestProcurLead(payload);
+
+    expect(mocks.contactCreateWithDedupe).toHaveBeenCalledTimes(3);
+    expect(mocks.leadCreate).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      expect.objectContaining({ contactId: "contact_1" }),
+    );
+    expect(result.contacts).toEqual([
+      { contactId: "contact_1", outcome: "created" },
+      { contactId: "contact_existing", outcome: "duplicate", matchedOn: "email" },
+      { contactId: "contact_3", outcome: "created" },
+    ]);
+    // Event metadata carries the per-contact outcome list — operator UI
+    // and downstream batch-summary surfaces read this.
+    expect(mocks.eventInsertIfNotExists).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          ingested_contacts: [
+            { contactId: "contact_1", outcome: "created" },
+            {
+              contactId: "contact_existing",
+              outcome: "duplicate",
+              matchedOn: "email",
+            },
+            { contactId: "contact_3", outcome: "created" },
+          ],
+        }),
+      }),
+    );
   });
 
   it("re-clicking returns the existing lead and does not enqueue", async () => {
@@ -196,7 +266,7 @@ describe("IngestService.ingestProcurLead", () => {
     expect(result).toEqual({
       leadId: "lead_existing",
       orgId: "org_existing",
-      contactId: null,
+      contacts: [],
       vexUrl: "https://www.vexhq.ai/app/leads/lead_existing",
       wasExisting: true,
     });
@@ -223,10 +293,10 @@ describe("IngestService.ingestProcurLead", () => {
     );
   });
 
-  it("skips contact creation when contact is omitted", async () => {
+  it("skips contact creation when contacts is omitted", async () => {
     const { service, mocks } = buildService();
     const payload = basePayload();
-    delete payload.contact;
+    delete payload.contacts;
 
     const result = await service.ingestProcurLead(payload);
 
@@ -236,7 +306,7 @@ describe("IngestService.ingestProcurLead", () => {
       TENANT,
       expect.objectContaining({ contactId: null }),
     );
-    expect(result.contactId).toBeNull();
+    expect(result.contacts).toEqual([]);
   });
 
   it("returns vexUrl=null when webAppBaseUrl is unset", async () => {

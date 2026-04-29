@@ -11,6 +11,7 @@ import {
 } from "@vex/db";
 import { createId } from "@vex/domain";
 import type {
+  IngestedContact,
   ProcurLeadIngestPayload,
   ProcurLeadIngestResult,
 } from "./dto.js";
@@ -81,10 +82,16 @@ export class IngestService {
         payload.procurOpportunityId,
       );
       if (existing) {
+        // Re-click: don't re-touch contacts, just surface the lead's
+        // primary so the operator can navigate. Other contacts at the
+        // org are already discoverable via /app/organizations/:id.
+        const contacts: IngestedContact[] = existing.contactId
+          ? [{ contactId: existing.contactId, outcome: "duplicate" }]
+          : [];
         return {
           leadId: existing.id,
           orgId: existing.orgId,
-          contactId: existing.contactId,
+          contacts,
           wasExisting: true,
         };
       }
@@ -111,25 +118,42 @@ export class IngestService {
             })
           ).organization;
 
-      let contactId: string | null = null;
-      if (payload.contact) {
-        const created = await this.contacts.createWithDedupeCheck(
+      // Loop over contacts. Each gets dedupe'd against existing rows
+      // (email > phone > name+org); duplicates are surfaced as
+      // `outcome: "duplicate"` so procur's UI can show "merged with
+      // existing contact" instead of falsely claiming a new row.
+      const ingestedContacts: IngestedContact[] = [];
+      for (const c of payload.contacts ?? []) {
+        const result = await this.contacts.createWithDedupeCheck(
           tx,
           tenantId,
           {
             id: createId(),
             orgId: org.id,
-            fullName: payload.contact.name,
-            title: payload.contact.title ?? null,
-            emails: payload.contact.email ? [payload.contact.email] : [],
+            fullName: c.name,
+            title: c.title ?? null,
+            emails: c.email ? [c.email] : [],
+            phones: c.phone ? [c.phone] : [],
           },
         );
-        contactId = created.contact.id;
+        if (result.kind === "created") {
+          ingestedContacts.push({
+            contactId: result.contact.id,
+            outcome: "created",
+          });
+        } else {
+          ingestedContacts.push({
+            contactId: result.contact.id,
+            outcome: "duplicate",
+            matchedOn: result.reason,
+          });
+        }
       }
 
+      const primaryContactId = ingestedContacts[0]?.contactId ?? null;
       const lead = await this.leads.create(tx, tenantId, {
         orgId: org.id,
-        contactId,
+        contactId: primaryContactId,
         status: "new",
         stage: "procur_inbound",
         qualificationSummary: buildLeadSummary(payload),
@@ -144,13 +168,16 @@ export class IngestService {
         actorId: "procur",
         occurredAt: new Date(),
         idempotencyKey: `procur:${payload.procurOpportunityId}:lead.created`,
-        metadata: payload as unknown as Record<string, unknown>,
+        metadata: {
+          ...(payload as unknown as Record<string, unknown>),
+          ingested_contacts: ingestedContacts,
+        },
       });
 
       return {
         leadId: lead.id,
         orgId: org.id,
-        contactId,
+        contacts: ingestedContacts,
         wasExisting: false,
       };
     });

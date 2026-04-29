@@ -26,12 +26,16 @@ export const ProcurLeadIngestSchema = z.object({
     entitySlug: z.string().min(1).max(200).optional(),
     domain: z.string().max(200).optional(),
   }),
-  contact: z
-    .object({
-      name: z.string().min(1).max(200),
-      title: z.string().max(200).optional(),
-      email: z.string().email().optional(),
-    })
+  contacts: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(200),
+        title: z.string().max(200).optional(),
+        email: z.string().email().optional(),
+        phone: z.string().max(40).optional(),
+      }),
+    )
+    .max(50)
     .optional(),
   estimatedValueUsd: z.number().nonnegative().optional(),
   /** ISO-8601 date string (YYYY-MM-DD) — kept as text to stay timezone-agnostic. */
@@ -48,10 +52,18 @@ export const ProcurLeadIngestSchema = z.object({
 
 export type ProcurLeadIngestPayload = z.infer<typeof ProcurLeadIngestSchema>;
 
+export interface IngestedContact {
+  contactId: string;
+  /** "created" = brand new row; "duplicate" = matched an existing contact by email/phone/name+org. */
+  outcome: "created" | "duplicate";
+  matchedOn?: "email" | "phone" | "name_and_org";
+}
+
 export interface ProcurLeadIngestResult {
   leadId: string;
   orgId: string;
-  contactId: string | null;
+  /** First entry (if any) is the lead's primary contact. */
+  contacts: IngestedContact[];
   vexUrl: string | null;
   /** True when this opportunity was already ingested previously. */
   wasExisting: boolean;
