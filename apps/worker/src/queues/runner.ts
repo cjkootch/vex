@@ -2,6 +2,7 @@ import type { Job, Queue, Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import {
   AgentRunner,
+  ContactEnrichmentAgent,
   DailyBriefAgent,
   EmailReplyDraftAgent,
   FollowUpAgent,
@@ -76,6 +77,7 @@ import {
   buildDefaultSignature,
   createProcurClient,
   createResendClient,
+  createTavilyClient,
   createTwilioClient,
   renderEmailWithSignature,
   SlackNotifier,
@@ -152,6 +154,12 @@ export interface QueueRunnerOptions {
     timeoutMs?: number;
     cacheTtlDays?: number;
   } | null;
+  /**
+   * Tavily web-search API key. Powers the ContactEnrichmentAgent's
+   * search step; null disables that agent (skipped with
+   * `outcome: "tavily_disabled"`).
+   */
+  tavilyApiKey?: string | null;
   /**
    * Twilio callback URLs used by the Temporal-less outbound_call
    * fallback. When Temporal is down (`temporal` above is null) but
@@ -239,6 +247,9 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       ? { timeoutMs: options.procur.timeoutMs }
       : {}),
   });
+  const tavilyClient = options.tavilyApiKey
+    ? createTavilyClient({ apiKey: options.tavilyApiKey })
+    : null;
   const runner = new AgentRunner({
     db,
     workspaces: repos.workspaces,
@@ -263,6 +274,7 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
     procur: procurClient,
     procurSnapshots: repos.procurSnapshots,
     fuelDealMarketContext: repos.fuelDealMarketContext,
+    tavily: tavilyClient,
     ...(options.procur?.cacheTtlDays
       ? { procurCacheTtlDays: options.procur.cacheTtlDays }
       : {}),
@@ -607,6 +619,18 @@ function buildAgentProcessor(
             organizationId: orgIdRaw,
             ...(force ? { force: true } : {}),
           }),
+          { workspaceId: data.workspace_id },
+        );
+      }
+      case "contact_enrichment": {
+        const contactIdRaw = data.input?.["contact_id"];
+        if (typeof contactIdRaw !== "string") {
+          throw new Error(
+            "contact_enrichment job missing input.contact_id",
+          );
+        }
+        return runner.run(
+          new ContactEnrichmentAgent({ contactId: contactIdRaw }),
           { workspaceId: data.workspace_id },
         );
       }

@@ -109,6 +109,7 @@ export {
   VesselIntelligenceAgent,
   EmailReplyDraftAgent,
   ProcurEnrichmentAgent,
+  ContactEnrichmentAgent,
   sanctionsExposureRiskFor,
   type AgentContext,
   type AgentOutput,
@@ -122,6 +123,7 @@ export {
   type VesselIntelligenceInput,
   type EmailReplyDraftAgentInput,
   type ProcurEnrichmentInput,
+  type ContactEnrichmentAgentInput,
 } from "./agents/index.js";
 export {
   evaluateGate,

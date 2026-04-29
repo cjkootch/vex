@@ -1,6 +1,10 @@
 export { QUERY_SYSTEM_PROMPT, QUERY_PROMPT_VERSION } from "./query.js";
 export { DAILY_BRIEF_SYSTEM_PROMPT, DAILY_BRIEF_PROMPT_VERSION } from "./daily-brief.js";
 export { RESEARCH_SYSTEM_PROMPT, RESEARCH_PROMPT_VERSION } from "./research.js";
+export {
+  CONTACT_ENRICHMENT_SYSTEM_PROMPT,
+  CONTACT_ENRICHMENT_PROMPT_VERSION,
+} from "./contact-enrichment.js";
 export { FOLLOW_UP_SYSTEM_PROMPT, FOLLOW_UP_PROMPT_VERSION } from "./follow-up.js";
 export {
   EMAIL_REPLY_DRAFT_SYSTEM_PROMPT,

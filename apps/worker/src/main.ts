@@ -182,6 +182,7 @@ async function main(): Promise<void> {
             cacheTtlDays: env.PROCUR_CACHE_TTL_DAYS,
           }
         : null,
+    tavilyApiKey: env.TAVILY_API_KEY ?? null,
     defaultWorkspaceId: DEFAULT_WORKSPACE_ID,
   });
   // Sprint 12 — the OutboundCallWorkflow needs Twilio + S3 + reachable

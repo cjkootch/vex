@@ -183,40 +183,64 @@ export class IngestService {
     });
 
     if (!inner.wasExisting) {
-      // Two parallel enrichment passes for the new org:
+      // Org-level enrichment passes (one each, keyed on opportunity id):
       //   - procur_enrichment: pulls supplier intelligence back from
       //     procur (award history, distress signals, etc.)
       //   - research: org-level web research via Anthropic — generates
       //     a brief and may bump fit_score
-      // Both keyed on `procur_lead:${opportunityId}` so re-clicking
-      // the button doesn't pile on duplicate jobs.
-      const dedupe = `procur_lead:${payload.procurOpportunityId}`;
-      const enqueues: Array<Promise<void>> = [
-        addAgentJob(
-          this.agentsQueue,
-          {
-            kind: "procur_enrichment",
-            workspace_id: tenantId,
-            input: { organization_id: inner.orgId },
-          },
-          dedupe,
-        ),
-        addAgentJob(
-          this.agentsQueue,
-          {
-            kind: "research",
-            workspace_id: tenantId,
-            input: { organization_id: inner.orgId },
-          },
-          dedupe,
-        ),
+      // Plus per-newly-created-contact enrichment (skip duplicates;
+      // those already had data pre-procur).
+      const orgDedupe = `procur_lead:${payload.procurOpportunityId}`;
+      const newContactIds = inner.contacts
+        .filter((c) => c.outcome === "created")
+        .map((c) => c.contactId);
+      const enqueues: Array<{ kind: string; promise: Promise<void> }> = [
+        {
+          kind: "procur_enrichment",
+          promise: addAgentJob(
+            this.agentsQueue,
+            {
+              kind: "procur_enrichment",
+              workspace_id: tenantId,
+              input: { organization_id: inner.orgId },
+            },
+            orgDedupe,
+          ),
+        },
+        {
+          kind: "research",
+          promise: addAgentJob(
+            this.agentsQueue,
+            {
+              kind: "research",
+              workspace_id: tenantId,
+              input: { organization_id: inner.orgId },
+            },
+            orgDedupe,
+          ),
+        },
+        ...newContactIds.map((contactId) => ({
+          kind: "contact_enrichment",
+          promise: addAgentJob(
+            this.agentsQueue,
+            {
+              kind: "contact_enrichment" as const,
+              workspace_id: tenantId,
+              input: { contact_id: contactId },
+            },
+            // Per-contact dedupe — re-clicking with the same set of
+            // already-created contacts won't burn LLM credit twice.
+            `procur_contact:${contactId}`,
+          ),
+        })),
       ];
-      const results = await Promise.allSettled(enqueues);
+      const results = await Promise.allSettled(
+        enqueues.map((e) => e.promise),
+      );
       for (const [i, r] of results.entries()) {
         if (r.status === "rejected") {
-          const kind = i === 0 ? "procur_enrichment" : "research";
           this.log.warn(
-            `${kind} enqueue failed for org=${inner.orgId}: ${(r.reason as Error).message}`,
+            `${enqueues[i]?.kind} enqueue failed for org=${inner.orgId}: ${(r.reason as Error).message}`,
           );
         }
       }

@@ -53,7 +53,8 @@ export type AgentJobKind =
   | "freight_market"
   | "port_intelligence"
   | "email_reply_draft"
-  | "procur_enrichment";
+  | "procur_enrichment"
+  | "contact_enrichment";
 export interface AgentJobData {
   kind: AgentJobKind;
   workspace_id: string;

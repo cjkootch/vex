@@ -37,3 +37,7 @@ export {
   ProcurEnrichmentAgent,
   type ProcurEnrichmentInput,
 } from "./procur-enrichment.js";
+export {
+  ContactEnrichmentAgent,
+  type ContactEnrichmentAgentInput,
+} from "./contact-enrichment.js";
