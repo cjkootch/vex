@@ -169,6 +169,13 @@
       "when": 1778313600000,
       "tag": "0023_contacts_primary_language",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1778400000000,
+      "tag": "0024_leads_procur_metadata",
+      "breakpoints": true
     }
   ]
 }

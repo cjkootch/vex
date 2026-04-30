@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { createId } from "@vex/domain";
 import type { LeadStatus } from "@vex/domain";
 import type { Tx } from "../client.js";
-import { leads, type Lead } from "../schema/leads.js";
+import { leads, type Lead, type LeadProcurMetadata } from "../schema/leads.js";
 
 export interface LeadCreateInput {
   orgId: string;
@@ -11,6 +11,12 @@ export interface LeadCreateInput {
   stage?: string | null;
   qualificationSummary?: string | null;
   externalKeys?: Record<string, string>;
+  /**
+   * Procur sidecar context (PR #316). Stored verbatim on the row so
+   * the lead UI + chat agent can read it without re-querying procur.
+   * Defaults to `{}` when omitted.
+   */
+  procurMetadata?: LeadProcurMetadata;
 }
 
 /** Stateless. Caller must wrap in `withTenant` so RLS scopes the queries. */
@@ -64,6 +70,7 @@ export class LeadRepository {
         stage: input.stage ?? null,
         qualificationSummary: input.qualificationSummary ?? null,
         externalKeys: input.externalKeys ?? {},
+        procurMetadata: input.procurMetadata ?? {},
       })
       .returning();
     if (!row) throw new Error("lead insert returned no row");

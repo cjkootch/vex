@@ -124,6 +124,14 @@ export class IngestService {
       // existing contact" instead of falsely claiming a new row.
       const ingestedContacts: IngestedContact[] = [];
       for (const c of payload.contacts ?? []) {
+        // Procur PR #316 surfaces `linkedinUrl` from doc-extraction;
+        // we stash it on the contact's `external_keys.linkedin` so
+        // the contact detail page + retrieval pack can display it.
+        // ContactEnrichmentAgent later overwrites only when its own
+        // confidence beats what procur shipped.
+        const externalKeys = c.linkedinUrl
+          ? { linkedin: c.linkedinUrl }
+          : undefined;
         const result = await this.contacts.createWithDedupeCheck(
           tx,
           tenantId,
@@ -134,6 +142,7 @@ export class IngestService {
             title: c.title ?? null,
             emails: c.email ? [c.email] : [],
             phones: c.phone ? [c.phone] : [],
+            ...(externalKeys ? { externalKeys } : {}),
           },
         );
         if (result.kind === "created") {
@@ -151,6 +160,13 @@ export class IngestService {
       }
 
       const primaryContactId = ingestedContacts[0]?.contactId ?? null;
+      // Project the structured procur fields onto the lead's
+      // procur_metadata column. Free-form keys (source, sourceRef,
+      // pushedAt, awardCount, distressSignals, …) stay in the
+      // event metadata where they were before. Keeping the structured
+      // sub-objects on the row lets the UI + chat agent read them
+      // without scanning event history.
+      const procurMetadata = pickProcurMetadata(payload.metadata);
       const lead = await this.leads.create(tx, tenantId, {
         orgId: org.id,
         contactId: primaryContactId,
@@ -158,6 +174,7 @@ export class IngestService {
         stage: "procur_inbound",
         qualificationSummary: buildLeadSummary(payload),
         externalKeys: { procur: payload.procurOpportunityId },
+        procurMetadata,
       });
 
       await this.events.insertIfNotExists(tx, tenantId, {
@@ -253,6 +270,27 @@ export class IngestService {
         : null,
     };
   }
+}
+
+/**
+ * Pull only the structured sub-objects out of the procur metadata
+ * blob. The rest (source, sourceRef, distressSignals, …) is free-
+ * form and stays on the event metadata where downstream consumers
+ * already look for it.
+ */
+function pickProcurMetadata(
+  metadata: ProcurLeadIngestPayload["metadata"],
+): import("@vex/db").LeadProcurMetadata {
+  if (!metadata) return {};
+  const picked: import("@vex/db").LeadProcurMetadata = {};
+  if (metadata.procurApproval) picked.procurApproval = metadata.procurApproval;
+  if (metadata.productSpecs) picked.productSpecs = metadata.productSpecs;
+  if (metadata.sourceDocuments) picked.sourceDocuments = metadata.sourceDocuments;
+  if (metadata.marketContext) picked.marketContext = metadata.marketContext;
+  if (metadata.procurTradingDefaults) {
+    picked.procurTradingDefaults = metadata.procurTradingDefaults;
+  }
+  return picked;
 }
 
 function buildLeadSummary(payload: ProcurLeadIngestPayload): string {

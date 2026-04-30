@@ -29,7 +29,7 @@ export type {
   WorkspaceStrategy,
 } from "./schema/workspaces.js";
 export type { Thread, NewThread } from "./schema/threads.js";
-export type { Lead, NewLead } from "./schema/leads.js";
+export type { Lead, LeadProcurMetadata, NewLead } from "./schema/leads.js";
 export type {
   Organization,
   NewOrganization,
