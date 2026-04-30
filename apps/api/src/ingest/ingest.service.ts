@@ -3,6 +3,7 @@ import type { Queue } from "bullmq";
 import { addAgentJob, type AgentJobData } from "@vex/agents";
 import {
   withTenant,
+  type ContactOrgMembershipRepository,
   type ContactRepository,
   type Db,
   type EventRepository,
@@ -22,6 +23,7 @@ import {
   INGEST_DEFAULT_TENANT_ID,
   INGEST_EVENTS_REPO,
   INGEST_LEADS_REPO,
+  INGEST_MEMBERSHIPS_REPO,
   INGEST_ORGANIZATIONS_REPO,
   INGEST_WEB_APP_BASE_URL,
 } from "./tokens.js";
@@ -61,6 +63,8 @@ export class IngestService {
     private readonly organizations: OrganizationRepository,
     @Inject(INGEST_CONTACTS_REPO)
     private readonly contacts: ContactRepository,
+    @Inject(INGEST_MEMBERSHIPS_REPO)
+    private readonly memberships: ContactOrgMembershipRepository,
     @Inject(INGEST_LEADS_REPO) private readonly leads: LeadRepository,
     @Inject(INGEST_EVENTS_REPO) private readonly events: EventRepository,
     @Inject(INGEST_AGENTS_QUEUE)
@@ -96,7 +100,14 @@ export class IngestService {
         };
       }
 
-      const orgKey = payload.buyer.entitySlug ?? null;
+      // Procur PR #318 — `buyer.companyKey` is the authoritative join
+      // key (entity-profile:<slug> | match-queue:<id> | adhoc:…).
+      // Stable across re-pushes, so storing it as `external_keys.procur`
+      // means the same entity always resolves to the same vex org.
+      // Falls back to `entitySlug` for older procur deploys still on
+      // the pre-#318 wire shape.
+      const orgKey =
+        payload.buyer.companyKey ?? payload.buyer.entitySlug ?? null;
       const org = orgKey
         ? await this.organizations.upsertByExternalKey(
             tx,
@@ -123,15 +134,17 @@ export class IngestService {
       // `outcome: "duplicate"` so procur's UI can show "merged with
       // existing contact" instead of falsely claiming a new row.
       const ingestedContacts: IngestedContact[] = [];
-      for (const c of payload.contacts ?? []) {
-        // Procur PR #316 surfaces `linkedinUrl` from doc-extraction;
-        // we stash it on the contact's `external_keys.linkedin` so
-        // the contact detail page + retrieval pack can display it.
-        // ContactEnrichmentAgent later overwrites only when its own
-        // confidence beats what procur shipped.
-        const externalKeys = c.linkedinUrl
-          ? { linkedin: c.linkedinUrl }
-          : undefined;
+      for (const [idx, c] of (payload.contacts ?? []).entries()) {
+        // External-system identifiers we know about today:
+        //   - linkedin (procur PR #316, from doc-extraction)
+        //   - procur (PR #318 companyKey — used as the contact's
+        //     stable procur identity; lets re-pushes find the same
+        //     contact even when name + email both drift)
+        // Falls back to undefined so we don't write an empty {} on
+        // contacts that lack both signals.
+        const externalKeys: Record<string, string> = {};
+        if (c.linkedinUrl) externalKeys["linkedin"] = c.linkedinUrl;
+        if (c.companyKey) externalKeys["procur"] = c.companyKey;
         const result = await this.contacts.createWithDedupeCheck(
           tx,
           tenantId,
@@ -142,9 +155,27 @@ export class IngestService {
             title: c.title ?? null,
             emails: c.email ? [c.email] : [],
             phones: c.phone ? [c.phone] : [],
-            ...(externalKeys ? { externalKeys } : {}),
+            ...(Object.keys(externalKeys).length > 0
+              ? { externalKeys }
+              : {}),
           },
         );
+        // BUG FIX: write a `contact_org_memberships` row for every
+        // contact at the buyer's org. Without this, contacts pushed
+        // alongside their company never appeared on the org detail
+        // page — that view reads through the m:n membership table,
+        // not `contacts.org_id`. ensureMembership is idempotent, so
+        // re-pushes don't duplicate.
+        //
+        // First contact in the payload is the lead's primary, which
+        // typically maps to the contact's primary org as well.
+        // Existing memberships keep their flag (operator overrides
+        // win); only newly-inserted rows pick up the primary bit.
+        await this.memberships.ensureMembership(tx, tenantId, {
+          contactId: result.contact.id,
+          orgId: org.id,
+          isPrimary: idx === 0,
+        });
         if (result.kind === "created") {
           ingestedContacts.push({
             contactId: result.contact.id,

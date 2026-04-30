@@ -86,6 +86,19 @@ function buildService(overrides: {
   });
   const eventInsertIfNotExists = vi.fn().mockResolvedValue({ isNew: true });
   const queueAdd = vi.fn().mockResolvedValue(undefined);
+  const ensureMembership = vi
+    .fn()
+    .mockImplementation(async (_tx: unknown, _t: string, input: { contactId: string; orgId: string; isPrimary?: boolean }) => ({
+      tenantId: _t,
+      contactId: input.contactId,
+      orgId: input.orgId,
+      role: null,
+      isPrimary: input.isPrimary ?? false,
+      since: new Date(),
+      until: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
 
   const service = new IngestService(
     {} as never, // db
@@ -94,6 +107,7 @@ function buildService(overrides: {
       createWithDedupeCheck: orgCreateWithDedupe,
     } as never,
     { createWithDedupeCheck: contactCreateWithDedupe } as never,
+    { ensureMembership } as never,
     { findByExternalKey: leadFindByExternalKey, create: leadCreate } as never,
     { insertIfNotExists: eventInsertIfNotExists } as never,
     { add: queueAdd } as never,
@@ -107,6 +121,7 @@ function buildService(overrides: {
       orgUpsert,
       orgCreateWithDedupe,
       contactCreateWithDedupe,
+      ensureMembership,
       leadFindByExternalKey,
       leadCreate,
       eventInsertIfNotExists,
@@ -323,6 +338,7 @@ describe("IngestService.ingestProcurLead", () => {
       {} as never,
       { upsertByExternalKey: orgUpsert, createWithDedupeCheck: vi.fn() } as never,
       { createWithDedupeCheck: contactCreate } as never,
+      { ensureMembership: vi.fn().mockResolvedValue({}) } as never,
       { findByExternalKey: vi.fn().mockResolvedValue(null), create: leadCreate } as never,
       { insertIfNotExists: vi.fn().mockResolvedValue({ isNew: true }) } as never,
       { add: vi.fn() } as never,
@@ -423,6 +439,105 @@ describe("IngestService.ingestProcurLead", () => {
     expect(contactArgs).toBeDefined();
     expect(contactArgs.externalKeys).toEqual({
       linkedin: "https://www.linkedin.com/in/mdupont",
+    });
+  });
+
+  it("writes a contact_org_memberships row for every contact (regression: PR #318 bug)", async () => {
+    // Two contacts pushed alongside the buyer org. Pre-fix, the
+    // contacts row was created but no membership row landed, so the
+    // org detail page showed an empty contacts list.
+    const { service, mocks } = buildService({
+      contactDedupeResults: [
+        { kind: "created", contact: { id: "contact_a" } },
+        // Second contact dedupe-matches an existing one — this is
+        // the path that most clearly exposed the bug, since the
+        // existing contact's `org_id` was already pointing somewhere
+        // else.
+        {
+          kind: "duplicate",
+          contact: { id: "contact_b" },
+          reason: "email",
+          matchedValue: "compliance@agrimco.com",
+        },
+      ],
+    });
+    await service.ingestProcurLead(
+      basePayload({
+        buyer: {
+          legalName: "Agrimco AG",
+          country: "CH",
+          entitySlug: "agrimco-ag",
+          companyKey: "entity-profile:chat-ch-agrimco-ag",
+        } as never,
+        contacts: [
+          {
+            name: "Faris Al-Luqman",
+            email: "compliance@agrimco.com",
+            companyKey: "entity-profile:chat-ch-agrimco-ag",
+          } as never,
+          {
+            name: "Beatrice Suter",
+            email: "ceo@agrimco.com",
+            companyKey: "entity-profile:chat-ch-agrimco-ag",
+          } as never,
+        ],
+      }),
+    );
+    expect(mocks.ensureMembership).toHaveBeenCalledTimes(2);
+    const calls = mocks.ensureMembership.mock.calls.map((c) => c[2]);
+    expect(calls[0]).toMatchObject({
+      contactId: "contact_a",
+      orgId: "org_1",
+      isPrimary: true,
+    });
+    expect(calls[1]).toMatchObject({
+      contactId: "contact_b",
+      orgId: "org_1",
+      isPrimary: false,
+    });
+  });
+
+  it("uses companyKey as the buyer's external_keys.procur (PR #318)", async () => {
+    const { service, mocks } = buildService();
+    await service.ingestProcurLead(
+      basePayload({
+        buyer: {
+          legalName: "Agrimco AG",
+          country: "CH",
+          entitySlug: "agrimco-old-slug",
+          // companyKey wins when both are present.
+          companyKey: "entity-profile:chat-ch-agrimco-ag",
+        } as never,
+      }),
+    );
+    expect(mocks.orgUpsert).toHaveBeenCalledWith(
+      expect.anything(),
+      TENANT,
+      "procur",
+      "entity-profile:chat-ch-agrimco-ag",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("persists contact.companyKey on external_keys.procur for re-push dedupe", async () => {
+    const { service, mocks } = buildService();
+    await service.ingestProcurLead(
+      basePayload({
+        contacts: [
+          {
+            name: "Faris Al-Luqman",
+            email: "compliance@agrimco.com",
+            companyKey: "entity-profile:chat-ch-agrimco-ag",
+            linkedinUrl: "https://www.linkedin.com/in/faris",
+          } as never,
+        ],
+      }),
+    );
+    const args = mocks.contactCreateWithDedupe.mock.calls[0]?.[2];
+    expect(args.externalKeys).toEqual({
+      linkedin: "https://www.linkedin.com/in/faris",
+      procur: "entity-profile:chat-ch-agrimco-ag",
     });
   });
 

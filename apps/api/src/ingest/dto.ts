@@ -97,6 +97,18 @@ export const ProcurLeadIngestSchema = z.object({
      * surfaced on the lead UI when present.
      */
     procurEntityProfileUrl: z.string().url().optional(),
+    /**
+     * Procur PR #318 — authoritative dedup/join key. Same value
+     * appears on `buyer.companyKey` and on every
+     * `contacts[].companyKey` in the same request, so the contact-to-
+     * company linkage is unambiguous on the wire. Format:
+     * `entity-profile:<slug>` | `match-queue:<id>` | `adhoc:<name>:<country>`.
+     * Stable across re-pushes — vex uses it (when present) as the
+     * `external_keys.procur` value so future pushes land on the same
+     * org row regardless of legalName drift. Falls back to
+     * `entitySlug` when absent (older procur deploys).
+     */
+    companyKey: z.string().min(1).max(300).optional(),
   }),
   contacts: z
     .array(
@@ -109,6 +121,18 @@ export const ProcurLeadIngestSchema = z.object({
         // the contact's `external_keys.linkedin` so the contact
         // detail page + retrieval pack can display it.
         linkedinUrl: z.string().url().optional(),
+        /**
+         * Procur PR #318 — same authoritative key as `buyer.companyKey`.
+         * Lets the ingest deterministically associate the contact
+         * with the right org even when the contact dedupes to an
+         * existing record. Persisted on the contact's
+         * `external_keys.procur` so re-pushes find the same contact.
+         */
+        companyKey: z.string().min(1).max(300).optional(),
+        /** Mirror of buyer.legalName — informational fallback. */
+        companyLegalName: z.string().min(1).max(500).optional(),
+        /** Domain derived from the contact email (best-effort). */
+        companyDomain: z.string().max(200).optional(),
       }),
     )
     .max(50)
