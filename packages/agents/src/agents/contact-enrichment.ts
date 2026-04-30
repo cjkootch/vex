@@ -22,6 +22,12 @@ interface ExtractionResult {
   title: ExtractedField | null;
   phone: ExtractedField | null;
   linkedinUrl: ExtractedField | null;
+  /**
+   * ISO 639-1 (e.g. "en", "es"). Inferred from public signals and used
+   * by the chat agent to default `lang` on email drafts. Display-only;
+   * stored on `contacts.primary_language`.
+   */
+  primaryLanguage: ExtractedField | null;
   rationale: string;
 }
 
@@ -70,13 +76,17 @@ export class ContactEnrichmentAgent implements IAgent {
       };
     }
 
-    if ((contact.emails ?? []).length > 0) {
+    // Re-run guard: skip only when the row is fully enriched. We
+    // gained `primary_language` in v1.1; existing rows that have an
+    // email but no language should still get a one-shot pass to fill
+    // it in. Once both fields are present we're done.
+    if ((contact.emails ?? []).length > 0 && contact.primaryLanguage) {
       return {
         costUsd: 0,
-        outputRefs: { skipped: "already_has_email", contact_id: contact.id },
+        outputRefs: { skipped: "already_enriched", contact_id: contact.id },
         proposedActions: [],
         internalWrites: 0,
-        rationale: "contact already has emails, no enrichment needed",
+        rationale: "contact already has emails + primary language",
       };
     }
 
@@ -191,7 +201,10 @@ export class ContactEnrichmentAgent implements IAgent {
         contact_id: contact.id,
         org_id: org.id,
         outcome:
-          applied.emailWritten || applied.titleWritten || applied.phoneWritten
+          applied.emailWritten ||
+          applied.titleWritten ||
+          applied.phoneWritten ||
+          applied.primaryLanguageWritten
             ? "found"
             : "no_signal",
         extracted: {
@@ -199,6 +212,7 @@ export class ContactEnrichmentAgent implements IAgent {
           title: extraction.title,
           phone: extraction.phone,
           linkedin_url: extraction.linkedinUrl,
+          primary_language: extraction.primaryLanguage,
         },
         applied,
         shared_to_procur: shared,
@@ -219,7 +233,8 @@ export class ContactEnrichmentAgent implements IAgent {
       internalWrites:
         (applied.emailWritten ? 1 : 0) +
         (applied.titleWritten ? 1 : 0) +
-        (applied.phoneWritten ? 1 : 0),
+        (applied.phoneWritten ? 1 : 0) +
+        (applied.primaryLanguageWritten ? 1 : 0),
       rationale: applied.emailWritten
         ? `enriched: email found (confidence ${extraction.email?.confidence ?? 0})`
         : `no enrichment applied: ${extraction.rationale}`,
@@ -321,15 +336,18 @@ export class ContactEnrichmentAgent implements IAgent {
     emailWritten: boolean;
     titleWritten: boolean;
     phoneWritten: boolean;
+    primaryLanguageWritten: boolean;
   }> {
     const patch: {
       emails?: string[];
       phones?: string[];
       title?: string | null;
+      primaryLanguage?: string | null;
     } = {};
     let emailWritten = false;
     let titleWritten = false;
     let phoneWritten = false;
+    let primaryLanguageWritten = false;
 
     if (
       extraction.email &&
@@ -353,12 +371,23 @@ export class ContactEnrichmentAgent implements IAgent {
       patch.title = extraction.title.value;
       titleWritten = true;
     }
+    // Only fill primary_language when it's empty — operators may have
+    // hand-corrected it in chat, and we don't want enrichment to
+    // overwrite that on a re-run.
+    if (
+      !contact.primaryLanguage &&
+      extraction.primaryLanguage &&
+      extraction.primaryLanguage.confidence >= MIN_CONFIDENCE_TO_APPLY
+    ) {
+      patch.primaryLanguage = extraction.primaryLanguage.value;
+      primaryLanguageWritten = true;
+    }
 
-    if (emailWritten || phoneWritten || titleWritten) {
+    if (emailWritten || phoneWritten || titleWritten || primaryLanguageWritten) {
       await ctx.contacts.updatePatch(ctx.tx, contact.id, patch);
     }
 
-    return { emailWritten, titleWritten, phoneWritten };
+    return { emailWritten, titleWritten, phoneWritten, primaryLanguageWritten };
   }
 }
 
@@ -439,6 +468,7 @@ function parseExtraction(raw: string): ExtractionResult | null {
     title: parseField(obj["title"]),
     phone: parseField(obj["phone"]),
     linkedinUrl: parseField(obj["linkedinUrl"]),
+    primaryLanguage: parseLanguageField(obj["primaryLanguage"]),
     rationale:
       typeof obj["rationale"] === "string" ? obj["rationale"] : "(no rationale)",
   };
@@ -458,4 +488,18 @@ function parseField(raw: unknown): ExtractedField | null {
     confidence,
     sourceUrl: typeof sourceUrl === "string" ? sourceUrl : null,
   };
+}
+
+/**
+ * Same shape as parseField but normalizes the value to a 2-letter
+ * lowercase ISO 639-1 code. Anything that isn't 2 ASCII letters
+ * (`"english"`, `"zh-CN"`, `""`) is rejected so we don't write junk
+ * into `contacts.primary_language`.
+ */
+function parseLanguageField(raw: unknown): ExtractedField | null {
+  const field = parseField(raw);
+  if (!field) return null;
+  const code = field.value.toLowerCase();
+  if (!/^[a-z]{2}$/.test(code)) return null;
+  return { ...field, value: code };
 }

@@ -48,6 +48,15 @@ export const contacts = pgTable(
      */
     mergedIntoContactId: text("merged_into_contact_id"),
     timezone: text("timezone"),
+    /**
+     * ISO 639-1 code (e.g. "en", "es", "zh") for the contact's primary
+     * communication language. Populated by the contact-enrichment agent
+     * from public signals (location, employer region, profile language)
+     * and surfaced to the chat agent so email drafts default to the
+     * recipient's language. Inference is best-effort — operators can
+     * override per-message in chat.
+     */
+    primaryLanguage: text("primary_language"),
     optOutAt: timestamp("opt_out_at", { withTimezone: true }),
     optOutReason: text("opt_out_reason"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

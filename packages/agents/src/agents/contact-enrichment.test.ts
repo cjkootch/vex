@@ -24,6 +24,7 @@ function makeContext(overrides: {
     emails: string[];
     phones: string[];
     orgId: string | null;
+    primaryLanguage?: string | null;
   } | null;
   org?: {
     id: string;
@@ -205,7 +206,7 @@ describe("ContactEnrichmentAgent", () => {
     expect(writes.events).toHaveLength(0);
   });
 
-  it("skips contact that already has emails (idempotent)", async () => {
+  it("skips contact that's already fully enriched (email + primary language)", async () => {
     const { ctx, writes } = makeContext({
       contact: {
         id: CONTACT_ID,
@@ -214,14 +215,51 @@ describe("ContactEnrichmentAgent", () => {
         emails: ["existing@armasuisse.ch"],
         phones: [],
         orgId: ORG_ID,
+        primaryLanguage: "fr",
       },
     });
     const agent = new ContactEnrichmentAgent({ contactId: CONTACT_ID });
 
     const out = await agent.run(ctx);
-    expect(out.outputRefs["skipped"]).toBe("already_has_email");
+    expect(out.outputRefs["skipped"]).toBe("already_enriched");
     expect(writes.patchCalls).toHaveLength(0);
     expect(writes.events).toHaveLength(0);
+  });
+
+  it("re-enriches contact with email but no primary_language (one-shot backfill)", async () => {
+    const { ctx, writes } = makeContext({
+      contact: {
+        id: CONTACT_ID,
+        fullName: "M. Dupont",
+        title: "Procurement Officer",
+        emails: ["existing@armasuisse.ch"],
+        phones: [],
+        orgId: ORG_ID,
+        primaryLanguage: null,
+      },
+      anthropicResponseText: JSON.stringify({
+        email: null,
+        title: null,
+        phone: null,
+        linkedinUrl: null,
+        primaryLanguage: {
+          value: "fr",
+          confidence: 0.85,
+          sourceUrl: "https://linkedin.com/in/mdupont",
+        },
+        rationale: "Profile reads in French; based in Switzerland.",
+      }),
+    });
+    const agent = new ContactEnrichmentAgent({ contactId: CONTACT_ID });
+
+    const out = await agent.run(ctx);
+    expect(out.outputRefs["skipped"]).toBeUndefined();
+    expect(writes.patchCalls).toHaveLength(1);
+    expect(writes.patchCalls[0]?.patch).toEqual({ primaryLanguage: "fr" });
+    expect(writes.events[0]?.metadata).toMatchObject({
+      outcome: "found",
+      applied: { primaryLanguageWritten: true },
+    });
   });
 
   it("skips when Tavily is disabled (emits no_signal event)", async () => {

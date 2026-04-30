@@ -433,6 +433,7 @@ export class ContactsService {
       phones: string[];
       status: string;
       optOutAt: string | null;
+      primaryLanguage: string | null;
     };
     primaryOrg: { id: string; legalName: string } | null;
     allOrgs: Array<{
@@ -593,6 +594,7 @@ export class ContactsService {
           optOutAt: contact.optOutAt
             ? contact.optOutAt.toISOString()
             : null,
+          primaryLanguage: contact.primaryLanguage,
         },
         primaryOrg: primaryOrg
           ? { id: primaryOrg.orgId, legalName: primaryOrg.orgName }
