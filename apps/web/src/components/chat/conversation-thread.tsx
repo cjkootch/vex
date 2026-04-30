@@ -442,6 +442,73 @@ function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }
     return init;
   });
 
+  // Hydrate decision + outcome on mount so that re-entering a chat
+  // thread (or refreshing the page) shows each chip's actual server
+  // state instead of resetting every approval to "pending". Approvals
+  // already decided come back as approved / rejected / auto_approved
+  // with whatever outcome the executor (or Resend webhook) has stamped
+  // by now. For chips still in flight (approved + non-terminal
+  // outcome) we resume polling so the UI keeps catching the eventual
+  // delivered / failed signal instead of stranding at "queued" /
+  // "sent".
+  const approvalIds = approvals.map((a) => a.approvalId).join(",");
+  useEffect(() => {
+    let cancelled = false;
+    type HydratedResponse = {
+      approval: {
+        decision: "pending" | "approved" | "rejected" | "auto_approved";
+      };
+      outcome: ChatApprovalState["outcome"];
+    };
+    async function hydrate(approvalId: string): Promise<void> {
+      try {
+        const r = await fetch(
+          `/api/approvals/${encodeURIComponent(approvalId)}/outcome`,
+          { cache: "no-store" },
+        );
+        if (!r.ok) return;
+        const body = (await r.json()) as HydratedResponse;
+        if (cancelled) return;
+        // auto_approved (T1 chat actions) renders as "approved" so
+        // operators see a green pill instead of an unfamiliar enum.
+        const decision: ChatApprovalState["decision"] =
+          body.approval.decision === "auto_approved"
+            ? "approved"
+            : body.approval.decision;
+        setState((s) => ({
+          ...s,
+          [approvalId]: {
+            ...(s[approvalId] ?? {
+              decision: "pending",
+              outcome: null,
+              inFlight: false,
+              error: null,
+            }),
+            decision,
+            outcome: body.outcome ?? null,
+          },
+        }));
+        // Resume polling when the chip is approved but the executor
+        // / delivery webhook hasn't reached a terminal state yet.
+        const stillWatching =
+          decision === "approved" &&
+          (!body.outcome ||
+            body.outcome.status === "queued" ||
+            body.outcome.status === "applied");
+        if (stillWatching) void pollOutcome(approvalId);
+      } catch {
+        /* fail-soft — chip stays at its initial "pending" state */
+      }
+    }
+    for (const a of approvals) void hydrate(a.approvalId);
+    return () => {
+      cancelled = true;
+    };
+    // approvalIds is the stable key — the array reference itself
+    // changes per-render even when the contents are identical.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvalIds]);
+
   async function decide(
     approvalId: string,
     action: "approve" | "reject",
