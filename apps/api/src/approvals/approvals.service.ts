@@ -184,7 +184,7 @@ export class ApprovalsService {
     outcome:
       | null
       | {
-          status: "applied" | "failed" | "skipped" | "queued";
+          status: "applied" | "failed" | "skipped" | "queued" | "delivered";
           reason: string | null;
           actionType: string | null;
           appliedObjectId: string | null;
@@ -198,7 +198,40 @@ export class ApprovalsService {
       if (approval.decision === "pending") {
         return { approval, outcome: null };
       }
-      // Approval was decided — look for executor signals.
+      // Scan the audit events for the latest executor verb on this
+      // approval. listBySubject returns newest-first. We pull the
+      // delivery signal first because it strictly post-dates apply
+      // (Resend webhook arrives seconds after send) and we want the
+      // chip to surface the most-recent terminal state.
+      const events = await this.events.listBySubject(
+        tx,
+        "approval",
+        approval.id,
+        20,
+      );
+      const deliveredEvent = events.find(
+        (e) => e.verb === "approval.executor.delivered",
+      );
+      if (deliveredEvent) {
+        const md = (deliveredEvent.metadata ?? {}) as Record<string, unknown>;
+        const actionType =
+          typeof md["action_type"] === "string"
+            ? md["action_type"]
+            : approval.actionType;
+        return {
+          approval,
+          outcome: {
+            status: "delivered" as const,
+            reason: null,
+            actionType,
+            appliedObjectId: approval.appliedObjectId,
+            appliedAt: approval.appliedAt
+              ? approval.appliedAt.toISOString()
+              : null,
+            occurredAt: deliveredEvent.occurredAt.toISOString(),
+          },
+        };
+      }
       if (approval.appliedObjectId) {
         return {
           approval,
@@ -212,15 +245,6 @@ export class ApprovalsService {
           },
         };
       }
-      // Scan the audit events for the latest executor verb on this
-      // approval. listBySubject returns newest-first so the first
-      // match wins.
-      const events = await this.events.listBySubject(
-        tx,
-        "approval",
-        approval.id,
-        20,
-      );
       const executorEvent = events.find(
         (e) => e.verb === "approval.executor.failed" || e.verb === "approval.executor.skipped",
       );

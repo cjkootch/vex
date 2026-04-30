@@ -45,6 +45,7 @@ function makeFakeDeps() {
         isNew: true,
       };
     }),
+    findApplyByProviderMessageId: vi.fn(async () => null),
   };
 
   const touchpoints = {
@@ -100,6 +101,94 @@ describe("ResendNormalizer.normalize", () => {
     expect(event.idempotencyKey).toBe(`resend:${fixture.headers["svix-id"]}`);
     expect(event.metadata["confidence"]).toBe("strong");
     expect(event.metadata["url"]).toContain("vexhq.ai");
+  });
+
+  it("emits approval.executor.delivered when the apply event linkage exists", async () => {
+    const deps = makeFakeDeps();
+    deps.events.findApplyByProviderMessageId = vi.fn(async () => ({
+      id: "evt_apply_1",
+      tenantId: "t",
+      verb: "approval.executor.applied",
+      subjectType: "approval",
+      subjectId: "01APPROVAL_TEST",
+      actorType: "system",
+      actorId: "approval_executor",
+      objectType: "approval",
+      objectId: "01APPROVAL_TEST",
+      occurredAt: new Date(),
+      idempotencyKey: "approval.executor:01APPROVAL_TEST",
+      metadata: { provider_message_id: "msg-abc" },
+    })) as never;
+    const tx = makeFakeTx();
+    const normalizer = new ResendNormalizer({ tx, ...deps } as never);
+
+    const input: RawEventInput = {
+      id: createId(),
+      tenantId: "01HSEEDWRK0000000000000001",
+      provider: "resend",
+      providerEventId: "msg_delivered_1",
+      receivedAt: new Date(),
+      headers: { "svix-id": "msg_delivered_1" },
+      payload: {
+        type: "email.delivered",
+        created_at: "2026-04-30T10:00:00.000Z",
+        data: {
+          email_id: "msg-abc",
+          to: ["recipient@example.test"],
+          subject: "hi",
+        },
+      },
+    };
+
+    const outcome = await normalizer.normalize(input);
+    expect(outcome.status).toBe("ok");
+
+    const eventInserts = deps.inserts
+      .filter((i) => i.table === "events")
+      .map(
+        (i) =>
+          i.args as { verb: string; subjectId: string; metadata: Record<string, unknown> },
+      );
+    // Two event inserts: the contact-timeline email.delivered + the
+    // linked approval.executor.delivered.
+    const verbs = eventInserts.map((e) => e.verb);
+    expect(verbs).toContain("email.delivered");
+    expect(verbs).toContain("approval.executor.delivered");
+
+    const linked = eventInserts.find(
+      (e) => e.verb === "approval.executor.delivered",
+    )!;
+    expect(linked.subjectId).toBe("01APPROVAL_TEST");
+    expect(linked.metadata["action_type"]).toBe("email.send");
+    expect(linked.metadata["provider_message_id"]).toBe("msg-abc");
+    expect(linked.metadata["recipient"]).toBe("recipient@example.test");
+  });
+
+  it("skips the approval linkage when no apply event matches the message id", async () => {
+    const deps = makeFakeDeps();
+    // findApplyByProviderMessageId stays as the default null mock.
+    const tx = makeFakeTx();
+    const normalizer = new ResendNormalizer({ tx, ...deps } as never);
+
+    const input: RawEventInput = {
+      id: createId(),
+      tenantId: "01HSEEDWRK0000000000000001",
+      provider: "resend",
+      providerEventId: "msg_delivered_orphan",
+      receivedAt: new Date(),
+      headers: { "svix-id": "msg_delivered_orphan" },
+      payload: {
+        type: "email.delivered",
+        data: { email_id: "no-such-id", to: ["x@y.test"] },
+      },
+    };
+
+    await normalizer.normalize(input);
+    const verbs = deps.inserts
+      .filter((i) => i.table === "events")
+      .map((i) => (i.args as { verb: string }).verb);
+    expect(verbs).toContain("email.delivered");
+    expect(verbs).not.toContain("approval.executor.delivered");
   });
 });
 
