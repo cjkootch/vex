@@ -912,6 +912,12 @@ function EmailSendBody({ payload }: { payload: Record<string, unknown> }) {
   const leadId = stringField(payload, "lead_id");
   const drafted = stringField(payload, "auto_drafted_from");
   const rationale = stringField(payload, "rationale");
+  // ISO 639-1 language tag the chat agent sets when drafting in a
+  // language other than English. Surfaced as a badge so an operator
+  // approving a multi-recipient batch sees which draft is which
+  // language without reading the body.
+  const langRaw = stringField(payload, "lang");
+  const lang = langRaw && /^[a-z]{2}$/i.test(langRaw) ? langRaw.toUpperCase() : null;
   return (
     <div className="mt-2 space-y-1.5">
       <div className="flex items-baseline gap-2">
@@ -919,6 +925,14 @@ function EmailSendBody({ payload }: { payload: Record<string, unknown> }) {
         <span className="font-mono text-sm text-white">
           {tos.length > 0 ? tos.join(", ") : "<no recipient>"}
         </span>
+        {lang ? (
+          <span
+            title={`Drafted in ${lang} (ISO 639-1)`}
+            className="rounded border border-line-soft bg-surface-2/60 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wider text-text-secondary"
+          >
+            {lang}
+          </span>
+        ) : null}
       </div>
       <div className="text-sm font-semibold text-white">
         {subject ?? "(no subject)"}
