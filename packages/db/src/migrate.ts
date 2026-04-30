@@ -5,7 +5,6 @@ import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { loadEnv } from "@vex/config";
 
 /**
  * Migration runner. Connects via MIGRATION_DATABASE_URL (the direct Neon
@@ -15,10 +14,34 @@ import { loadEnv } from "@vex/config";
  * migration) before running migrations so RLS policies don't block schema
  * changes on policy-protected tables. The very first run — when the role
  * doesn't exist yet — silently falls back to the connection's default role.
+ *
+ * Env: only `MIGRATION_DATABASE_URL` is required. We deliberately don't
+ * call `loadEnv()` (which validates the full app env including S3 /
+ * Redis / OpenAI) — operators run this from local desktops where
+ * those service creds aren't necessarily set, and demanding them just
+ * to apply a DDL change creates a pointless friction tax.
  */
 async function main(): Promise<void> {
-  const env = loadEnv();
-  const pool = new Pool({ connectionString: env.MIGRATION_DATABASE_URL });
+  const url = process.env["MIGRATION_DATABASE_URL"];
+  if (!url || url.trim().length === 0) {
+    throw new Error(
+      "MIGRATION_DATABASE_URL is required (use the Neon direct connection string, NOT the pooled one).",
+    );
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(
+      "MIGRATION_DATABASE_URL must be a valid Postgres connection URL (e.g. postgres://user:pwd@host/db?sslmode=require).",
+    );
+  }
+  if (!parsed.protocol.startsWith("postgres")) {
+    throw new Error(
+      `MIGRATION_DATABASE_URL must use the postgres:// scheme; got ${parsed.protocol}`,
+    );
+  }
+  const pool = new Pool({ connectionString: url });
 
   const here = dirname(fileURLToPath(import.meta.url));
   const migrationsFolder = resolve(here, "../drizzle");
