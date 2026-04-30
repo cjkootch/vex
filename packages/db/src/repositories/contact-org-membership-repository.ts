@@ -42,6 +42,51 @@ export class ContactOrgMembershipRepository {
     return row;
   }
 
+  /**
+   * Idempotent upsert keyed on the (contact_id, org_id) primary key.
+   * Returns the existing row when the membership already exists, the
+   * newly-inserted row otherwise. Used by the procur ingest path so
+   * pushing a contact alongside its company always lands a membership
+   * row — even when the contact was dedupe-matched to an existing
+   * one. Without this, contacts pushed alongside their company
+   * never appeared on the org's contacts list (the org detail page
+   * reads through this m:n table, not `contacts.org_id`).
+   *
+   * `isPrimary` is honoured ONLY when inserting a new row. Existing
+   * memberships keep their flag — we don't surprise an operator who
+   * already curated which org is primary for a contact.
+   */
+  async ensureMembership(
+    tx: Tx,
+    tenantId: string,
+    input: MembershipCreateInput,
+  ): Promise<ContactOrgMembership> {
+    await tx
+      .insert(contactOrgMemberships)
+      .values({
+        tenantId,
+        contactId: input.contactId,
+        orgId: input.orgId,
+        role: input.role ?? null,
+        isPrimary: input.isPrimary ?? false,
+      })
+      .onConflictDoNothing({
+        target: [contactOrgMemberships.contactId, contactOrgMemberships.orgId],
+      });
+    const [row] = await tx
+      .select()
+      .from(contactOrgMemberships)
+      .where(
+        and(
+          eq(contactOrgMemberships.contactId, input.contactId),
+          eq(contactOrgMemberships.orgId, input.orgId),
+        ),
+      )
+      .limit(1);
+    if (!row) throw new Error("ensureMembership returned no row");
+    return row;
+  }
+
   async listByContact(tx: Tx, contactId: string): Promise<ContactOrgMembership[]> {
     return tx
       .select()

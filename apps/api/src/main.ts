@@ -337,6 +337,7 @@ async function bootstrap(): Promise<void> {
         db,
         organizations: organizationRepository,
         contacts: contactRepository,
+        memberships: contactMembershipRepository,
         leads: leadRepository,
         events: eventRepository,
         agentsQueue: queues.agents,
