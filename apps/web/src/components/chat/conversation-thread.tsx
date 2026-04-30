@@ -235,6 +235,11 @@ export function ConversationThread({ turns, onTurns, scope, initialDraft }: Prop
               Ask a question about your accounts, contacts, or campaigns.
             </p>
           )}
+          {turns.length > 0 ? (
+            <div className="-mb-2 flex justify-end">
+              <CopyAsMarkdownButton turns={turns} />
+            </div>
+          ) : null}
           <AnimatePresence initial={false}>
             {turns.map((turn) => (
               <Turn key={turn.id} turn={turn} />
@@ -1302,4 +1307,93 @@ function MicStopIcon() {
       <rect x="4" y="4" width="12" height="12" rx="1.5" />
     </svg>
   );
+}
+
+/**
+ * "Copy as Markdown" affordance — turns the visible conversation into
+ * a markdown blob suitable for pasting into a bug report, into procur's
+ * chat for cross-platform diagnosis, etc. Faster than screenshots and
+ * preserves the action / approval state alongside prose.
+ */
+function CopyAsMarkdownButton({ turns }: { turns: ChatTurn[] }) {
+  const [copied, setCopied] = useState(false);
+  async function onClick() {
+    try {
+      const md = formatConversationAsMarkdown(turns);
+      await navigator.clipboard.writeText(md);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      /* clipboard write blocked; do nothing — operator will see no
+         "Copied" feedback and can fall back to manual select */
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid="chat-copy-md"
+      className="rounded-md border border-line-soft bg-surface-2/40 px-2.5 py-1 text-[11px] text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary"
+      title="Copy the whole conversation as Markdown — including action chips and decision state."
+    >
+      {copied ? "Copied" : "Copy as Markdown"}
+    </button>
+  );
+}
+
+function formatConversationAsMarkdown(turns: ChatTurn[]): string {
+  const blocks: string[] = [];
+  for (const turn of turns) {
+    if (turn.role === "user") {
+      blocks.push(`**You:**\n\n${turn.text.trim()}`);
+      continue;
+    }
+    const parts: string[] = [`**Vex:**\n\n${turn.text.trim()}`];
+    const created = turn.manifest?.created_approvals ?? [];
+    const rejected = turn.manifest?.rejected_proposals ?? [];
+    if (created.length > 0) {
+      parts.push(
+        `\n*Proposed actions:*\n` +
+          created
+            .map((a) => {
+              const payloadLines = a.payload
+                ? Object.entries(a.payload)
+                    .filter(([, v]) => v !== undefined && v !== null)
+                    .slice(0, 6)
+                    .map(([k, v]) => `    - ${k}: ${formatPayloadValue(v)}`)
+                    .join("\n")
+                : "";
+              return [
+                `- \`${a.actionType}\` (${a.tier}) — id \`${a.approvalId.slice(-8)}\``,
+                payloadLines,
+              ]
+                .filter(Boolean)
+                .join("\n");
+            })
+            .join("\n"),
+      );
+    }
+    if (rejected.length > 0) {
+      parts.push(
+        `\n*Rejected by validator:*\n` +
+          rejected
+            .map((r) => `- \`${r.actionType}\` (${r.tier}) — ${r.reason}`)
+            .join("\n"),
+      );
+    }
+    blocks.push(parts.join("\n"));
+  }
+  return blocks.join("\n\n---\n\n");
+}
+
+function formatPayloadValue(v: unknown): string {
+  if (typeof v === "string") {
+    // Trim long fields (body, html signature, etc.) so the markdown
+    // stays readable when pasted.
+    if (v.length > 240) return JSON.stringify(`${v.slice(0, 240)}…`);
+    return JSON.stringify(v);
+  }
+  if (Array.isArray(v)) return JSON.stringify(v);
+  if (typeof v === "object" && v !== null) return JSON.stringify(v);
+  return String(v);
 }
