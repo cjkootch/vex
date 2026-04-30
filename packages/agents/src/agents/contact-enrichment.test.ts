@@ -226,6 +226,47 @@ describe("ContactEnrichmentAgent", () => {
     expect(writes.events).toHaveLength(0);
   });
 
+  it("force=true bypasses the already-enriched guard and re-runs", async () => {
+    const { ctx, writes } = makeContext({
+      contact: {
+        id: CONTACT_ID,
+        fullName: "M. Dupont",
+        title: "Officer",
+        emails: ["existing@armasuisse.ch"],
+        phones: [],
+        orgId: ORG_ID,
+        primaryLanguage: "fr",
+      },
+      anthropicResponseText: JSON.stringify({
+        email: {
+          value: "m.dupont@newrole.ch",
+          confidence: 0.8,
+          sourceUrl: "https://newrole.ch/team",
+        },
+        title: null,
+        phone: null,
+        linkedinUrl: null,
+        primaryLanguage: null,
+        rationale: "Found a current public listing under a new role.",
+      }),
+    });
+    const agent = new ContactEnrichmentAgent({
+      contactId: CONTACT_ID,
+      force: true,
+    });
+
+    const out = await agent.run(ctx);
+    // Did NOT short-circuit on "already_enriched" — actually ran.
+    expect(out.outputRefs["skipped"]).toBeUndefined();
+    // The fresh email was appended to the existing list (emails are
+    // additive — the operator can prune later from the contact page).
+    expect(writes.patchCalls).toHaveLength(1);
+    expect(writes.patchCalls[0]?.patch).toEqual({
+      emails: ["existing@armasuisse.ch", "m.dupont@newrole.ch"],
+    });
+    expect(writes.events[0]?.verb).toBe("contact.enriched");
+  });
+
   it("re-enriches contact with email but no primary_language (one-shot backfill)", async () => {
     const { ctx, writes } = makeContext({
       contact: {

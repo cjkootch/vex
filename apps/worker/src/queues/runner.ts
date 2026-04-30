@@ -629,8 +629,12 @@ function buildAgentProcessor(
             "contact_enrichment job missing input.contact_id",
           );
         }
+        const force = data.input?.["force"] === true;
         return runner.run(
-          new ContactEnrichmentAgent({ contactId: contactIdRaw }),
+          new ContactEnrichmentAgent({
+            contactId: contactIdRaw,
+            ...(force ? { force: true } : {}),
+          }),
           { workspaceId: data.workspace_id },
         );
       }
@@ -844,6 +848,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
         }
         if (approval.actionType === "contact.add_membership") {
           await applyContactAddMembership(tx, deps, workspace_id, approval);
+          return;
+        }
+        if (approval.actionType === "contact.enrich") {
+          await applyContactEnrich(tx, deps, workspace_id, approval);
           return;
         }
         if (approval.actionType === "deal.set_broker") {
@@ -2246,6 +2254,9 @@ async function dispatchBundleItem(
     case "contact.add_membership":
       await applyContactAddMembership(tx, deps, tenantId, child);
       return true;
+    case "contact.enrich":
+      await applyContactEnrich(tx, deps, tenantId, child);
+      return true;
     case "deal.set_broker":
       await applyDealSetBroker(tx, deps, tenantId, child);
       return true;
@@ -2692,6 +2703,90 @@ async function applyContactAddMembership(
       ...(payload?.isPrimary ? { is_primary: true } : {}),
     },
   });
+}
+
+/**
+ * Chat-initiated contact re-enrichment. Operator asked Vex to take a
+ * fresh public-web pass at a contact ("re-enrich Amber"); the agent
+ * emitted a `contact.enrich` T1 action which auto-approved. We now
+ * enqueue a `contact_enrichment` agent job with `force=true` so the
+ * worker bypasses the "already enriched" idempotency guard and
+ * re-runs Tavily + Anthropic against the public web. The agent
+ * itself confidence-gates writes (≥0.4 to apply), so a thin
+ * search result still leaves the existing row alone.
+ *
+ * Per-contact dedupe key prevents the operator double-tapping the
+ * suggestion and burning two LLM credits within a few seconds —
+ * BullMQ collapses the second enqueue. Re-enriching the same
+ * contact in a subsequent run uses a different approval id so the
+ * dedupe key changes, and the new job runs as expected.
+ */
+async function applyContactEnrich(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { contactId?: string; rationale?: string }
+    | null;
+  const contactId = payload?.contactId;
+  if (!contactId) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.enrich",
+      "missing contactId",
+    );
+    return;
+  }
+  const contact = await deps.contacts.findById(tx, contactId);
+  if (!contact) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.enrich",
+      `contact ${contactId} not found`,
+    );
+    return;
+  }
+  await addAgentJob(
+    deps.agentsQueue,
+    {
+      kind: "contact_enrichment",
+      workspace_id: tenantId,
+      input: {
+        contact_id: contactId,
+        force: true,
+      },
+    },
+    `contact_enrichment:reenrich:${approval.id}`,
+  );
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "contact.reenrich_requested",
+    subjectType: "contact",
+    subjectId: contactId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "contact.enrich",
+      contact_id: contactId,
+      ...(payload?.rationale ? { rationale: payload.rationale } : {}),
+    },
+  });
+  await deps.approvals.markApplied(
+    tx,
+    approval.id,
+    `contact_enrichment:${contactId}`,
+  );
 }
 
 async function applyDealSetBroker(
