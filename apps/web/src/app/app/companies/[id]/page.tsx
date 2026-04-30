@@ -50,6 +50,8 @@ interface OrganizationDetail {
   tags: string[];
   kind: string | null;
   country: string | null;
+  ofacStatus: string;
+  ofacScreenedAt: string | null;
   notes: OrganizationNote[];
   createdAt: string;
   updatedAt: string;
@@ -209,7 +211,12 @@ export default function CompanyDetailPage({
           {
             id: "overview",
             label: "Overview",
-            content: <OverviewTab org={org} />,
+            content: (
+              <OverviewTab
+                org={org}
+                onRefresh={() => setRefreshKey((k) => k + 1)}
+              />
+            ),
           },
           {
             id: "contacts",
@@ -253,12 +260,18 @@ export default function CompanyDetailPage({
   );
 }
 
-function OverviewTab({ org }: { org: OrganizationDetail }) {
+function OverviewTab({
+  org,
+  onRefresh,
+}: {
+  org: OrganizationDetail;
+  onRefresh: () => void;
+}) {
   const tags = org.tags ?? [];
   const notes = org.notes ?? [];
   return (
     <div className="space-y-3">
-      <OfacControls org={org} />
+      <OfacControls org={org} onScreenComplete={onRefresh} />
 
       <section className="rounded-lg border border-line bg-muted/20 p-4">
         <div className="grid grid-cols-[140px_1fr] gap-2 text-sm">
@@ -335,19 +348,46 @@ function KindBadge({ kind }: { kind: string }) {
 }
 
 /**
- * OFAC controls: manual screen trigger + audit-trail JSON export.
- * Both buttons are visible regardless of current OFAC status — operators
- * sometimes re-run a screen even on an already-cleared org (datasets
- * update overnight) and exporting the prior result is a separate
- * compliance need from running a fresh one.
+ * OFAC controls panel — only visible when the org hasn't been
+ * screened yet (or the operator just queued a re-screen). Once a
+ * status lands, the panel hides itself and the export action moves
+ * inline with the OFAC badge in the page header (CompanyHero).
+ *
+ * Queue → poll loop:
+ *   1. Operator clicks Run → POST /ofac/screen, gets 202.
+ *   2. We start polling /api/organizations/:id every 3s for up to
+ *      90s, watching for ofacScreenedAt to advance past the "before
+ *      I queued" timestamp.
+ *   3. When it advances, the parent's onScreenComplete callback
+ *      bumps the page's refreshKey — full org refetch, this panel
+ *      unmounts because ofacStatus is no longer "unscreened".
+ *
+ * Display shows elapsed seconds during the poll so operators see
+ * something is happening (auto-stop on the worker means cold-start
+ * up to 30s; warm worker should resolve in 5-10s).
  */
-function OfacControls({ org }: { org: OrganizationDetail }) {
+function OfacControls({
+  org,
+  onScreenComplete,
+}: {
+  org: OrganizationDetail;
+  onScreenComplete: () => void;
+}) {
   const [runState, setRunState] = useState<
-    "idle" | "running" | "queued" | "error"
+    "idle" | "running" | "polling" | "error"
   >("idle");
   const [runError, setRunError] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  // Hide the panel entirely once the org has any non-unscreened
+  // status — operator uses the inline export button in the header
+  // from then on. "Re-screen" is also handled there.
+  if (org.ofacStatus && org.ofacStatus !== "unscreened" && runState === "idle") {
+    return null;
+  }
 
   const runScreen = async (): Promise<void> => {
+    const queuedAtIso = new Date().toISOString();
     setRunState("running");
     setRunError(null);
     try {
@@ -358,17 +398,45 @@ function OfacControls({ org }: { org: OrganizationDetail }) {
       if (!res.ok && res.status !== 202) {
         throw new Error(`${res.status} ${res.statusText}`);
       }
-      setRunState("queued");
+      setRunState("polling");
+      setElapsedSec(0);
+      // Poll for up to 90s. The OFAC agent typically resolves in
+      // 5-30s; the upper bound is for cold-start cases. After 90s
+      // we give up on the live update — operator can refresh
+      // manually if curious.
+      const start = Date.now();
+      const timer = setInterval(() => {
+        setElapsedSec(Math.floor((Date.now() - start) / 1000));
+      }, 500);
+      const startedAt = new Date(queuedAtIso).getTime();
+      const tryPoll = async (): Promise<boolean> => {
+        const r = await fetch(`/api/organizations/${org.id}`);
+        if (!r.ok) return false;
+        const body = (await r.json()) as { organization?: OrganizationDetail };
+        const screened = body.organization?.ofacScreenedAt;
+        if (screened && new Date(screened).getTime() > startedAt) return true;
+        return false;
+      };
+      const deadline = Date.now() + 90_000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        if (await tryPoll()) {
+          clearInterval(timer);
+          setRunState("idle");
+          setElapsedSec(0);
+          onScreenComplete();
+          return;
+        }
+      }
+      clearInterval(timer);
+      setRunState("error");
+      setRunError(
+        "Screen didn't complete within 90s. Worker may be cold-starting — refresh in a minute to see the result.",
+      );
     } catch (err) {
       setRunState("error");
       setRunError((err as Error).message);
     }
-  };
-
-  const exportReport = (): void => {
-    // GET with browser download — Content-Disposition: attachment on
-    // the response makes the browser save instead of render.
-    window.location.href = `/api/organizations/${org.id}/ofac/export`;
   };
 
   return (
@@ -377,41 +445,42 @@ function OfacControls({ org }: { org: OrganizationDetail }) {
         <div>
           <h3 className="text-sm font-medium text-white/90">OFAC screening</h3>
           <p className="mt-0.5 text-xs text-white/60">
-            Run an SDN-list match against this counterparty, or export the
-            latest screen result as a JSON audit record.
+            This counterparty hasn&apos;t been screened against the SDN list
+            yet. Run a screen before transacting.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={runScreen}
-            disabled={runState === "running"}
-            className="rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-xs text-white/85 transition-colors hover:border-accent hover:text-white disabled:opacity-50"
-          >
-            {runState === "running"
-              ? "Queueing…"
-              : runState === "queued"
-              ? "Queued ✓"
-              : "Run OFAC screen"}
-          </button>
-          <button
-            type="button"
-            onClick={exportReport}
-            className="rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-xs text-white/85 transition-colors hover:border-accent hover:text-white"
-          >
-            Export report
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={runScreen}
+          disabled={runState === "running" || runState === "polling"}
+          className="inline-flex items-center gap-2 rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-xs text-white/85 transition-colors hover:border-accent hover:text-white disabled:opacity-60"
+        >
+          {runState === "running" ? (
+            <>
+              <Spinner /> Queueing…
+            </>
+          ) : runState === "polling" ? (
+            <>
+              <Spinner /> Screening… {elapsedSec}s
+            </>
+          ) : (
+            "Run OFAC screen"
+          )}
+        </button>
       </div>
       {runError ? (
-        <p className="mt-2 text-xs text-bad">Error: {runError}</p>
-      ) : runState === "queued" ? (
-        <p className="mt-2 text-xs text-white/60">
-          Screen queued — refresh the page in a few seconds to see the
-          updated status.
-        </p>
+        <p className="mt-2 text-xs text-bad">{runError}</p>
       ) : null}
     </section>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      aria-hidden
+      className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white/80"
+    />
   );
 }
 

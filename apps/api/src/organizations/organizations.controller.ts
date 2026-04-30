@@ -121,6 +121,10 @@ export interface OrganizationDetail extends OrganizationListRow {
   externalKeys: Record<string, string>;
   /** ISO 3166-1 alpha-2 from geo.country, populated by org.update_fields. */
   country: string | null;
+  /** Latest OFAC SDN screen status. "unscreened" when never screened. */
+  ofacStatus: string;
+  /** ISO timestamp of the last OFAC screen, null if never screened. */
+  ofacScreenedAt: string | null;
   /** Most-recent crm.note bodies, newest first. Up to 5. */
   notes: OrganizationNote[];
   contacts: OrganizationContactSummary[];
@@ -512,6 +516,8 @@ export class OrganizationsController {
         tags: after.tags ?? [],
         kind: after.kind,
         country: typeof country === "string" ? country : null,
+        ofacStatus: after.ofacStatus,
+        ofacScreenedAt: after.ofacScreenedAt?.toISOString() ?? null,
         // After-PATCH detail; freshly-created or freshly-updated orgs
         // typically don't have notes yet — leave empty rather than
         // round-trip the events query for a likely-empty result.
@@ -641,6 +647,8 @@ export class OrganizationsController {
           tags: row.tags ?? [],
           kind: row.kind,
           country: typeof country === "string" ? country : null,
+          ofacStatus: row.ofacStatus,
+          ofacScreenedAt: row.ofacScreenedAt?.toISOString() ?? null,
           notes,
           createdAt: row.createdAt.toISOString(),
           updatedAt: row.updatedAt.toISOString(),
