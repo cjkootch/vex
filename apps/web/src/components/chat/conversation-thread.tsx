@@ -623,6 +623,50 @@ function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }
     }
   }
 
+  // Manual one-shot outcome re-check. Surfaced via the chip's
+  // "Refresh" button when polling has timed out (>10min) but the
+  // chip is still showing "queued" / "sent". Re-arms polling on
+  // approve-but-non-terminal so a Resend webhook arriving after the
+  // refresh still flips the pill.
+  async function refreshOutcome(approvalId: string): Promise<void> {
+    try {
+      const r = await fetch(
+        `/api/approvals/${encodeURIComponent(approvalId)}/outcome`,
+        { cache: "no-store" },
+      );
+      if (!r.ok) return;
+      const body = (await r.json()) as {
+        approval: { decision: string };
+        outcome: ChatApprovalState["outcome"];
+      };
+      const decision: ChatApprovalState["decision"] =
+        body.approval.decision === "auto_approved"
+          ? "approved"
+          : (body.approval.decision as ChatApprovalState["decision"]);
+      setState((s) => ({
+        ...s,
+        [approvalId]: {
+          ...(s[approvalId] ?? {
+            decision: "pending",
+            outcome: null,
+            inFlight: false,
+            error: null,
+          }),
+          decision,
+          outcome: body.outcome ?? null,
+        },
+      }));
+      const stillWatching =
+        decision === "approved" &&
+        (!body.outcome ||
+          body.outcome.status === "queued" ||
+          body.outcome.status === "applied");
+      if (stillWatching) void pollOutcome(approvalId);
+    } catch {
+      /* fail-soft */
+    }
+  }
+
   // Group same-actionType drafts as a carousel so the operator can
   // swipe through "send to alice in EN, bob in ES, chen in ZH" before
   // approving each. The trigger is "2+ chips with the same actionType
@@ -645,6 +689,7 @@ function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }
               approval={a}
               state={s}
               onDecide={(action) => void decide(a.approvalId, action)}
+              onRefresh={() => refreshOutcome(a.approvalId)}
             />
           );
         }
@@ -656,6 +701,7 @@ function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }
             onDecide={(approvalId, action) =>
               void decide(approvalId, action)
             }
+            onRefresh={(approvalId) => refreshOutcome(approvalId)}
           />
         );
       })}
@@ -691,10 +737,12 @@ function ApprovalCarousel({
   approvals,
   state,
   onDecide,
+  onRefresh,
 }: {
   approvals: CreatedApprovalMeta[];
   state: Record<string, ChatApprovalState>;
   onDecide: (approvalId: string, action: "approve" | "reject") => void;
+  onRefresh: (approvalId: string) => Promise<void> | void;
 }) {
   const [index, setIndex] = useState(0);
   const safeIndex = Math.max(0, Math.min(index, approvals.length - 1));
@@ -780,6 +828,7 @@ function ApprovalCarousel({
         approval={current}
         state={s}
         onDecide={handleDecide}
+        onRefresh={() => onRefresh(current.approvalId)}
         embedded
       />
     </div>
@@ -790,11 +839,14 @@ function InlineApprovalChip({
   approval,
   state,
   onDecide,
+  onRefresh,
   embedded,
 }: {
   approval: CreatedApprovalMeta;
   state: ChatApprovalState;
   onDecide: (action: "approve" | "reject") => void;
+  /** Manually re-fetch the outcome when the polling window has expired. */
+  onRefresh: () => Promise<void> | void;
   /** When the chip is rendered inside the carousel, drop the outer
    *  border + status-tinted background so the carousel's frame doesn't
    *  double up. */
@@ -807,7 +859,13 @@ function InlineApprovalChip({
     approval.actionType === "whatsapp.send";
   const statusPill = (() => {
     if (state.outcome?.status === "delivered") {
-      return { tone: "bg-good/30 text-good", label: "delivered" };
+      return {
+        tone: "bg-good/30 text-good",
+        label: "delivered",
+        title: isMessageAction
+          ? "Recipient's mailbox accepted the message (Resend email.delivered webhook)."
+          : "Action completed successfully.",
+      };
     }
     if (state.outcome?.status === "applied") {
       // For email/sms/whatsapp the apply step just hands the message
@@ -817,21 +875,52 @@ function InlineApprovalChip({
       return {
         tone: "bg-good/20 text-good",
         label: isMessageAction ? "sent" : "applied",
+        title: isMessageAction
+          ? "Handed off to Resend. Waiting on the delivered webhook to confirm inbox arrival."
+          : "Action applied to the workspace.",
       };
     }
     if (state.outcome?.status === "failed") {
-      return { tone: "bg-bad/20 text-bad", label: "executor failed" };
+      return {
+        tone: "bg-bad/20 text-bad",
+        label: "executor failed",
+        title: "The worker tried to apply this action and hit an error. See message below.",
+      };
     }
     if (state.outcome?.status === "skipped") {
-      return { tone: "bg-white/10 text-white/70", label: "already applied" };
+      return {
+        tone: "bg-white/10 text-white/70",
+        label: "already applied",
+        title: "The executor saw the action had already run and skipped it (idempotency).",
+      };
     }
     if (state.decision === "approved") {
-      return { tone: "bg-good/20 text-good", label: "queued" };
+      return {
+        tone: "bg-good/20 text-good",
+        label: "queued",
+        title: "Approved — waiting on the worker to pick the action up.",
+      };
     }
     if (state.decision === "rejected") {
-      return { tone: "bg-bad/20 text-bad", label: "rejected" };
+      return {
+        tone: "bg-bad/20 text-bad",
+        label: "rejected",
+        title: "You rejected this action. Nothing was applied.",
+      };
     }
     return null;
+  })();
+
+  // Detect a chip that's been approved but the executor hasn't moved
+  // it to a terminal state. We surface a "Refresh" affordance so the
+  // operator can manually re-check without reloading the page when
+  // the polling schedule has expired.
+  const isPendingTerminal = (() => {
+    if (state.decision !== "approved") return false;
+    const status = state.outcome?.status ?? "queued";
+    return (
+      status !== "delivered" && status !== "failed" && status !== "skipped"
+    );
   })();
 
   const disabled = state.inFlight || state.decision !== "pending";
@@ -864,11 +953,14 @@ function InlineApprovalChip({
           {approval.tier}
         </span>
         {statusPill ? (
-          <span className={`rounded px-1.5 py-0.5 ${statusPill.tone}`}>
+          <span
+            className={`rounded px-1.5 py-0.5 ${statusPill.tone}`}
+            title={statusPill.title}
+          >
             {statusPill.label}
           </span>
         ) : null}
-        <span className="ml-auto flex gap-1.5">
+        <span className="ml-auto flex items-center gap-1.5">
           {state.decision === "pending" ? (
             <>
               <button
@@ -891,12 +983,24 @@ function InlineApprovalChip({
               </button>
             </>
           ) : (
-            <Link
-              href="/app/approvals"
-              className="text-[11px] text-white/50 underline-offset-2 hover:text-white/80 hover:underline"
-            >
-              Open inbox →
-            </Link>
+            <>
+              {isPendingTerminal ? (
+                <button
+                  type="button"
+                  onClick={() => void onRefresh()}
+                  title="Re-check the executor outcome — useful when polling has timed out and the chip is still 'queued' or 'sent'."
+                  className="text-[11px] text-white/50 underline-offset-2 hover:text-white/80 hover:underline"
+                >
+                  Refresh
+                </button>
+              ) : null}
+              <Link
+                href="/app/approvals"
+                className="text-[11px] text-white/50 underline-offset-2 hover:text-white/80 hover:underline"
+              >
+                Open inbox →
+              </Link>
+            </>
           )}
         </span>
       </div>
