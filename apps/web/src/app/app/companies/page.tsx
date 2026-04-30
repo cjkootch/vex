@@ -34,6 +34,12 @@ export default function CompaniesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // Archive modal state — mirrors the contacts list pattern. Typed
+  // confirmation gate so a bulk archive can't fire by accident.
+  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archiveConfirmText, setArchiveConfirmText] = useState("");
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
@@ -435,13 +441,26 @@ export default function CompaniesPage() {
                 <span className="num-mono">{selectedIds.size}</span> compan
                 {selectedIds.size === 1 ? "y" : "ies"} selected
               </span>
-              <button
-                type="button"
-                onClick={() => setSelectedIds(new Set())}
-                className="text-xs text-text-muted hover:text-text-primary"
-              >
-                Clear
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setArchiveModalOpen(true);
+                    setArchiveConfirmText("");
+                    setArchiveError(null);
+                  }}
+                  className="rounded-md bg-bad/20 px-2.5 py-1 text-xs font-medium text-bad transition-colors hover:bg-bad/30"
+                >
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-xs text-text-muted hover:text-text-primary"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
           )}
           <DataTable
@@ -460,6 +479,102 @@ export default function CompaniesPage() {
           />
         </>
       )}
+
+      {archiveModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !archiveBusy) {
+              setArchiveModalOpen(false);
+            }
+          }}
+        >
+          <div className="w-full max-w-md rounded-lg border border-line bg-bg p-5 text-white shadow-xl">
+            <h2 className="text-base font-semibold">
+              Delete {selectedIds.size} compan
+              {selectedIds.size === 1 ? "y" : "ies"}?
+            </h2>
+            <p className="mt-2 text-sm text-white/70">
+              Selected companies will be archived (soft-deleted). They
+              vanish from the active list but their contacts, deals, and
+              event timeline stay intact. An owner can restore them later.
+            </p>
+            <p className="mt-3 text-xs text-white/50">
+              Type <span className="font-mono text-white">DELETE</span>{" "}
+              below to confirm.
+            </p>
+            <input
+              type="text"
+              value={archiveConfirmText}
+              onChange={(e) => setArchiveConfirmText(e.target.value)}
+              placeholder="DELETE"
+              disabled={archiveBusy}
+              autoFocus
+              className="mt-2 w-full rounded-md border border-line bg-muted/30 px-3 py-1.5 font-mono text-sm text-white placeholder-white/30 focus:border-white/30 focus:outline-none"
+            />
+            {archiveError ? (
+              <p className="mt-2 text-xs text-red-200">{archiveError}</p>
+            ) : null}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={archiveBusy}
+                onClick={() => setArchiveModalOpen(false)}
+                className="rounded-md border border-line bg-muted/30 px-3 py-1.5 text-sm text-white/80 transition hover:bg-muted/50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={archiveBusy || archiveConfirmText !== "DELETE"}
+                onClick={async () => {
+                  setArchiveBusy(true);
+                  setArchiveError(null);
+                  try {
+                    const ids = Array.from(selectedIds);
+                    const res = await fetch(
+                      "/api/organizations/bulk-archive",
+                      {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ organizationIds: ids }),
+                      },
+                    );
+                    if (!res.ok) {
+                      const text = await res.text();
+                      throw new Error(
+                        `bulk-archive → ${res.status}: ${text.slice(0, 200)}`,
+                      );
+                    }
+                    const payload = (await res.json()) as {
+                      archivedCount: number;
+                      archivedIds: string[];
+                    };
+                    const archivedSet = new Set(payload.archivedIds);
+                    setOrganizations((prev) =>
+                      prev
+                        ? prev.filter((o) => !archivedSet.has(o.id))
+                        : prev,
+                    );
+                    setSelectedIds(new Set());
+                    setArchiveModalOpen(false);
+                    setArchiveConfirmText("");
+                  } catch (err) {
+                    setArchiveError((err as Error).message);
+                  } finally {
+                    setArchiveBusy(false);
+                  }
+                }}
+                className="rounded-md bg-red-500/80 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {archiveBusy
+                  ? "Archiving…"
+                  : `Delete ${selectedIds.size}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

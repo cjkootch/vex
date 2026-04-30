@@ -147,6 +147,16 @@ const STATUS_VALUES = new Set<RecordStatus>([
   "inactive",
 ]);
 
+/**
+ * Bulk soft-delete validator. Capped at 500 ids per request so a
+ * runaway client can't archive a whole workspace in one click.
+ * Mirrors the contacts equivalent.
+ */
+const BulkArchiveBody = z.object({
+  organizationIds: z.array(z.string().min(1).max(50)).min(1).max(500),
+  reason: z.string().max(500).optional(),
+});
+
 @Controller("organizations")
 @UseGuards(JwtAuthGuard)
 export class OrganizationsController {
@@ -320,6 +330,57 @@ export class OrganizationsController {
    * counts plus per-row outcomes so the UI can surface which rows
    * matched an existing org vs were newly created.
    */
+  /**
+   * Bulk soft-delete companies (status flip to `archived`). Called
+   * from /app/companies when an operator selects N rows + confirms in
+   * the typed-confirmation modal. Single audit event covers the
+   * batch so the events feed has one row per archive action, not N.
+   * Mirrors POST /contacts/bulk-archive.
+   */
+  @Post("bulk-archive")
+  async bulkArchive(@Body() raw: unknown) {
+    const parsed = BulkArchiveBody.safeParse(raw);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.message);
+    }
+    const { organizationIds, reason } = parsed.data;
+    const tenantId = this.tenant.tenantId;
+    const actorUserId = this.tenant.userId;
+    return withTenant(this.db, tenantId, async (tx) => {
+      const updated = await this.organizations.updateStatusByIds(
+        tx,
+        organizationIds,
+        "archived",
+      );
+      const archivedIds = updated.map((o) => o.id);
+      if (archivedIds.length > 0) {
+        await this.events.insertIfNotExists(tx, tenantId, {
+          verb: "organizations.bulk_archived",
+          subjectType: "organization",
+          // First id as the subject so the org-detail timeline
+          // surfaces the archive event for at least one of the batch.
+          subjectId: archivedIds[0]!,
+          actorType: "user",
+          actorId: actorUserId,
+          objectType: "organization",
+          objectId: archivedIds[0]!,
+          occurredAt: new Date(),
+          idempotencyKey: `organizations.bulk_archived:${actorUserId}:${Date.now()}:${archivedIds.length}`,
+          metadata: {
+            archived_count: archivedIds.length,
+            requested_count: organizationIds.length,
+            archived_ids: archivedIds,
+            reason: reason ?? null,
+          },
+        });
+      }
+      this.log.log(
+        `bulk-archived ${archivedIds.length}/${organizationIds.length} organizations by ${actorUserId}`,
+      );
+      return { archivedCount: archivedIds.length, archivedIds };
+    });
+  }
+
   @Post("bulk")
   @HttpCode(200)
   async bulkCreate(
