@@ -774,6 +774,9 @@ function ApprovalCarousel({
   if (!current) return null;
   const s = state[current.approvalId];
   if (!s) return null;
+  const pendingCount = approvals.filter(
+    (a) => state[a.approvalId]?.decision === "pending",
+  ).length;
 
   const advanceToNextPending = (): void => {
     for (let i = safeIndex + 1; i < approvals.length; i++) {
@@ -858,6 +861,25 @@ function ApprovalCarousel({
         onRefresh={() => onRefresh(current.approvalId)}
         embedded
       />
+      {pendingCount > 1 ? (
+        <div className="mt-2 flex items-center justify-end gap-2 border-t border-warn/20 pt-2">
+          <button
+            type="button"
+            data-testid="carousel-approve-all"
+            onClick={() => {
+              for (const a of approvals) {
+                if (state[a.approvalId]?.decision === "pending") {
+                  onDecide(a.approvalId, "approve");
+                }
+              }
+              setIndex(approvals.length - 1);
+            }}
+            className="rounded-md bg-good/80 px-2.5 py-1 text-[11px] font-medium text-canvas transition hover:bg-good"
+          >
+            Approve all {pendingCount} pending
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

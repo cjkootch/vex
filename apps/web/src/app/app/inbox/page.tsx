@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 
 /**
@@ -70,6 +70,34 @@ export default function InboxPage(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"timeline" | "threads">("timeline");
   const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set());
+  // Client-side search across loaded rows. Server pagination keeps
+  // the row count bounded (~50 per page); searching in-memory is
+  // good enough for that volume and keeps everything reactive.
+  const [search, setSearch] = useState("");
+
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((item) => {
+      if (item.kind === "call") {
+        const fields = [item.contactId, item.callSid, item.status];
+        return fields.some((f) => f && f.toLowerCase().includes(q));
+      }
+      const md = item.metadata ?? {};
+      const stringFields: Array<unknown> = [
+        item.preview,
+        item.contactId,
+        item.channel,
+        md["to"],
+        md["from"],
+        md["recipient"],
+        md["subject"],
+      ];
+      return stringFields.some(
+        (f) => typeof f === "string" && f.toLowerCase().includes(q),
+      );
+    });
+  }, [items, search]);
 
   const buildQuery = useCallback(
     (before: string | null): string => {
@@ -214,15 +242,46 @@ export default function InboxPage(): React.ReactElement {
         </div>
       )}
 
-      {!loading && items.length === 0 && !error && (
+      <div className="flex items-center gap-2">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search recipient, subject, preview…"
+          className="w-full max-w-md rounded-md border border-line-soft bg-surface-2/40 px-3 py-1.5 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
+        />
+        {search ? (
+          <span className="text-[11px] text-white/40">
+            {filteredItems.length} of {items.length}
+          </span>
+        ) : null}
+      </div>
+
+      {loading && items.length === 0 && (
+        <ol className="flex flex-col gap-2" aria-hidden="true">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <li
+              key={i}
+              className="animate-pulse rounded-md border border-line/50 bg-surface-2/30 p-3"
+            >
+              <div className="h-3 w-1/4 rounded bg-white/10" />
+              <div className="mt-2 h-3 w-3/4 rounded bg-white/5" />
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {!loading && filteredItems.length === 0 && !error && (
         <div className="rounded-lg border border-line bg-muted/20 p-6 text-center text-sm text-white/50">
-          No communications match these filters.
+          {search
+            ? "No communications match the search."
+            : "No communications match these filters."}
         </div>
       )}
 
       {viewMode === "timeline" ? (
         <ol className="flex flex-col gap-2">
-          {items.map((item) =>
+          {filteredItems.map((item) =>
             item.kind === "call" ? (
               <CallRow key={item.id} item={item} />
             ) : (
@@ -232,7 +291,7 @@ export default function InboxPage(): React.ReactElement {
         </ol>
       ) : (
         <ol className="flex flex-col gap-2">
-          {groupIntoThreads(items).map((thread) => {
+          {groupIntoThreads(filteredItems).map((thread) => {
             const expanded = expandedThreads.has(thread.key);
             return (
               <ThreadRow
