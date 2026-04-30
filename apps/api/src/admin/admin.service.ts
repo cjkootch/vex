@@ -49,6 +49,8 @@ export interface SettingsPatch {
   email_signature?:
     | { html?: string | undefined; text?: string | undefined }
     | undefined;
+  email_from_name?: string | undefined;
+  email_cc?: string[] | undefined;
 }
 
 export interface HealthMetrics {
@@ -364,6 +366,34 @@ function mergeSettings(
       merged.text = patch.email_signature.text;
     }
     next.email_signature = merged;
+  }
+  // Empty string clears the override; trimming so trailing whitespace
+  // doesn't end up in the From header.
+  if (patch.email_from_name !== undefined) {
+    const trimmed = patch.email_from_name.trim();
+    if (trimmed.length > 0) {
+      next.email_from_name = trimmed;
+    } else {
+      delete next.email_from_name;
+    }
+  }
+  // Empty array clears the always-CC list. Each entry trimmed +
+  // de-duped (case-insensitive); empty strings filtered out so the
+  // executor doesn't try to send to a blank address.
+  if (patch.email_cc !== undefined) {
+    const seen = new Set<string>();
+    const cleaned: string[] = [];
+    for (const raw of patch.email_cc) {
+      const lower = raw.trim().toLowerCase();
+      if (!lower || seen.has(lower)) continue;
+      seen.add(lower);
+      cleaned.push(raw.trim());
+    }
+    if (cleaned.length > 0) {
+      next.email_cc = cleaned;
+    } else {
+      delete next.email_cc;
+    }
   }
   return next;
 }

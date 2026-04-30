@@ -24,6 +24,8 @@ export interface WorkspaceSettings {
     updated_at?: string;
     updated_by?: string | null;
   };
+  email_from_name?: string;
+  email_cc?: string[];
 }
 
 type TabKey =

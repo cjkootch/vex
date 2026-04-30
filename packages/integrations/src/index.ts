@@ -62,6 +62,7 @@ export {
 export {
   createResendClient,
   fetchResendInboundBody,
+  formatFromHeader,
   type ResendDeps,
   type SendEmailRequest,
   type InboundEmailBody,

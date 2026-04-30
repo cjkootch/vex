@@ -14,6 +14,16 @@ export interface SendEmailRequest {
   html?: string;
   replyTo?: string;
   /**
+   * Display name to decorate the verified sender. Resend requires the
+   * email portion to live on a verified domain, so callers can't
+   * override the address — only the friendly name. When set, the
+   * From header becomes `"Display Name" <verified@domain>`. When
+   * omitted, the client sends with `deps.defaultFrom` alone.
+   */
+  fromName?: string;
+  /** Optional CC list passed straight through to Resend. */
+  cc?: readonly string[];
+  /**
    * Custom RFC-5322 headers passed through to Resend. Used for
    * threading (In-Reply-To + References) when sending a reply to
    * an inbound message — without these the recipient's mail client
@@ -76,17 +86,41 @@ export async function fetchResendInboundBody(
   }
 }
 
+/**
+ * Builds the Resend `from` header. Resend accepts the literal value
+ * we pass — `"Display Name" <addr>` is the RFC-5322 form that renders
+ * the friendly name in the recipient's inbox while keeping the
+ * verified address on the technical envelope. When `displayName` is
+ * empty (or missing), we send the bare address. Display names with
+ * embedded quotes are escaped so the parser doesn't truncate the
+ * header at the first inner quote.
+ */
+export function formatFromHeader(
+  defaultAddress: string,
+  displayName?: string,
+): string {
+  const trimmed = displayName?.trim();
+  if (!trimmed) return defaultAddress;
+  // Pre-formatted `"Name" <addr>` already includes its own address —
+  // pass through. Operators occasionally land here via the admin
+  // patch path; we trust their string and don't double-wrap.
+  if (/^.+<.+@.+>$/.test(trimmed)) return trimmed;
+  const escaped = trimmed.replace(/"/g, '\\"');
+  return `"${escaped}" <${defaultAddress}>`;
+}
+
 export function createResendClient(deps: ResendDeps) {
   const client = new Resend(deps.apiKey);
 
   return {
     async send(req: SendEmailRequest) {
       return client.emails.send({
-        from: deps.defaultFrom,
+        from: formatFromHeader(deps.defaultFrom, req.fromName),
         to: [...req.to],
         subject: req.subject,
         text: req.text,
         ...(req.html !== undefined ? { html: req.html } : {}),
+        ...(req.cc !== undefined && req.cc.length > 0 ? { cc: [...req.cc] } : {}),
         ...(req.replyTo !== undefined ? { reply_to: req.replyTo } : {}),
         ...(req.headers !== undefined ? { headers: req.headers } : {}),
       });

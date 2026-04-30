@@ -37,6 +37,21 @@ export interface WorkspaceSettings {
     /** User id of the last saver, or null for seed / default-populated values. */
     updated_by?: string | null;
   };
+  /**
+   * Display name appended to every outbound email's `From` header.
+   * The verified Resend address itself doesn't change — we keep it on
+   * the workspace's verified domain for deliverability — but the
+   * recipient sees the friendly name. Format: Resend formats the
+   * eventual header as `"Display Name" <verified@domain>`. Empty /
+   * missing → fall back to the verified address alone.
+   */
+  email_from_name?: string;
+  /**
+   * Always-CC addresses on every outbound `email.send`. Operator-set;
+   * typical use is "CC my own work address so threads land in my
+   * inbox." Recipients see these addresses on the message.
+   */
+  email_cc?: string[];
 }
 
 /**
