@@ -24,6 +24,8 @@ interface ContactPulse {
     phones: string[];
     status: string;
     optOutAt: string | null;
+    /** ISO 639-1 language code from contact-enrichment, or null. */
+    primaryLanguage: string | null;
   };
   primaryOrg: { id: string; legalName: string } | null;
   allOrgs: Array<{
@@ -70,6 +72,7 @@ export function ContactHero({
   const email = emails[0] ?? null;
   const phone = phones[0] ?? null;
   const primaryOrg = pulse?.primaryOrg ?? null;
+  const primaryLanguage = pulse?.contact.primaryLanguage ?? null;
   const suppressed =
     pulse?.contact.optOutAt ??
     (fallback.status === "suppressed" ? "suppressed" : null);
@@ -102,6 +105,14 @@ export function ContactHero({
                 {suppressed ? (
                   <span className="rounded-md border border-bad/40 bg-bad/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider2 text-bad">
                     Suppressed
+                  </span>
+                ) : null}
+                {primaryLanguage ? (
+                  <span
+                    title={`Primary language: ${describeLanguage(primaryLanguage)} — drafts default to this language in chat`}
+                    className="rounded-md border border-line-soft bg-surface-2/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider2 text-text-secondary"
+                  >
+                    {primaryLanguage}
                   </span>
                 ) : null}
               </div>
@@ -222,6 +233,41 @@ export function ContactHero({
       </div>
     </section>
   );
+}
+
+/**
+ * Tiny ISO 639-1 → English-name lookup for the badge tooltip. Not
+ * exhaustive — falls back to the raw code when missing. The main
+ * languages procurement teams care about are covered.
+ */
+const LANGUAGE_NAMES: Record<string, string> = {
+  en: "English",
+  es: "Spanish",
+  pt: "Portuguese",
+  fr: "French",
+  de: "German",
+  it: "Italian",
+  nl: "Dutch",
+  zh: "Chinese",
+  ja: "Japanese",
+  ko: "Korean",
+  ar: "Arabic",
+  ru: "Russian",
+  tr: "Turkish",
+  pl: "Polish",
+  sv: "Swedish",
+  no: "Norwegian",
+  da: "Danish",
+  fi: "Finnish",
+  el: "Greek",
+  hi: "Hindi",
+  id: "Indonesian",
+  vi: "Vietnamese",
+  th: "Thai",
+};
+
+function describeLanguage(code: string): string {
+  return LANGUAGE_NAMES[code.toLowerCase()] ?? code.toUpperCase();
 }
 
 function StatCell({

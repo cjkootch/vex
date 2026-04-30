@@ -162,6 +162,13 @@
       "when": 1778227200000,
       "tag": "0022_procur_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1778313600000,
+      "tag": "0023_contacts_primary_language",
+      "breakpoints": true
     }
   ]
 }

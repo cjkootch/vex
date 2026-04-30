@@ -341,6 +341,7 @@ export class RetrievalService {
         emails: contacts.emails,
         phones: contacts.phones,
         optOutAt: contacts.optOutAt,
+        primaryLanguage: contacts.primaryLanguage,
       })
       .from(contacts)
       .where(
@@ -382,6 +383,7 @@ export class RetrievalService {
         emails: contacts.emails,
         phones: contacts.phones,
         optOutAt: contacts.optOutAt,
+        primaryLanguage: contacts.primaryLanguage,
       })
       .from(contacts)
       .where(
@@ -1429,6 +1431,7 @@ function contactRowToEvidence(r: {
   title: string | null;
   emails: string[];
   phones: string[];
+  primaryLanguage?: string | null;
 }): EvidenceItem {
   return {
     chunk_id: `contact:${r.id}`,
@@ -1441,6 +1444,11 @@ function contactRowToEvidence(r: {
       `  Org id: ${r.orgId ?? "none"}`,
       r.emails.length > 0 ? `  Emails: ${r.emails.join(", ")}` : null,
       r.phones.length > 0 ? `  Phones: ${r.phones.join(", ")}` : null,
+      // Surfaced to the chat agent so email.send drafts default to
+      // the contact's primary language. Omitted when null.
+      r.primaryLanguage
+        ? `  Primary language (ISO 639-1): ${r.primaryLanguage}`
+        : null,
     ]
       .filter(Boolean)
       .join("\n"),

@@ -358,6 +358,7 @@ export class ContactRepository {
       emails?: string[];
       phones?: string[];
       timezone?: string | null;
+      primaryLanguage?: string | null;
       tags?: string[];
     },
   ): Promise<Contact> {
@@ -367,6 +368,8 @@ export class ContactRepository {
     if (patch.emails !== undefined) set["emails"] = patch.emails;
     if (patch.phones !== undefined) set["phones"] = patch.phones;
     if (patch.timezone !== undefined) set["timezone"] = patch.timezone;
+    if (patch.primaryLanguage !== undefined)
+      set["primaryLanguage"] = patch.primaryLanguage;
     if (patch.tags !== undefined) set["tags"] = patch.tags;
     const [row] = await tx
       .update(contacts)
