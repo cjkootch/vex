@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { enforceAiModeWhenVexIsTheCaller } from "./query.service.js";
+import {
+  bundleActionsIfMultiple,
+  enforceAiModeWhenVexIsTheCaller,
+} from "./query.service.js";
 import type { ProposedAction } from "@vex/integrations";
 
 function outboundCall(
@@ -96,5 +99,82 @@ describe("enforceAiModeWhenVexIsTheCaller", () => {
       "Have Vex call Cole",
     );
     expect(action).toBe(emailAction);
+  });
+});
+
+describe("bundleActionsIfMultiple", () => {
+  function emailSend(to: string, lang?: string): ProposedAction {
+    return {
+      kind: "email.send",
+      tier: "T2",
+      payload: {
+        to: [to],
+        subject: "hi",
+        body: "hi",
+        ...(lang ? { lang } : {}),
+      },
+      rationale: "follow up",
+    };
+  }
+
+  it("returns single action unchanged", () => {
+    const out = bundleActionsIfMultiple([emailSend("a@b.com")]);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.kind).toBe("email.send");
+  });
+
+  it("keeps homogeneous email.send batch un-bundled (carousel render)", () => {
+    const drafts = [
+      emailSend("alice@x.com", "en"),
+      emailSend("bob@x.com", "es"),
+      emailSend("chen@x.com", "zh"),
+    ];
+    const out = bundleActionsIfMultiple(drafts);
+    expect(out).toHaveLength(3);
+    expect(out.every((a) => a.kind === "email.send")).toBe(true);
+  });
+
+  it("bundles mixed-kind multi-action lists", () => {
+    const mixed: ProposedAction[] = [
+      emailSend("a@b.com"),
+      {
+        kind: "crm.note",
+        tier: "T1",
+        payload: {
+          organizationId: "01KPMGZNB2EN6SVCBJVGRVEDK1",
+          body: "noted",
+        },
+        rationale: "log",
+      },
+    ];
+    const out = bundleActionsIfMultiple(mixed);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.kind).toBe("bundle");
+  });
+
+  it("non-carousel same-kind actions still bundle (e.g. multiple crm.notes)", () => {
+    const notes: ProposedAction[] = [
+      {
+        kind: "crm.note",
+        tier: "T1",
+        payload: {
+          organizationId: "01KPMGZNB2EN6SVCBJVGRVEDK1",
+          body: "first",
+        },
+        rationale: "log",
+      },
+      {
+        kind: "crm.note",
+        tier: "T1",
+        payload: {
+          organizationId: "01KPMGZNB2EN6SVCBJVGRVEDK2",
+          body: "second",
+        },
+        rationale: "log",
+      },
+    ];
+    const out = bundleActionsIfMultiple(notes);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.kind).toBe("bundle");
   });
 });

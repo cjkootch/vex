@@ -590,6 +590,20 @@ const RANK_TIER: Record<number, "T0" | "T1" | "T2" | "T3"> = {
  * schema and only surfaced as executor failures at apply time —
  * after the bundle had already auto-approved.
  */
+/**
+ * Action kinds the chat surfaces as a carousel of inline draft
+ * previews. When a turn proposes 2+ of these AND they're all the same
+ * kind, we keep them as N individual approvals so the carousel can
+ * render one chip per draft. Mixed action lists (e.g. crm.note +
+ * email.send) keep bundling — the carousel only handles homogeneous
+ * draft batches.
+ */
+const CAROUSEL_KINDS = new Set([
+  "email.send",
+  "sms.send",
+  "whatsapp.send",
+]);
+
 export function bundleActionsIfMultiple(
   actions: ProposedAction[],
 ): ProposedAction[] {
@@ -605,6 +619,19 @@ export function bundleActionsIfMultiple(
     }
   }
   if (flat.length <= 1) return flat;
+
+  // Same-kind draft batches stay un-bundled so the chat UI can group
+  // them into a carousel of independently-approvable drafts. The
+  // operator pages through subject + body + lang per recipient and
+  // approves each, instead of seeing one collapsed "bundle" chip.
+  const firstKind = flat[0]?.kind;
+  if (
+    firstKind &&
+    CAROUSEL_KINDS.has(firstKind) &&
+    flat.every((a) => a.kind === firstKind)
+  ) {
+    return flat;
+  }
 
   // Validate each item. The bundle itself only passthroughs items;
   // without this pre-check the executor is left holding the bag on
