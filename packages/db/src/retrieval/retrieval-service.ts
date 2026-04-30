@@ -357,7 +357,44 @@ export class RetrievalService {
       )
       .limit(200);
 
-    return rows.filter((r) => !r.optOutAt).map(contactRowToEvidence);
+    const live = rows.filter((r) => !r.optOutAt);
+    const membershipCounts = await this.fetchMembershipCounts(
+      tx,
+      live.map((r) => r.id),
+    );
+    return live.map((r) =>
+      contactRowToEvidence({
+        ...r,
+        membershipCount: membershipCounts.get(r.id) ?? 0,
+      }),
+    );
+  }
+
+  /**
+   * Counts contact_org_memberships rows per contact id. The chat
+   * evidence row surfaces this as "Memberships: N orgs" — the source-
+   * of-truth field for the contact↔org link. Distinct from
+   * `contacts.org_id` (deprecated denormalized pointer) which legacy
+   * ingest paths still stamp; older code looking only at `org_id`
+   * was claiming "already associated" when no membership row
+   * backed the link.
+   */
+  private async fetchMembershipCounts(
+    tx: Tx,
+    contactIds: readonly string[],
+  ): Promise<Map<string, number>> {
+    const out = new Map<string, number>();
+    if (contactIds.length === 0) return out;
+    const rows = await tx
+      .select({
+        contactId: contactOrgMemberships.contactId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(contactOrgMemberships)
+      .where(inArray(contactOrgMemberships.contactId, [...contactIds]))
+      .groupBy(contactOrgMemberships.contactId);
+    for (const row of rows) out.set(row.contactId, Number(row.count));
+    return out;
   }
 
   /**
@@ -395,7 +432,17 @@ export class RetrievalService {
       )
       .limit(contactIds.length);
 
-    return rows.filter((r) => !r.optOutAt).map(contactRowToEvidence);
+    const live = rows.filter((r) => !r.optOutAt);
+    const membershipCounts = await this.fetchMembershipCounts(
+      tx,
+      live.map((r) => r.id),
+    );
+    return live.map((r) =>
+      contactRowToEvidence({
+        ...r,
+        membershipCount: membershipCounts.get(r.id) ?? 0,
+      }),
+    );
   }
 
   /**
@@ -1432,6 +1479,15 @@ function contactRowToEvidence(r: {
   emails: string[];
   phones: string[];
   primaryLanguage?: string | null;
+  /**
+   * Number of contact_org_memberships rows for this contact (the
+   * truth source the org detail page reads through). Distinct from
+   * `orgId`, which is the deprecated denormalized pointer that
+   * legacy ingest paths still stamp. Surfaced explicitly so the chat
+   * agent doesn't claim "already associated" based on `orgId` alone
+   * when no membership row backs it.
+   */
+  membershipCount?: number;
 }): EvidenceItem {
   return {
     chunk_id: `contact:${r.id}`,
@@ -1441,7 +1497,13 @@ function contactRowToEvidence(r: {
       `Contact ${r.id}`,
       `  Name: ${r.fullName}`,
       r.title ? `  Title: ${r.title}` : null,
-      `  Org id: ${r.orgId ?? "none"}`,
+      // `Org id` is the legacy denormalized pointer — kept for
+      // backwards-compat but NOT the field the org detail page
+      // reads. `Memberships` is the m:n truth.
+      `  Org id (legacy denorm): ${r.orgId ?? "none"}`,
+      typeof r.membershipCount === "number"
+        ? `  Memberships (m:n, source of truth): ${r.membershipCount} org${r.membershipCount === 1 ? "" : "s"}`
+        : null,
       r.emails.length > 0 ? `  Emails: ${r.emails.join(", ")}` : null,
       r.phones.length > 0 ? `  Phones: ${r.phones.join(", ")}` : null,
       // Surfaced to the chat agent so email.send drafts default to
@@ -1650,9 +1712,8 @@ function formatUsd(n: number): string {
   return `$${n.toFixed(0)}`;
 }
 
-// Ensure the unused-imports linter doesn't cull contactOrgMemberships —
-// we'll wire it into a contact-deal-count enrichment in a follow-up.
-void contactOrgMemberships;
+// (Real use of contactOrgMemberships now lives in fetchMembershipCounts
+// below — see contactRowToEvidence for how the count surfaces.)
 
 /** Return the most common string in an array, or undefined when empty. */
 function mostCommon(values: string[]): string | undefined {
