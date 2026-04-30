@@ -52,6 +52,7 @@ export async function GET(
       durationSeconds: null,
       transcriptRef: null,
       startedAt,
+      hasRecording: false,
     },
     callee: {
       id: "01HSEEDCNT0000000000000001",

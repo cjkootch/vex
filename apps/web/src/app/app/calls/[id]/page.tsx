@@ -37,6 +37,7 @@ interface CallDetail {
     durationSeconds: number | null;
     transcriptRef: string | null;
     startedAt: string;
+    hasRecording: boolean;
   } | null;
   callee: {
     id: string;
@@ -232,6 +233,10 @@ export default function CallDetailPage({
 
       <LiveListenPanel workflowId={params.id} isActive={isActive} />
 
+      {activity?.hasRecording && (
+        <RecordingPanel activityId={activity.id} />
+      )}
+
       {backupState.status === "requested" && (
         <section className="rounded-lg border border-warn/40 bg-warn/10 p-4 text-sm text-warn">
           Backup request created. See it in the{" "}
@@ -254,6 +259,39 @@ export default function CallDetailPage({
         </Link>
       )}
     </div>
+  );
+}
+
+/**
+ * Recording playback panel — Sprint J. Renders an HTML5 audio player
+ * pointed at our proxy route (/api/calls/activities/:id/recording);
+ * the proxy streams from S3 (prod) or fetches from Twilio with stored
+ * basic-auth creds (legacy demo). The browser handles seek + scrub
+ * via the proxy's range-byte support. We don't preload the audio so
+ * the page render isn't blocked on the recording fetch — operators
+ * who only need the duration / transcript link aren't paying the
+ * download.
+ */
+function RecordingPanel({ activityId }: { activityId: string }) {
+  return (
+    <section
+      data-testid="call-recording-panel"
+      className="rounded-lg border border-line bg-muted/20 p-4 text-sm"
+    >
+      <h2 className="text-xs uppercase tracking-wide text-white/50">
+        Recording
+      </h2>
+      <audio
+        data-testid="call-recording-audio"
+        controls
+        preload="none"
+        className="mt-3 w-full"
+        src={`/api/calls/activities/${encodeURIComponent(activityId)}/recording`}
+      >
+        Your browser doesn&apos;t support HTML5 audio. The recording
+        is available at the <code>/api/calls/activities/{activityId}/recording</code> endpoint.
+      </audio>
+    </section>
   );
 }
 
