@@ -223,4 +223,41 @@ describe("ActionDescriptor", () => {
       }),
     ).toThrow();
   });
+
+  it("accepts a contact.add_membership at T1 with both ULIDs", () => {
+    const parsed = ActionDescriptor.parse({
+      kind: "contact.add_membership",
+      tier: ApprovalTier.T1,
+      contactId: createId(),
+      organizationId: createId(),
+      role: "Board Member",
+      isPrimary: true,
+      rationale: "Operator confirmed Faris is on file at Agrimco AG.",
+    });
+    expect(actionRequiresApproval(parsed)).toBe(false);
+  });
+
+  it("rejects contact.add_membership at T2", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "contact.add_membership",
+        tier: ApprovalTier.T2,
+        contactId: createId(),
+        organizationId: createId(),
+        rationale: "x",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects contact.add_membership with a non-ULID id", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "contact.add_membership",
+        tier: ApprovalTier.T1,
+        contactId: "not-a-ulid",
+        organizationId: createId(),
+        rationale: "x",
+      }),
+    ).toThrow();
+  });
 });
