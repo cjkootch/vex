@@ -4,6 +4,7 @@ import type { AgentJobData } from "@vex/agents";
 import type {
   Db,
   EventRepository,
+  OfacScreenRepository,
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
   OrganizationRepository,
@@ -12,6 +13,7 @@ import {
   ORGANIZATIONS_AGENTS_QUEUE,
   ORGANIZATIONS_DB_CLIENT,
   ORGANIZATIONS_EVENT_REPO,
+  ORGANIZATIONS_OFAC_SCREENS_REPO,
   ORGANIZATIONS_PRODUCTS_REPO,
   ORGANIZATIONS_RELATIONSHIPS_REPO,
   ORGANIZATIONS_REPO,
@@ -24,6 +26,7 @@ export interface OrganizationsModuleConfig {
   events: EventRepository;
   orgProducts: OrganizationProductRepository;
   orgRelationships: OrganizationRelationshipRepository;
+  ofacScreens: OfacScreenRepository;
   /**
    * Agents queue — used to enqueue a single-org OFAC screen the moment
    * a new organization lands, so the buyer-intel card is never
@@ -53,6 +56,10 @@ export class OrganizationsModule {
         {
           provide: ORGANIZATIONS_AGENTS_QUEUE,
           useFactory: () => config.agentsQueue,
+        },
+        {
+          provide: ORGANIZATIONS_OFAC_SCREENS_REPO,
+          useFactory: () => config.ofacScreens,
         },
       ],
     };

@@ -13,8 +13,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from "@nestjs/common";
+import type { FastifyReply } from "fastify";
 import { and, count, desc, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { createId } from "@vex/domain";
@@ -22,6 +24,7 @@ import type { Queue } from "bullmq";
 import { addAgentJob, type AgentJobData } from "@vex/agents";
 import type {
   EventRepository,
+  OfacScreenRepository,
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
   OrganizationRepository,
@@ -49,6 +52,9 @@ export const ORGANIZATIONS_RELATIONSHIPS_REPO = Symbol(
   "ORGANIZATIONS_RELATIONSHIPS_REPO",
 );
 export const ORGANIZATIONS_AGENTS_QUEUE = Symbol("ORGANIZATIONS_AGENTS_QUEUE");
+export const ORGANIZATIONS_OFAC_SCREENS_REPO = Symbol(
+  "ORGANIZATIONS_OFAC_SCREENS_REPO",
+);
 
 const CreateOrganizationBody = z.object({
   legalName: z.string().min(1).max(200),
@@ -143,6 +149,8 @@ export class OrganizationsController {
     private readonly orgRelationships: OrganizationRelationshipRepository,
     @Inject(ORGANIZATIONS_AGENTS_QUEUE)
     private readonly agentsQueue: Queue<AgentJobData>,
+    @Inject(ORGANIZATIONS_OFAC_SCREENS_REPO)
+    private readonly ofacScreens: OfacScreenRepository,
   ) {}
 
   @Get()
@@ -1042,6 +1050,119 @@ export class OrganizationsController {
     await withTenant(this.db, this.tenant.tenantId, async (tx) =>
       this.orgRelationships.deleteById(tx, relId),
     );
+  }
+
+  // -------------------------------------------------------------------
+  // OFAC screening — per-org manual trigger + audit-trail export
+  // -------------------------------------------------------------------
+
+  /**
+   * POST /organizations/:id/ofac/screen
+   *
+   * Operator-triggered OFAC screen for a single counterparty. Same
+   * agent, same dataset as the workspace-wide overnight run — just
+   * scoped to one org via input.organization_id. Idempotent at the
+   * worker level: enqueueing twice in the same minute coalesces.
+   *
+   * 202 Accepted — the screen runs asynchronously in the worker;
+   * poll the org detail endpoint for `ofacStatus` / `ofacScreenedAt`
+   * to see the result. Or hit /ofac/export below for the full
+   * audit trail.
+   */
+  @Post(":id/ofac/screen")
+  @HttpCode(202)
+  async runOfacScreen(
+    @Param("id") orgId: string,
+  ): Promise<{ jobId: string; status: "queued" }> {
+    const jobId = `ofac:${orgId}:${Date.now()}`;
+    await addAgentJob(
+      this.agentsQueue,
+      {
+        kind: "ofac_screening",
+        workspace_id: this.tenant.workspaceId,
+        input: { organization_id: orgId },
+      },
+      jobId,
+    );
+    await withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      await this.events.insertIfNotExists(tx, this.tenant.tenantId, {
+        verb: "ofac.screen_requested",
+        subjectType: "organization",
+        subjectId: orgId,
+        actorType: "user",
+        actorId: this.tenant.userId,
+        occurredAt: new Date(),
+        idempotencyKey: `ofac.screen_requested:${jobId}`,
+        metadata: { triggered_from: "org_detail_page", scope: "single_org" },
+      });
+    });
+    return { jobId, status: "queued" };
+  }
+
+  /**
+   * GET /organizations/:id/ofac/export
+   *
+   * Audit-trail export of the latest OFAC screen for this org.
+   * Returns JSON the operator can save to disk for compliance review:
+   * org name, status, screening timestamp, the matches found (or
+   * empty list if none), the highest similarity score, and the agent
+   * run id that produced it.
+   *
+   * Sets Content-Disposition: attachment so a browser fetch downloads
+   * as a file rather than rendering inline.
+   *
+   * 404 if the org has never been screened.
+   */
+  @Get(":id/ofac/export")
+  async exportOfacScreen(
+    @Param("id") orgId: string,
+    @Res() res: FastifyReply,
+  ): Promise<void> {
+    const result = await withTenant(
+      this.db,
+      this.tenant.tenantId,
+      async (tx) => {
+        const org = await this.organizations.findById(tx, orgId);
+        if (!org) return null;
+        const screen = await this.ofacScreens.latestForOrg(tx, orgId);
+        return { org, screen };
+      },
+    );
+    if (!result) throw new NotFoundException(`organization ${orgId} not found`);
+    if (!result.screen) {
+      throw new NotFoundException(
+        `organization ${orgId} has never been OFAC-screened`,
+      );
+    }
+    const exportedAt = new Date().toISOString();
+    const payload = {
+      exportedAt,
+      exportedBy: this.tenant.userId,
+      organization: {
+        id: result.org.id,
+        legalName: result.org.legalName,
+        domain: result.org.domain,
+        country:
+          (result.org.geo as { country?: unknown } | null)?.country ?? null,
+        kind: result.org.kind,
+        ofacStatus: result.org.ofacStatus,
+        ofacScreenedAt: result.org.ofacScreenedAt?.toISOString() ?? null,
+        ofacHighestScore: result.org.ofacHighestScore,
+      },
+      screen: {
+        id: result.screen.id,
+        status: result.screen.status,
+        screenedAt: result.screen.screenedAt.toISOString(),
+        highestScore: result.screen.highestScore,
+        matchCount: result.screen.matchCount,
+        matches: result.screen.matches,
+      },
+    };
+    const filename = `ofac-screen-${result.org.legalName.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-${exportedAt.slice(0, 10)}.json`;
+    res
+      .header("content-type", "application/json; charset=utf-8")
+      .header("content-disposition", `attachment; filename="${filename}"`)
+      .send(JSON.stringify(payload, null, 2));
   }
 }
 

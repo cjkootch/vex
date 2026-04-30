@@ -12,6 +12,7 @@ import { EditCompanyForm } from "@/components/crm/edit-company-form";
 import { Tabs } from "@/components/ui/tabs";
 import { AskVexButton } from "@/components/shell/ask-vex-button";
 import { CompanyHero } from "@/components/profile/company-hero";
+import { fetchWithRetry } from "@/lib/fetch-with-retry";
 
 interface OrganizationContact {
   id: string;
@@ -257,6 +258,8 @@ function OverviewTab({ org }: { org: OrganizationDetail }) {
   const notes = org.notes ?? [];
   return (
     <div className="space-y-3">
+      <OfacControls org={org} />
+
       <section className="rounded-lg border border-line bg-muted/20 p-4">
         <div className="grid grid-cols-[140px_1fr] gap-2 text-sm">
           <span className="text-white/50">Status</span>
@@ -328,6 +331,87 @@ function KindBadge({ kind }: { kind: string }) {
     <span className="rounded-full border border-line-soft bg-surface-2/60 px-2 py-0.5 text-xs uppercase tracking-wider text-white/80">
       {kind}
     </span>
+  );
+}
+
+/**
+ * OFAC controls: manual screen trigger + audit-trail JSON export.
+ * Both buttons are visible regardless of current OFAC status — operators
+ * sometimes re-run a screen even on an already-cleared org (datasets
+ * update overnight) and exporting the prior result is a separate
+ * compliance need from running a fresh one.
+ */
+function OfacControls({ org }: { org: OrganizationDetail }) {
+  const [runState, setRunState] = useState<
+    "idle" | "running" | "queued" | "error"
+  >("idle");
+  const [runError, setRunError] = useState<string | null>(null);
+
+  const runScreen = async (): Promise<void> => {
+    setRunState("running");
+    setRunError(null);
+    try {
+      const res = await fetchWithRetry(
+        `/api/organizations/${org.id}/ofac/screen`,
+        { method: "POST" },
+      );
+      if (!res.ok && res.status !== 202) {
+        throw new Error(`${res.status} ${res.statusText}`);
+      }
+      setRunState("queued");
+    } catch (err) {
+      setRunState("error");
+      setRunError((err as Error).message);
+    }
+  };
+
+  const exportReport = (): void => {
+    // GET with browser download — Content-Disposition: attachment on
+    // the response makes the browser save instead of render.
+    window.location.href = `/api/organizations/${org.id}/ofac/export`;
+  };
+
+  return (
+    <section className="rounded-lg border border-line bg-muted/20 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium text-white/90">OFAC screening</h3>
+          <p className="mt-0.5 text-xs text-white/60">
+            Run an SDN-list match against this counterparty, or export the
+            latest screen result as a JSON audit record.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={runScreen}
+            disabled={runState === "running"}
+            className="rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-xs text-white/85 transition-colors hover:border-accent hover:text-white disabled:opacity-50"
+          >
+            {runState === "running"
+              ? "Queueing…"
+              : runState === "queued"
+              ? "Queued ✓"
+              : "Run OFAC screen"}
+          </button>
+          <button
+            type="button"
+            onClick={exportReport}
+            className="rounded-md border border-line-soft bg-surface-2/60 px-3 py-1.5 text-xs text-white/85 transition-colors hover:border-accent hover:text-white"
+          >
+            Export report
+          </button>
+        </div>
+      </div>
+      {runError ? (
+        <p className="mt-2 text-xs text-bad">Error: {runError}</p>
+      ) : runState === "queued" ? (
+        <p className="mt-2 text-xs text-white/60">
+          Screen queued — refresh the page in a few seconds to see the
+          updated status.
+        </p>
+      ) : null}
+    </section>
   );
 }
 
