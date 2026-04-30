@@ -842,6 +842,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyCrmNote(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "contact.add_membership") {
+          await applyContactAddMembership(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "deal.set_broker") {
           await applyDealSetBroker(tx, deps, workspace_id, approval);
           return;
@@ -2239,6 +2243,9 @@ async function dispatchBundleItem(
     case "crm.note":
       await applyCrmNote(tx, deps, tenantId, child);
       return true;
+    case "contact.add_membership":
+      await applyContactAddMembership(tx, deps, tenantId, child);
+      return true;
     case "deal.set_broker":
       await applyDealSetBroker(tx, deps, tenantId, child);
       return true;
@@ -2591,6 +2598,98 @@ async function applyCrmNote(
       action_type: "crm.note",
       org_id: orgId,
       body,
+    },
+  });
+}
+
+/**
+ * Idempotently link a contact to an organisation (m:n
+ * `contact_org_memberships`). Fired by the chat agent's
+ * `contact.add_membership` T1 action when an operator says
+ * "associate Faris with Agrimco AG" and both rows already exist.
+ *
+ * `ensureMembership` is keyed on (contact_id, org_id) so re-runs
+ * don't duplicate. `role` + `isPrimary` are honoured only on insert;
+ * existing memberships keep their flags so a chat re-run never
+ * silently demotes the operator's curated primary.
+ */
+async function applyContactAddMembership(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        contactId?: string;
+        organizationId?: string;
+        role?: string;
+        isPrimary?: boolean;
+      }
+    | null;
+  const contactId = payload?.contactId;
+  const orgId = payload?.organizationId;
+  if (!contactId || !orgId) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.add_membership",
+      "missing contactId / organizationId",
+    );
+    return;
+  }
+  // Validate both rows exist before writing — surfaces a clear
+  // executor.failed message if the chat agent hallucinated an id.
+  const [contact, org] = await Promise.all([
+    deps.contacts.findById(tx, contactId),
+    deps.organizations.findById(tx, orgId),
+  ]);
+  if (!contact) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.add_membership",
+      `contact ${contactId} not found`,
+    );
+    return;
+  }
+  if (!org) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "contact.add_membership",
+      `organization ${orgId} not found`,
+    );
+    return;
+  }
+  await deps.memberships.ensureMembership(tx, tenantId, {
+    contactId,
+    orgId,
+    role: payload?.role ?? null,
+    isPrimary: payload?.isPrimary ?? false,
+  });
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "contact.added_to_org",
+    subjectType: "contact",
+    subjectId: contactId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "organization",
+    objectId: orgId,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "contact.add_membership",
+      contact_id: contactId,
+      org_id: orgId,
+      ...(payload?.role ? { role: payload.role } : {}),
+      ...(payload?.isPrimary ? { is_primary: true } : {}),
     },
   });
 }

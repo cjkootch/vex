@@ -219,6 +219,33 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     targetContactId: zUlid,
     rationale: z.string().min(1).max(1000),
   }),
+  // Chat-initiated contact↔org link. Idempotent additive write — the
+  // executor calls memberships.ensureMembership keyed on
+  // (contact_id, org_id) so re-runs don't duplicate. T1 because the
+  // operator typically states the intent literally ("associate Faris
+  // with Agrimco AG") and an auto-applied membership is easy to
+  // remove with a follow-up action if wrong. Surfaces existing
+  // contacts on the org's contact list immediately.
+  z.object({
+    kind: z.literal("contact.add_membership"),
+    tier: z.literal(ApprovalTier.T1),
+    contactId: zUlid,
+    organizationId: zUlid,
+    /**
+     * Free-text role at this org ("Board Member", "Trading Director").
+     * Honoured only when inserting a new membership row — existing
+     * memberships keep their role; operator overrides win.
+     */
+    role: z.string().max(200).optional(),
+    /**
+     * Whether to flag this org as the contact's primary. Honoured
+     * only on insert; existing memberships keep their flag. The
+     * partial unique index in the DB enforces "at most one primary
+     * per contact" so the executor doesn't have to.
+     */
+    isPrimary: z.boolean().optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
   // Sprint T.4 — chat-initiated workflow authoring. When the catalog
   // has no plan that fits, the agent can propose a brand-new multi-
   // channel campaign: { name, channel, steps: [...] }. On approve,
