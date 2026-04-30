@@ -171,6 +171,17 @@ export function CompanyHero({
                   : undefined
             }
             tone={ofacTone(pulse?.org.ofacStatus)}
+            action={
+              pulse?.org.ofacScreenedAt ? (
+                <a
+                  href={`/api/organizations/${orgId}/ofac/export`}
+                  title="Download OFAC screen audit record (JSON)"
+                  className="text-[11px] font-normal text-text-muted underline-offset-2 transition-colors hover:text-accent hover:underline"
+                >
+                  export
+                </a>
+              ) : undefined
+            }
           />
           <StatCell
             label="Risk tier"
@@ -247,12 +258,15 @@ function StatCell({
   sub,
   numeric,
   tone,
+  action,
 }: {
   label: string;
   value: string;
   sub?: string | undefined;
   numeric?: boolean | undefined;
   tone?: "good" | "warn" | "bad" | undefined;
+  /** Optional inline action rendered next to the value (e.g. an export link). */
+  action?: React.ReactNode;
 }) {
   const toneClass =
     tone === "good"
@@ -266,9 +280,10 @@ function StatCell({
     <div className="flex flex-col gap-0.5">
       <dt className="text-eyebrow text-text-muted">{label}</dt>
       <dd
-        className={`${numeric ? "num" : ""} text-base font-semibold ${toneClass}`}
+        className={`${numeric ? "num" : ""} flex items-center gap-2 text-base font-semibold ${toneClass}`}
       >
-        {value}
+        <span>{value}</span>
+        {action}
       </dd>
       {sub ? (
         <div className="text-[11px] text-text-muted">{sub}</div>
