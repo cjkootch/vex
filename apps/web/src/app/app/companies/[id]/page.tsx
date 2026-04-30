@@ -338,9 +338,7 @@ function OverviewTab({
           className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs"
           title="This organization was hydrated from procur — tags below show the procur signals attached to it."
         >
-          <span className="font-mono text-[10px] uppercase tracking-wider2 text-accent">
-            Procur
-          </span>
+          <ProcurLogo className="h-3.5" />
           <span className="text-white/60">·</span>
           {procurTags.map((tag) => (
             <span
@@ -649,6 +647,29 @@ function formatVolume(usg: number): string {
   return `${usg} USG`;
 }
 
+/**
+ * Procur brand mark. Renders the off-white wordmark over our dark
+ * UI; falls back to the dark wordmark when the caller marks it for
+ * a light surface (e.g. printable exports). Width auto-sizes from
+ * the height set by the caller's class — the light SVG is 1500x608.
+ */
+function ProcurLogo({
+  className,
+  variant = "light",
+}: {
+  className?: string;
+  variant?: "light" | "dark";
+}) {
+  const src =
+    variant === "dark" ? "/procur/logo-dark.svg" : "/procur/logo-light.svg";
+  // Width auto-scales from the height the caller's class sets — the
+  // SVG's intrinsic 1500x608 aspect ratio handles the rest.
+  return (
+    // eslint-disable-next-line @next/next/no-img-element -- static SVG, no width/height optimisation needed
+    <img src={src} alt="Procur" className={`w-auto ${className ?? ""}`} />
+  );
+}
+
 function Breadcrumb({ name }: { name: string | null }) {
   return (
     <nav className="text-xs text-white/50">
@@ -700,9 +721,10 @@ function ProcurIntelligencePanel({
     approval?.expiresAt && new Date(approval.expiresAt).getTime() < Date.now();
   return (
     <section className="rounded-lg border border-accent/30 bg-accent/5 p-4">
-      <header className="mb-3 flex items-baseline justify-between gap-4">
-        <h3 className="text-sm font-semibold text-accent">
-          Procur intelligence
+      <header className="mb-3 flex items-center justify-between gap-4">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-accent">
+          <ProcurLogo className="h-4" />
+          <span>intelligence</span>
         </h3>
         {asOf ? (
           <span className="text-[11px] text-white/50">
