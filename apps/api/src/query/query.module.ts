@@ -5,6 +5,7 @@ import type { Db, RetrievalService } from "@vex/db";
 import type {
   AnthropicAdapter,
   OpenAIAdapter,
+  ProcurClient,
   TavilyClient,
 } from "@vex/integrations";
 import type { CostLedger } from "@vex/telemetry";
@@ -17,6 +18,7 @@ import {
   DB_CLIENT,
   DEFAULT_WORKSPACE_ID,
   OPENAI_ADAPTER,
+  PROCUR_CLIENT,
   RETRIEVAL_SERVICE,
   TAVILY_CLIENT,
 } from "./tokens.js";
@@ -28,6 +30,12 @@ export interface QueryModuleConfig {
   anthropic: AnthropicAdapter;
   /** Null when TAVILY_API_KEY isn't configured — research_contact tool disables. */
   tavily: TavilyClient | null;
+  /**
+   * Procur client. The chat exposes a `lookup_in_procur` tool when
+   * the integration is enabled (PROCUR_API_BASE_URL + PROCUR_API_TOKEN
+   * set); when disabled the tool drops out of the catalogue entirely.
+   */
+  procur: ProcurClient;
   /**
    * Shared CostLedger so Tavily (web.search) spend lands in the
    * Admin Cost tab alongside Anthropic/OpenAI. The LLM adapters
@@ -57,6 +65,7 @@ export class QueryModule {
         { provide: OPENAI_ADAPTER, useFactory: () => config.openai },
         { provide: ANTHROPIC_ADAPTER, useFactory: () => config.anthropic },
         { provide: TAVILY_CLIENT, useFactory: () => config.tavily },
+        { provide: PROCUR_CLIENT, useFactory: () => config.procur },
         { provide: COST_LEDGER, useFactory: () => config.costLedger },
         {
           provide: APPROVAL_EXECUTOR_QUEUE,
