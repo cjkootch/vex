@@ -747,6 +747,30 @@ function ApprovalCarousel({
   const [index, setIndex] = useState(0);
   const safeIndex = Math.max(0, Math.min(index, approvals.length - 1));
   const current = approvals[safeIndex];
+
+  const carouselRef = useRef<HTMLDivElement | null>(null);
+  // Arrow-key nav: only when the carousel (or anything inside it) has
+  // focus, so we don't intercept arrow keys while the operator is
+  // typing in the chat composer. Tab into the carousel container to
+  // activate. Wrapping arithmetic clamps inside the bounds.
+  useEffect(() => {
+    const node = carouselRef.current;
+    if (!node) return;
+    const onKey = (e: globalThis.KeyboardEvent): void => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        setIndex((i) => Math.max(0, i - 1));
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        setIndex((i) => Math.min(approvals.length - 1, i + 1));
+      }
+    };
+    node.addEventListener("keydown", onKey);
+    return () => {
+      node.removeEventListener("keydown", onKey);
+    };
+  }, [approvals.length]);
+
   if (!current) return null;
   const s = state[current.approvalId];
   if (!s) return null;
@@ -772,8 +796,11 @@ function ApprovalCarousel({
 
   return (
     <div
+      ref={carouselRef}
+      tabIndex={0}
       data-testid="inline-approval-carousel"
-      className="rounded-lg border border-warn/30 bg-warn/5 p-3"
+      className="rounded-lg border border-warn/30 bg-warn/5 p-3 focus-visible:outline focus-visible:outline-1 focus-visible:outline-warn/40"
+      aria-label={`Approval carousel, draft ${safeIndex + 1} of ${approvals.length}. Use arrow keys to navigate.`}
     >
       <div className="mb-2 flex items-center justify-between text-xs text-white/60">
         <span className="font-mono">
