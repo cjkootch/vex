@@ -35,6 +35,17 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
      * linked back to the same contact + org.
      */
     contactId: zUlid.optional(),
+    /**
+     * ISO 639-1 language code (e.g. "en", "es", "zh") tagging the
+     * draft's language. Display-only — surfaced as a badge on the
+     * inline draft preview in chat so an operator approving a
+     * multi-language batch can scan which draft is which without
+     * reading the body. The executor doesn't act on this; Resend
+     * sends whatever's in `body` regardless. Set when the model
+     * drafts in a non-English language so the operator can confirm
+     * the language match without translating mentally.
+     */
+    lang: z.string().length(2).optional(),
   }),
   z.object({
     kind: z.literal("crm.note"),
