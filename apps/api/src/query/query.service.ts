@@ -15,6 +15,7 @@ import {
 import type {
   AnthropicAdapter,
   OpenAIAdapter,
+  ProcurClient,
   ProposedAction,
   TavilyClient,
   ToolDefinition,
@@ -32,6 +33,7 @@ import {
   DB_CLIENT,
   DEFAULT_WORKSPACE_ID,
   OPENAI_ADAPTER,
+  PROCUR_CLIENT,
   RETRIEVAL_SERVICE,
   TAVILY_CLIENT,
 } from "./tokens.js";
@@ -133,6 +135,7 @@ export class QueryService {
     @Inject(OPENAI_ADAPTER) private readonly openai: OpenAIAdapter,
     @Inject(ANTHROPIC_ADAPTER) private readonly anthropic: AnthropicAdapter,
     @Inject(TAVILY_CLIENT) private readonly tavily: TavilyClient | null,
+    @Inject(PROCUR_CLIENT) private readonly procur: ProcurClient,
     @Inject(COST_LEDGER) private readonly costLedger: CostLedger,
     @Inject(APPROVAL_EXECUTOR_QUEUE)
     private readonly approvalExecutorQueue: Queue<ApprovalExecutorJobData>,
@@ -187,74 +190,112 @@ export class QueryService {
       return emptyWorkspaceResponse();
     }
 
-    const tools: ToolDefinition[] = this.tavily
-      ? [
-          {
-            name: "research_contact",
-            description:
-              "Search the public web for details about a person — likely title, work email, phone, LinkedIn profile. Use only when the user asks you to enrich a contact, or when proposing crm.create_contact with missing optional fields. Returns raw search snippets; the model extracts candidates and cites sources.",
-            input_schema: {
-              type: "object",
-              properties: {
-                fullName: {
-                  type: "string",
-                  description: "Person's name as the user stated it.",
-                },
-                orgName: {
-                  type: "string",
-                  description:
-                    "Company / organisation they work at. Improves result quality significantly.",
-                },
-                context: {
-                  type: "string",
-                  description:
-                    "Free-text context (role hints, industry, location) — appended to the search query.",
-                },
-              },
-              required: ["fullName"],
+    const tools: ToolDefinition[] = [];
+    if (this.tavily) {
+      tools.push({
+        name: "research_contact",
+        description:
+          "Search the public web for details about a person — likely title, work email, phone, LinkedIn profile. Use only when the user asks you to enrich a contact, or when proposing crm.create_contact with missing optional fields. Returns raw search snippets; the model extracts candidates and cites sources.",
+        input_schema: {
+          type: "object",
+          properties: {
+            fullName: {
+              type: "string",
+              description: "Person's name as the user stated it.",
+            },
+            orgName: {
+              type: "string",
+              description:
+                "Company / organisation they work at. Improves result quality significantly.",
+            },
+            context: {
+              type: "string",
+              description:
+                "Free-text context (role hints, industry, location) — appended to the search query.",
             },
           },
-        ]
-      : [];
+          required: ["fullName"],
+        },
+      });
+    }
+    if (this.procur.isEnabled()) {
+      tools.push({
+        name: "lookup_in_procur",
+        description:
+          "Pull entity-level intelligence on a supplier from procur (the procurement-data platform vex integrates with). Use when the operator names a company alongside 'from procur', 'in procur', 'procur data', etc., or when an answer needs supplier-graph context (award velocity, distress signals, recent counterparties) we don't already have. Server caches each (name, hash) for 7 days, so re-asks within that window are free. Returns a compact profile (legalName, country, industry, awardCount, recent counterparties, distress signals) — cite sourceUrl=procur in any panel you write.",
+        input_schema: {
+          type: "object",
+          properties: {
+            companyName: {
+              type: "string",
+              description:
+                "Company name as the user stated it. Procur disambiguates fuzzy matches; on multiple candidates we surface them and ask the operator to pick.",
+            },
+          },
+          required: ["companyName"],
+        },
+      });
+    }
 
     const toolRunner: ToolRunner = async (name, input) => {
-      if (name !== "research_contact" || !this.tavily) {
-        return { error: `tool ${name} not available` };
+      if (name === "research_contact") {
+        if (!this.tavily) return { error: "research_contact not available" };
+        const fullName = typeof input["fullName"] === "string" ? input["fullName"] : "";
+        const orgName = typeof input["orgName"] === "string" ? input["orgName"] : "";
+        const context = typeof input["context"] === "string" ? input["context"] : "";
+        const q = [fullName, orgName, context, "email title linkedin"]
+          .filter((s) => s.length > 0)
+          .join(" ");
+        const result = await this.tavily.search(q, {
+          depth: "basic",
+          maxResults: 5,
+          includeAnswer: true,
+        });
+        // Record Tavily search cost on the ledger. Basic search ≈ 1
+        // credit ≈ $0.0045 on the default plan. Idempotency key
+        // includes the query-hash + current ISO minute so retries of
+        // the same tool call inside one turn don't double-charge.
+        await this.costLedger.record({
+          idempotencyKey: `web.search:${input.idempotencyKey}:${q.slice(0, 32)}`,
+          tenantId,
+          operation: "web.search",
+          provider: "tavily",
+          units: 1,
+          unitKind: "search",
+          costUsdMicros: unitsToUsdMicros(1, pricing.tavily.searchBasicUsd),
+          occurredAt: new Date(),
+        });
+        return {
+          query: q,
+          answer: result.answer,
+          results: result.results.map((r) => ({
+            title: r.title,
+            url: r.url,
+            snippet: r.content.slice(0, 800),
+          })),
+        };
       }
-      const fullName = typeof input["fullName"] === "string" ? input["fullName"] : "";
-      const orgName = typeof input["orgName"] === "string" ? input["orgName"] : "";
-      const context = typeof input["context"] === "string" ? input["context"] : "";
-      const q = [fullName, orgName, context, "email title linkedin"]
-        .filter((s) => s.length > 0)
-        .join(" ");
-      const result = await this.tavily.search(q, {
-        depth: "basic",
-        maxResults: 5,
-        includeAnswer: true,
-      });
-      // Record Tavily search cost on the ledger. Basic search ≈ 1
-      // credit ≈ $0.0045 on the default plan. Idempotency key
-      // includes the query-hash + current ISO minute so retries of
-      // the same tool call inside one turn don't double-charge.
-      await this.costLedger.record({
-        idempotencyKey: `web.search:${input.idempotencyKey}:${q.slice(0, 32)}`,
-        tenantId,
-        operation: "web.search",
-        provider: "tavily",
-        units: 1,
-        unitKind: "search",
-        costUsdMicros: unitsToUsdMicros(1, pricing.tavily.searchBasicUsd),
-        occurredAt: new Date(),
-      });
-      return {
-        query: q,
-        answer: result.answer,
-        results: result.results.map((r) => ({
-          title: r.title,
-          url: r.url,
-          snippet: r.content.slice(0, 800),
-        })),
-      };
+      if (name === "lookup_in_procur") {
+        if (!this.procur.isEnabled()) {
+          return { error: "lookup_in_procur not available (procur disabled)" };
+        }
+        const companyName =
+          typeof input["companyName"] === "string"
+            ? input["companyName"].trim()
+            : "";
+        if (!companyName) {
+          return { error: "companyName is required" };
+        }
+        const result = await this.procur.analyzeSupplier({
+          supplierName: companyName,
+          yearsLookback: 3,
+        });
+        if (!result.ok) {
+          return { error: `procur error: ${result.reason}` };
+        }
+        return shapeProcurSupplierResult(result.data);
+      }
+      return { error: `tool ${name} not available` };
     };
 
     // Sprint S — prepend the tenant's operator-authored strategy
@@ -776,4 +817,55 @@ function manifestFallbackText(): string {
   return manifestFallback("Vex couldn't compose a response.").panels[0]?.type === "table"
     ? "Vex couldn't compose a response."
     : "";
+}
+
+/**
+ * Project procur's analyzeSupplier response down to the high-signal
+ * fields the chat model actually needs to write a profile panel +
+ * propose persistence actions. Procur's full payload includes raw
+ * award-history rows; surfacing those bloats the model's context for
+ * no upside (chat doesn't reason over per-award detail). Keeps
+ * disambiguation + not-found shapes intact so the model can ask the
+ * operator to pick the right entity or fall back gracefully.
+ */
+export function shapeProcurSupplierResult(
+  data: import("@vex/integrations").SupplierAnalysisResult,
+): Record<string, unknown> {
+  if (data.kind === "not_found") {
+    return {
+      kind: "not_found",
+      searched: data.searched,
+      hint: "no matching supplier in procur",
+    };
+  }
+  if (data.kind === "disambiguation_needed") {
+    return {
+      kind: "disambiguation_needed",
+      candidates: data.candidates.slice(0, 5).map((c) => ({
+        supplier_id: c.supplierId,
+        legal_name: c.legalName,
+        country: c.country,
+        award_count: c.awardCount,
+      })),
+    };
+  }
+  return {
+    kind: "profile",
+    supplier_id: data.supplierId,
+    legal_name: data.legalName,
+    country: data.country,
+    role: data.role,
+    categories: data.categories.slice(0, 6),
+    award_count: data.awardCount,
+    award_total_usd: data.awardTotalUsd,
+    recent_award_count: data.recentAwardCount,
+    days_since_last_award: data.daysSinceLastAward,
+    tags: data.tags.slice(0, 6),
+    distress_signals: data.distressSignals.slice(0, 3).map((s) => ({
+      kind: s.kind,
+      detail: s.detail,
+      observed_at: s.observedAt,
+    })),
+    notes: data.notes,
+  };
 }

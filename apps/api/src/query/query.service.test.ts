@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   bundleActionsIfMultiple,
   enforceAiModeWhenVexIsTheCaller,
+  shapeProcurSupplierResult,
 } from "./query.service.js";
-import type { ProposedAction } from "@vex/integrations";
+import type {
+  ProposedAction,
+  SupplierAnalysisResult,
+} from "@vex/integrations";
 
 function outboundCall(
   payload: Record<string, unknown> = {},
@@ -176,5 +180,65 @@ describe("bundleActionsIfMultiple", () => {
     const out = bundleActionsIfMultiple(notes);
     expect(out).toHaveLength(1);
     expect(out[0]?.kind).toBe("bundle");
+  });
+});
+
+describe("shapeProcurSupplierResult", () => {
+  it("projects the profile shape down to high-signal fields", () => {
+    const profile: SupplierAnalysisResult = {
+      kind: "profile",
+      supplierId: "supp_123",
+      legalName: "Petroil S.A.",
+      country: "AR",
+      role: "supplier",
+      categories: ["fuel", "ulsd", "jet", "hfo", "biodiesel", "lng", "lpg"],
+      awardCount: 42,
+      awardTotalUsd: 3_200_000,
+      recentAwardCount: 7,
+      daysSinceLastAward: 21,
+      tags: ["high_award_velocity", "stable", "verified", "x", "y", "z", "drop"],
+      distressSignals: [
+        { kind: "delayed_payment", detail: "120d", observedAt: "2025-12-01" },
+        { kind: "litigation", detail: "settled", observedAt: "2025-11-20" },
+        { kind: "credit_downgrade", detail: "B+", observedAt: "2025-10-01" },
+        { kind: "drop_me", detail: "should be trimmed", observedAt: "x" },
+      ],
+      notes: "Competitive on ULSD",
+    };
+    const out = shapeProcurSupplierResult(profile);
+    expect(out["kind"]).toBe("profile");
+    expect(out["legal_name"]).toBe("Petroil S.A.");
+    expect(out["country"]).toBe("AR");
+    expect((out["categories"] as string[]).length).toBe(6);
+    expect((out["tags"] as string[]).length).toBe(6);
+    expect((out["distress_signals"] as unknown[]).length).toBe(3);
+  });
+
+  it("preserves disambiguation candidates (capped at 5)", () => {
+    const ambig: SupplierAnalysisResult = {
+      kind: "disambiguation_needed",
+      candidates: Array.from({ length: 8 }, (_, i) => ({
+        supplierId: `supp_${i}`,
+        legalName: `Petroil ${i}`,
+        country: "AR",
+        awardCount: i,
+      })),
+    };
+    const out = shapeProcurSupplierResult(ambig);
+    expect(out["kind"]).toBe("disambiguation_needed");
+    expect((out["candidates"] as unknown[]).length).toBe(5);
+  });
+
+  it("returns a friendly not_found shape", () => {
+    const nf: SupplierAnalysisResult = {
+      kind: "not_found",
+      searched: "Petroil",
+    };
+    const out = shapeProcurSupplierResult(nf);
+    expect(out).toEqual({
+      kind: "not_found",
+      searched: "Petroil",
+      hint: "no matching supplier in procur",
+    });
   });
 });

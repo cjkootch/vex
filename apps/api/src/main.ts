@@ -268,6 +268,7 @@ async function bootstrap(): Promise<void> {
         openai,
         anthropic,
         tavily,
+        procur: procurClient,
         costLedger,
         approvalExecutorQueue: queues.approvalExecutor,
         defaultWorkspaceId: env.DEFAULT_WORKSPACE_ID,
