@@ -269,9 +269,37 @@ function OverviewTab({
 }) {
   const tags = org.tags ?? [];
   const notes = org.notes ?? [];
+  // ProcurEnrichmentAgent appends `procur:*` tags whenever it
+  // hydrates an org from procur (`procur:enriched`,
+  // `procur:not_in_database`, `procur:disambiguation_needed`, plus
+  // any procur-side tags like `procur:high_award_velocity`). Splitting
+  // them into their own row makes the procur lineage scannable
+  // without operators having to read every tag.
+  const procurTags = tags.filter((t) => t.toLowerCase().startsWith("procur:"));
+  const otherTags = tags.filter((t) => !t.toLowerCase().startsWith("procur:"));
   return (
     <div className="space-y-3">
       <OfacControls org={org} onScreenComplete={onRefresh} />
+
+      {procurTags.length > 0 ? (
+        <section
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs"
+          title="This organization was hydrated from procur — tags below show the procur signals attached to it."
+        >
+          <span className="font-mono text-[10px] uppercase tracking-wider2 text-accent">
+            Procur
+          </span>
+          <span className="text-white/60">·</span>
+          {procurTags.map((tag) => (
+            <span
+              key={tag}
+              className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[11px] text-accent"
+            >
+              {tag.replace(/^procur:/i, "")}
+            </span>
+          ))}
+        </section>
+      ) : null}
 
       <section className="rounded-lg border border-line bg-muted/20 p-4">
         <div className="grid grid-cols-[140px_1fr] gap-2 text-sm">
@@ -291,11 +319,11 @@ function OverviewTab({
           <span className="text-white/90">{org.sourceOfTruth ?? "—"}</span>
           <span className="text-white/50">Tags</span>
           <span className="text-white/90">
-            {tags.length === 0 ? (
+            {otherTags.length === 0 ? (
               "—"
             ) : (
               <span className="flex flex-wrap gap-1.5">
-                {tags.map((tag) => (
+                {otherTags.map((tag) => (
                   <span
                     key={tag}
                     className="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent"
