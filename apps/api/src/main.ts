@@ -359,6 +359,7 @@ async function bootstrap(): Promise<void> {
         events: eventRepository,
         orgProducts: organizationProductRepository,
         orgRelationships: organizationRelationshipRepository,
+        ofacScreens: ofacScreenRepository,
         agentsQueue: queues.agents,
       }),
       search: SearchModule.register({ db }),
