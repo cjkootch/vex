@@ -159,6 +159,7 @@ export function ContactHero({
             value={phone ?? "—"}
             mono={Boolean(phone)}
             href={phone ? `tel:${phone}` : undefined}
+            truncate
           />
           <StatCell
             label="Open deals"
@@ -287,7 +288,15 @@ function StatCell({
   truncate?: boolean | undefined;
   href?: string | undefined;
 }) {
-  const cls = `${numeric ? "num " : ""}${mono ? "num-mono " : ""}text-sm font-semibold text-text-primary${truncate ? " truncate" : ""}`;
+  // Tailwind `truncate` only takes effect on block-level elements
+  // (it sets overflow + text-overflow + white-space, not display).
+  // The value renders as an `<a>` or `<span>` which are inline by
+  // default — so without `block` here, a long email overflows the
+  // grid column and overlaps the next cell (Phone). Pair with
+  // `min-w-0` on the parent column so flex/grid actually allows
+  // the cell to shrink.
+  const truncCls = truncate ? " block truncate" : "";
+  const cls = `${numeric ? "num " : ""}${mono ? "num-mono " : ""}text-sm font-semibold text-text-primary${truncCls}`;
   const valueNode = href ? (
     <a className={`${cls} hover:text-accent-strong`} href={href}>
       {value}
@@ -298,7 +307,7 @@ function StatCell({
   return (
     <div className="flex min-w-0 flex-col gap-0.5">
       <dt className="text-eyebrow text-text-muted">{label}</dt>
-      <dd className="min-w-0">{valueNode}</dd>
+      <dd className="min-w-0 overflow-hidden">{valueNode}</dd>
       {sub ? (
         <div className="text-[11px] text-text-muted">{sub}</div>
       ) : null}
