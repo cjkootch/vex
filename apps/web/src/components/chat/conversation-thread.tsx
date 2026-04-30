@@ -406,7 +406,7 @@ function Turn({ turn }: { turn: ChatTurn }) {
 interface ChatApprovalState {
   decision: "pending" | "approved" | "rejected";
   outcome: null | {
-    status: "queued" | "applied" | "failed" | "skipped";
+    status: "queued" | "applied" | "failed" | "skipped" | "delivered";
     reason: string | null;
   };
   inFlight: boolean;
@@ -504,8 +504,20 @@ function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }
   }
 
   async function pollOutcome(approvalId: string): Promise<void> {
-    for (let attempt = 0; attempt < 7; attempt++) {
-      await new Promise((r) => setTimeout(r, attempt === 0 ? 2_000 : 10_000));
+    // Two-phase poll. Phase 1 races the executor — we want the chip to
+    // flip from "queued" → "applied" within seconds of approve. Phase
+    // 2 waits on Resend's `email.delivered` webhook (or sms/whatsapp
+    // equivalents), which arrives anywhere from ~5s to a couple of
+    // minutes later. We back off aggressively so a quiet chip doesn't
+    // hammer the API but still catches a late delivery confirmation
+    // up to ~10 minutes out. Statuses: applied/failed/skipped end
+    // phase 1; only "delivered"/failed/skipped end phase 2.
+    const schedule = [
+      2_000, 4_000, 6_000, 10_000, 15_000, 20_000, 30_000, 45_000,
+      60_000, 90_000, 120_000, 180_000, 240_000,
+    ];
+    for (const delay of schedule) {
+      await new Promise((r) => setTimeout(r, delay));
       try {
         const r = await fetch(
           `/api/approvals/${encodeURIComponent(approvalId)}/outcome`,
@@ -528,9 +540,18 @@ function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }
             outcome: body.outcome,
           },
         }));
-        if (body.outcome.status !== "queued") return;
+        // Terminal states — stop polling.
+        if (
+          body.outcome.status === "delivered" ||
+          body.outcome.status === "failed" ||
+          body.outcome.status === "skipped"
+        ) {
+          return;
+        }
+        // "applied" is interesting but not terminal — keep polling
+        // for the delivered signal. "queued" likewise.
       } catch {
-        /* keep trying until attempts run out */
+        /* keep trying until the schedule runs out */
       }
     }
   }
@@ -713,9 +734,23 @@ function InlineApprovalChip({
   embedded?: boolean;
 }) {
   const draft = extractDraftPreview(approval);
+  const isMessageAction =
+    approval.actionType === "email.send" ||
+    approval.actionType === "sms.send" ||
+    approval.actionType === "whatsapp.send";
   const statusPill = (() => {
+    if (state.outcome?.status === "delivered") {
+      return { tone: "bg-good/30 text-good", label: "delivered" };
+    }
     if (state.outcome?.status === "applied") {
-      return { tone: "bg-good/20 text-good", label: "applied" };
+      // For email/sms/whatsapp the apply step just hands the message
+      // to Resend / Twilio — call it "sent" so the operator reads
+      // the chip the same way they'd read their inbox. Other action
+      // types (crm.note, deal.status_change, …) keep "applied".
+      return {
+        tone: "bg-good/20 text-good",
+        label: isMessageAction ? "sent" : "applied",
+      };
     }
     if (state.outcome?.status === "failed") {
       return { tone: "bg-bad/20 text-bad", label: "executor failed" };

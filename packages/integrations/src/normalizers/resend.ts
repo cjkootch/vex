@@ -32,6 +32,10 @@ const ResendPayload = z.object({
       from: z.string().email().optional(),
       subject: z.string().optional(),
       tags: z.array(z.object({ name: z.string(), value: z.string() })).optional(),
+      // Resend's stable id for the outbound message — same value the
+      // executor stamps on `approval.executor.applied`'s metadata at
+      // send-time, so it's the linkage key for delivery follow-ups.
+      email_id: z.string().optional(),
       click: z
         .object({
           link: z.string().url(),
@@ -94,6 +98,7 @@ export class ResendNormalizer {
     if (payload.data.click?.link) metadata["url"] = payload.data.click.link;
     if (payload.data.bounce?.type) metadata["bounce_type"] = payload.data.bounce.type;
     if (payload.data.subject) metadata["subject"] = payload.data.subject;
+    if (payload.data.email_id) metadata["provider_message_id"] = payload.data.email_id;
 
     await this.deps.touchpoints.insert(this.deps.tx, raw.tenantId, {
       channel: "email",
@@ -121,6 +126,43 @@ export class ResendNormalizer {
         metadata,
       },
     );
+
+    // When delivery confirms an approval-driven outbound, mirror the
+    // signal onto the originating approval row so the chat chip can
+    // flip from "applied" → "delivered". Lookup is keyed on Resend's
+    // stable email_id, which the executor stamped on
+    // `approval.executor.applied` at send-time. Fail-soft: a missing
+    // apply event (orphan webhook, replay across schema cuts) just
+    // means we skip the linkage — the contact-timeline event still
+    // lands.
+    if (verb === "email.delivered" && payload.data.email_id) {
+      const apply = await this.deps.events.findApplyByProviderMessageId(
+        this.deps.tx,
+        payload.data.email_id,
+      );
+      if (apply) {
+        await this.deps.events.insertIfNotExists(
+          this.deps.tx,
+          raw.tenantId,
+          {
+            verb: "approval.executor.delivered",
+            subjectType: "approval",
+            subjectId: apply.subjectId,
+            actorType: "system",
+            actorId: "resend_webhook",
+            objectType: "approval",
+            objectId: apply.subjectId,
+            occurredAt,
+            idempotencyKey: `approval.executor.delivered:${apply.subjectId}:${id}`,
+            metadata: {
+              action_type: "email.send",
+              provider_message_id: payload.data.email_id,
+              ...(recipient ? { recipient } : {}),
+            },
+          },
+        );
+      }
+    }
 
     return { status: "ok", eventId: event.id, isNewEvent: isNew };
   }
