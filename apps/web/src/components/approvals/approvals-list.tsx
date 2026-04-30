@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
 /** Tiny relative-time formatter so this file stays dep-free. */
@@ -31,6 +31,16 @@ export function ApprovalsList() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkRunning, setBulkRunning] = useState(false);
+  // Tier filter — chips above the pending list let operators narrow
+  // the view to e.g. T2-only when they want to focus on outbound
+  // sends. Persisted only in component state; fresh on mount.
+  const [tierFilter, setTierFilter] = useState<"all" | "T1" | "T2" | "T3">(
+    "all",
+  );
+  // Active row index drives j/k keyboard nav. -1 means no row is
+  // focused; arrow / j / k will land on row 0.
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const listRef = useRef<HTMLUListElement | null>(null);
 
   useEffect(() => {
     void load();
@@ -150,6 +160,58 @@ export function ApprovalsList() {
     }
   }
 
+  const visibleItems = useMemo(() => {
+    if (tierFilter === "all") return items;
+    return items.filter(
+      (i) => stringField(i.proposedPayload, "tier") === tierFilter,
+    );
+  }, [items, tierFilter]);
+
+  // j/k keyboard nav over the currently-visible list. Activates only
+  // when the user isn't typing — checkbox / button focus inside an
+  // approval card is fine; we just bail if focus is on an input or
+  // textarea. Pure visual highlight (data-active row), no decision
+  // shortcut yet.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent): void {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key !== "j" && e.key !== "k") return;
+      if (visibleItems.length === 0) return;
+      e.preventDefault();
+      setActiveIndex((idx) => {
+        const next =
+          e.key === "j"
+            ? Math.min(idx + 1, visibleItems.length - 1)
+            : Math.max(idx - 1, 0);
+        // Scroll the highlighted row into view on the next paint.
+        requestAnimationFrame(() => {
+          const node = listRef.current?.querySelector<HTMLElement>(
+            `[data-active-row="true"]`,
+          );
+          node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+        return next < 0 ? 0 : next;
+      });
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [visibleItems.length]);
+
+  // Reset the highlight when the filtered list changes — otherwise an
+  // index that was valid under the old filter can land on a hidden /
+  // wrong row.
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [tierFilter, items.length]);
+
   return (
     <div className="space-y-8">
       {error && (
@@ -165,6 +227,34 @@ export function ApprovalsList() {
         <header className="mb-3 flex items-baseline justify-between gap-4">
           <h2 className="text-base font-semibold">Pending</h2>
           <div className="flex items-center gap-3 text-xs text-white/40">
+            <div className="flex items-center gap-1" data-testid="tier-filter">
+              {(["all", "T1", "T2", "T3"] as const).map((t) => {
+                const count =
+                  t === "all"
+                    ? items.length
+                    : items.filter(
+                        (i) => stringField(i.proposedPayload, "tier") === t,
+                      ).length;
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTierFilter(t)}
+                    data-active={tierFilter === t}
+                    className={`rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wider transition ${
+                      tierFilter === t
+                        ? "border-accent bg-accent/15 text-accent"
+                        : "border-line-soft bg-surface-2/40 text-white/50 hover:border-line-strong hover:text-white/70"
+                    }`}
+                  >
+                    {t === "all" ? "All" : t}
+                    <span className="ml-1 text-[10px] opacity-60">
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
             {items.length > 0 && (
               <label className="flex items-center gap-1.5 text-white/60">
                 <input
@@ -213,16 +303,36 @@ export function ApprovalsList() {
           </div>
         )}
         {loading ? (
-          <p className="text-sm text-white/50">Loading…</p>
-        ) : items.length === 0 ? (
-          <p className="text-sm text-white/50">Nothing to review.</p>
+          <ul className="space-y-3" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <li
+                key={i}
+                className="animate-pulse rounded-md border border-line/50 bg-surface-2/40 p-4"
+              >
+                <div className="h-4 w-32 rounded bg-white/10" />
+                <div className="mt-3 h-3 w-full rounded bg-white/5" />
+                <div className="mt-1.5 h-3 w-5/6 rounded bg-white/5" />
+              </li>
+            ))}
+          </ul>
+        ) : visibleItems.length === 0 ? (
+          <p className="text-sm text-white/50">
+            {tierFilter === "all"
+              ? "Nothing to review."
+              : `No ${tierFilter} approvals pending.`}
+          </p>
         ) : (
-          <ul className="space-y-3" data-testid="approvals-pending">
-            {items.map((item) => (
+          <ul
+            className="space-y-3"
+            data-testid="approvals-pending"
+            ref={listRef}
+          >
+            {visibleItems.map((item, i) => (
               <ApprovalCard
                 key={item.id}
                 item={item}
                 selected={selected.has(item.id)}
+                isActive={i === activeIndex}
                 onToggle={toggle}
                 onDecide={decide}
               />
@@ -354,11 +464,14 @@ function DecidedRow({ item }: { item: ApprovalRow }) {
 function ApprovalCard({
   item,
   selected,
+  isActive,
   onToggle,
   onDecide,
 }: {
   item: ApprovalRow;
   selected: boolean;
+  /** True when this card is the j/k keyboard cursor's current row. */
+  isActive?: boolean;
   onToggle: (id: string) => void;
   onDecide: (
     id: string,
@@ -455,7 +568,10 @@ function ApprovalCard({
   return (
     <li
       data-testid="approval-row"
-      className="rounded-lg border border-line bg-muted/40 p-4"
+      data-active-row={isActive ? "true" : undefined}
+      className={`rounded-lg border bg-muted/40 p-4 transition ${
+        isActive ? "border-accent ring-1 ring-accent/40" : "border-line"
+      }`}
     >
       <header className="mb-2 flex items-start justify-between gap-3">
         <input
