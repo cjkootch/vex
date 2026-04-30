@@ -24,32 +24,89 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Legacy aliases (kept for incremental migration).
+        // ── Canonical token aliases (mirror tokens.css) ─────────────
+        // Maps Tailwind utility names to CSS variables defined in
+        // apps/web/src/styles/tokens.css. The same set of names lives
+        // in procur's tailwind config; the only difference is the
+        // values in the per-app tokens.css. Don't add literal hex
+        // values here — keep this file mode-agnostic.
+        background: "var(--color-background)",
+        foreground: "var(--color-foreground)",
+        subtle: {
+          DEFAULT: "var(--color-subtle)",
+          foreground: "var(--color-subtle-foreground)",
+        },
+        border: "var(--color-border)",
+        "border-strong": "var(--color-border-strong)",
+        input: "var(--color-input)",
+        ring: "var(--color-ring)",
+        success: {
+          DEFAULT: "var(--color-success)",
+          foreground: "var(--color-success-foreground)",
+          subtle: "var(--color-success-subtle)",
+        },
+        warning: {
+          DEFAULT: "var(--color-warning)",
+          foreground: "var(--color-warning-foreground)",
+          subtle: "var(--color-warning-subtle)",
+        },
+        danger: {
+          DEFAULT: "var(--color-danger)",
+          foreground: "var(--color-danger-foreground)",
+          subtle: "var(--color-danger-subtle)",
+        },
+        info: {
+          DEFAULT: "var(--color-info)",
+          foreground: "var(--color-info-foreground)",
+          subtle: "var(--color-info-subtle)",
+        },
+
+        // ── Legacy aliases (kept for incremental migration) ─────────
+        // These map to the new tokens where the meaning is the same,
+        // and stay literal where the legacy color was intentionally
+        // distinct. Removing them would require migrating ~hundreds
+        // of usages across every page; do that incrementally in a
+        // follow-up.
         ink: "#0d1117",
-        canvas: "#0a0a0c",
-        muted: "#1f2026",
-        line: "#2a2c33",
-        accent: "#7c5cff",
-        good: "#22c55e",
-        warn: "#f59e0b",
-        bad: "#ef4444",
-        // New tiered surface system.
-        bg: "#07080b",
+        canvas: "var(--color-background)",
+        muted: {
+          DEFAULT: "var(--color-muted)",
+          foreground: "var(--color-muted-foreground)",
+        },
+        line: "var(--color-border)",
+        accent: {
+          DEFAULT: "var(--color-accent)",
+          foreground: "var(--color-accent-foreground)",
+        },
+        good: "var(--color-success)",
+        warn: "var(--color-warning)",
+        bad: "var(--color-danger)",
+        // Tiered surface system. surface-1 = elevated card, surface-2
+        // = overlay/popover. Procur has the same names with light
+        // values. These keep their literal hex for now because the
+        // per-tier shading is finer-grained than the token set.
+        bg: "var(--color-background)",
         "surface-1": "#101116",
         "surface-2": "#16181f",
         "surface-3": "#1c1f27",
         "line-soft": "#1e2027",
-        "line-strong": "#34373f",
-        "text-primary": "#f5f5f7",
+        "line-strong": "var(--color-border-strong)",
+        "text-primary": "var(--color-foreground)",
         "text-secondary": "#a8abb4",
-        "text-muted": "#6d7079",
-        "accent-soft": "#2a2450",
-        "accent-strong": "#9e84ff",
-        intel: "#7c5cff",
-        "intel-soft": "#1a1630",
+        "text-muted": "var(--color-muted-foreground)",
+        "accent-soft": "var(--color-accent-subtle)",
+        "accent-strong": "var(--color-accent-hover)",
+        intel: "var(--color-accent)",
+        "intel-soft": "var(--color-accent-subtle)",
       },
       fontFamily: {
-        sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: [
+          "var(--font-montserrat)",
+          "var(--font-sans)",
+          "ui-sans-serif",
+          "system-ui",
+          "sans-serif",
+        ],
         mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       fontSize: {

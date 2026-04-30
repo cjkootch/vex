@@ -17,6 +17,7 @@ import {
   AutonomyFeed,
   type AutonomyScope,
 } from "./autonomy-feed";
+import { NavIcon, type NavIconName } from "./nav-icons";
 import { VexLogo } from "@/components/brand/vex-logo";
 
 /**
@@ -33,7 +34,7 @@ import { VexLogo } from "@/components/brand/vex-logo";
 interface NavItem {
   href: string;
   label: string;
-  iconPath: string;
+  iconName: NavIconName;
   matchKey: string;
 }
 
@@ -44,53 +45,50 @@ interface NavGroup {
   items: NavItem[];
 }
 
-// Heroicons-outline inspired paths, 24×24 viewBox, single stroke.
+// Icon vocabulary lives in ./nav-icons.tsx — same names + paths as
+// procur's nav-icons.tsx so any shell component is portable across
+// both apps. Add new icons there, reference by NavIconName here.
 const ITEM_BRIEF: NavItem = {
   href: "/app",
   label: "Brief",
   matchKey: "/app",
-  iconPath: "M3 12l9-9 9 9M5 10v10a1 1 0 001 1h3v-6h6v6h3a1 1 0 001-1V10",
+  iconName: "sparkles",
 };
 const ITEM_CHAT: NavItem = {
   href: "/app/chat",
   label: "Chat",
   matchKey: "/app/chat",
-  iconPath:
-    "M8 10h8M8 14h5M21 12c0 4.418-4.03 8-9 8-1.26 0-2.46-.23-3.55-.65L3 21l1.67-4.5C3.6 15.2 3 13.66 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
+  iconName: "chat-bubble",
 };
 const ITEM_INBOX: NavItem = {
   href: "/app/inbox",
   label: "Inbox",
   matchKey: "/app/inbox",
-  iconPath:
-    "M4 13h3l2 3h6l2-3h3M4 7h16l-2 13a1 1 0 01-1 1H7a1 1 0 01-1-1L4 7zM8 7V4a1 1 0 011-1h6a1 1 0 011 1v3",
+  iconName: "inbox",
 };
 const ITEM_DEALS: NavItem = {
   href: "/app/deals",
   label: "Deals",
   matchKey: "/app/deals",
-  iconPath: "M4 7h16M4 12h16M4 17h16",
+  iconName: "kanban",
 };
 const ITEM_COMPANIES: NavItem = {
   href: "/app/companies",
   label: "Companies",
   matchKey: "/app/companies",
-  iconPath:
-    "M3 21h18M5 21V7l7-4 7 4v14M9 9h1M9 13h1M9 17h1M14 9h1M14 13h1M14 17h1",
+  iconName: "building-bank",
 };
 const ITEM_CONTACTS: NavItem = {
   href: "/app/contacts",
   label: "Contacts",
   matchKey: "/app/contacts",
-  iconPath:
-    "M16 11c1.657 0 3-1.79 3-4s-1.343-4-3-4-3 1.79-3 4 1.343 4 3 4zM8 11c1.657 0 3-1.79 3-4S9.657 3 8 3 5 4.79 5 7s1.343 4 3 4zM2 20c0-3.314 2.686-6 6-6s6 2.686 6 6M14 14c3.314 0 6 2.686 6 6",
+  iconName: "people",
 };
 const ITEM_MARKETING: NavItem = {
   href: "/app/marketing",
   label: "Marketing",
   matchKey: "/app/marketing",
-  iconPath:
-    "M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z",
+  iconName: "megaphone",
 };
 const ITEM_CALLS: NavItem = {
   // Live-listen + take-over for in-flight AI outbound calls. Detail
@@ -99,40 +97,38 @@ const ITEM_CALLS: NavItem = {
   href: "/app/calls",
   label: "Calls",
   matchKey: "/app/calls",
-  iconPath:
-    "M5 4h3l2 5-2.5 1.5a11 11 0 005 5L14 13l5 2v3a2 2 0 01-2 2A16 16 0 013 6a2 2 0 012-2z",
+  iconName: "phone",
 };
 const ITEM_VOICE: NavItem = {
   // Voice-note inbox / processed sessions index.
   href: "/app/voice",
   label: "Voice",
   matchKey: "/app/voice",
-  iconPath:
-    "M12 14a3 3 0 003-3V6a3 3 0 10-6 0v5a3 3 0 003 3zM5 11a7 7 0 0014 0M12 18v3m-3 0h6",
+  iconName: "microphone",
 };
 const ITEM_APPROVALS: NavItem = {
   href: "/app/approvals",
   label: "Approvals",
   matchKey: "/app/approvals",
-  iconPath: "M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+  iconName: "check-shield",
 };
 const ITEM_FOLLOW_UPS: NavItem = {
   href: "/app/follow-ups",
   label: "Follow-ups",
   matchKey: "/app/follow-ups",
-  iconPath: "M12 8v4l3 3M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
+  iconName: "clock",
 };
 const ITEM_SIGNALS: NavItem = {
   href: "/app/signals",
   label: "Signals",
   matchKey: "/app/signals",
-  iconPath: "M13 10V3L4 14h7v7l9-11h-7z",
+  iconName: "lightning",
 };
 const ITEM_IMPORT: NavItem = {
   href: "/app/import",
   label: "Import",
   matchKey: "/app/import",
-  iconPath: "M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4",
+  iconName: "arrow-down-tray",
 };
 const ITEM_STRATEGY: NavItem = {
   // Sprint-S strategy. Owner-only server-side. The prompt layer
@@ -141,8 +137,7 @@ const ITEM_STRATEGY: NavItem = {
   href: "/app/strategy",
   label: "Strategy",
   matchKey: "/app/strategy",
-  iconPath:
-    "M12 21a9 9 0 100-18 9 9 0 000 18zM15.5 8.5l-2 5-5 2 2-5 5-2z",
+  iconName: "map",
 };
 const ITEM_ADMIN: NavItem = {
   // Sprint-13 admin console. Non-owners get a 403-style denied page
@@ -151,7 +146,7 @@ const ITEM_ADMIN: NavItem = {
   href: "/app/admin",
   label: "Admin",
   matchKey: "/app/admin",
-  iconPath: "M12 2l8 4v6c0 5-3.5 9.5-8 10-4.5-.5-8-5-8-10V6l8-4z",
+  iconName: "shield-check",
 };
 
 // Grouped nav for a trading-desk operator. Brief + Chat sit at the
@@ -430,7 +425,10 @@ function TopBar({
   const chipType = CONTEXT_TYPE_MAP[config.contextType] ?? "none";
   const onClear = mode !== WorkspaceMode.Global ? resetMode : undefined;
   return (
-    <header className="relative flex h-12 flex-shrink-0 items-center gap-2 border-b border-line-soft bg-surface-1/80 px-3 backdrop-blur-xl md:px-4">
+    <header
+      className="relative flex flex-shrink-0 items-center gap-2 border-b border-line-soft bg-surface-1/80 px-3 backdrop-blur-xl md:px-4"
+      style={{ height: "var(--shell-topbar-height)" }}
+    >
       {/* 1px top highlight — premium surfaces always have a kiss of
           specular on the top edge. */}
       <div
@@ -443,7 +441,18 @@ function TopBar({
         aria-label="Open navigation"
         className="-ml-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-white/5 hover:text-text-primary md:hidden"
       >
-        <Icon path="M4 6h16M4 12h16M4 18h16" />
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={1.75}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-5 w-5 flex-shrink-0"
+          aria-hidden="true"
+        >
+          <path d="M4 6h16M4 12h16M4 18h16" />
+        </svg>
       </button>
       <Link
         href="/app"
@@ -505,7 +514,7 @@ function ApprovalBadge({ count }: { count: number }) {
       aria-label={label}
       className="relative inline-flex h-8 items-center gap-1.5 rounded-full border border-line bg-muted/40 px-2.5 text-xs text-white/70 transition hover:border-white/30 hover:text-white"
     >
-      <Icon path="M9 12l2 2 4-4M21 12a9 9 0 11-18 0 9 9 0 0118 0z" size={4} />
+      <NavIcon name="check-shield" className="h-4 w-4 flex-shrink-0" />
       <span>{count}</span>
       {count > 0 ? (
         <span
@@ -577,7 +586,10 @@ function SideRail({
 
   return (
     <aside
-      className={`${collapsed ? "w-14" : "w-60"} hidden flex-shrink-0 flex-col border-r border-line-soft bg-surface-1/70 backdrop-blur-xl transition-[width] duration-200 ease-out-quart md:flex`}
+      className={`${collapsed ? "w-14" : ""} hidden flex-shrink-0 flex-col border-r border-line-soft bg-surface-1/70 backdrop-blur-xl transition-[width] duration-200 ease-out-quart md:flex`}
+      style={
+        collapsed ? undefined : { width: "var(--shell-sidebar-width)" }
+      }
     >
       <nav className="flex-1 overflow-y-auto px-2 pt-3" aria-label="Primary">
         {NAV_GROUPS.map((group, i) => {
@@ -692,7 +704,7 @@ function NavLink({
           active ? "opacity-100" : "opacity-0"
         }`}
       />
-      <Icon path={item.iconPath} />
+      <NavIcon name={item.iconName} className="h-5 w-5 flex-shrink-0" />
       {collapsed ? null : <span className="truncate">{item.label}</span>}
       {!collapsed && badge !== null ? (
         <span
@@ -821,7 +833,8 @@ function AutonomyRail({
 }) {
   return (
     <aside
-      className={`${open ? "w-80" : "w-9"} hidden flex-shrink-0 flex-col border-l border-line-soft bg-surface-1/70 backdrop-blur-xl transition-[width] duration-200 ease-out-quart lg:flex`}
+      className={`${open ? "" : "w-9"} hidden flex-shrink-0 flex-col border-l border-line-soft bg-surface-1/70 backdrop-blur-xl transition-[width] duration-200 ease-out-quart lg:flex`}
+      style={open ? { width: "var(--shell-rightrail-width)" } : undefined}
     >
       <button
         type="button"
@@ -879,20 +892,5 @@ function deriveAutonomyScope(pathname: string): AutonomyScope | null {
   return null;
 }
 
-function Icon({ path, size = 5 }: { path: string; size?: 4 | 5 }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.75}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={`${size === 4 ? "h-4 w-4" : "h-5 w-5"} flex-shrink-0`}
-      aria-hidden="true"
-    >
-      <path d={path} />
-    </svg>
-  );
-}
+// Icon helper removed — see ./nav-icons.tsx for the canonical NavIcon
+// component (shared with procur).
