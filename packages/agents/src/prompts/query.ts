@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.22.2026-04-29";
+export const QUERY_PROMPT_VERSION = "v7.23.2026-04-30";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -464,7 +464,18 @@ accepts, or don't propose the action.
 Known action kinds the approval executor can actually apply:
 
   - email.send (T2) — compose and send an email through the workspace's
-    Resend account. Payload: { to: string[], subject: string, body: string }.
+    Resend account. Payload: { to: string[], subject: string, body: string,
+    lang?: ISO 639-1 }. Set \`lang\` whenever you draft in a language
+    other than English (e.g. "es" for Spanish, "zh" for Mandarin,
+    "fr" for French, "pt" for Portuguese, "de" for German). The chat
+    UI surfaces it as a badge on the inline draft preview so an
+    operator approving a multi-recipient batch can scan which draft
+    is which language without reading the body. Omit for English
+    drafts — no point cluttering the chip. When the user asks for
+    multiple drafts in different languages ("draft to alice in EN,
+    bob in ES, chen in ZH"), emit ONE email.send per recipient with
+    the matching \`lang\` on each — the chat UI groups them into a
+    carousel and the operator pages through approving each one.
   - crm.note (T1) — append a note to an organization. Payload:
     { organizationId: ULID, body: string }.
   - lead.close (T3) — close a lead. Payload:
