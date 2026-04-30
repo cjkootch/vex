@@ -335,10 +335,10 @@ function OverviewTab({
 
       {procurTags.length > 0 ? (
         <section
-          className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs"
+          className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-xs text-accent"
           title="This organization was hydrated from procur — tags below show the procur signals attached to it."
         >
-          <ProcurLogo className="h-3.5" />
+          <ProcurLogo className="h-4" />
           <span className="text-white/60">·</span>
           {procurTags.map((tag) => (
             <span
@@ -648,25 +648,31 @@ function formatVolume(usg: number): string {
 }
 
 /**
- * Procur brand mark. Renders the off-white wordmark over our dark
- * UI; falls back to the dark wordmark when the caller marks it for
- * a light surface (e.g. printable exports). Width auto-sizes from
- * the height set by the caller's class — the light SVG is 1500x608.
+ * Procur brand mark. Rendered as a CSS mask so the wordmark inherits
+ * `currentColor` from its parent — drop it inside `text-accent` and
+ * the logo paints gold; drop it inside `text-white` and it paints
+ * white. The light-fill SVG is the silhouette source (its solid
+ * pixels become opaque mask). Width auto-sizes from the height set
+ * by the caller via the SVG's 1500×608 aspect ratio.
  */
-function ProcurLogo({
-  className,
-  variant = "light",
-}: {
-  className?: string;
-  variant?: "light" | "dark";
-}) {
-  const src =
-    variant === "dark" ? "/procur/logo-dark.svg" : "/procur/logo-light.svg";
-  // Width auto-scales from the height the caller's class sets — the
-  // SVG's intrinsic 1500x608 aspect ratio handles the rest.
+function ProcurLogo({ className }: { className?: string }) {
   return (
-    // eslint-disable-next-line @next/next/no-img-element -- static SVG, no width/height optimisation needed
-    <img src={src} alt="Procur" className={`w-auto ${className ?? ""}`} />
+    <span
+      role="img"
+      aria-label="Procur"
+      className={`inline-block bg-current ${className ?? ""}`}
+      style={{
+        WebkitMaskImage: "url(/procur/logo-light.svg)",
+        maskImage: "url(/procur/logo-light.svg)",
+        WebkitMaskSize: "contain",
+        maskSize: "contain",
+        WebkitMaskRepeat: "no-repeat",
+        maskRepeat: "no-repeat",
+        WebkitMaskPosition: "center",
+        maskPosition: "center",
+        aspectRatio: "1500 / 608",
+      }}
+    />
   );
 }
 
@@ -723,7 +729,7 @@ function ProcurIntelligencePanel({
     <section className="rounded-lg border border-accent/30 bg-accent/5 p-4">
       <header className="mb-3 flex items-center justify-between gap-4">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-accent">
-          <ProcurLogo className="h-4" />
+          <ProcurLogo className="h-5" />
           <span>intelligence</span>
         </h3>
         {asOf ? (
