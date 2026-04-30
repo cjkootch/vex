@@ -417,6 +417,7 @@ interface CreatedApprovalMeta {
   approvalId: string;
   actionType: string;
   tier: string;
+  payload?: Record<string, unknown>;
 }
 
 /**
@@ -534,20 +535,165 @@ function InlineApprovalChips({ approvals }: { approvals: CreatedApprovalMeta[] }
     }
   }
 
+  // Group same-actionType drafts as a carousel so the operator can
+  // swipe through "send to alice in EN, bob in ES, chen in ZH" before
+  // approving each. The trigger is "2+ chips with the same actionType
+  // back-to-back" — covers the multi-recipient / multi-language draft
+  // case without forcing a carousel for unrelated actions like
+  // crm.note + email.send (those stay stacked).
+  const groups = groupConsecutive(approvals, (a) => a.actionType);
+
   return (
     <div className="mt-2 flex flex-col gap-2">
-      {approvals.map((a) => {
-        const s = state[a.approvalId];
-        if (!s) return null;
+      {groups.map((group, gi) => {
+        if (group.length === 1) {
+          const a = group[0];
+          if (!a) return null;
+          const s = state[a.approvalId];
+          if (!s) return null;
+          return (
+            <InlineApprovalChip
+              key={a.approvalId}
+              approval={a}
+              state={s}
+              onDecide={(action) => void decide(a.approvalId, action)}
+            />
+          );
+        }
         return (
-          <InlineApprovalChip
-            key={a.approvalId}
-            approval={a}
-            state={s}
-            onDecide={(action) => void decide(a.approvalId, action)}
+          <ApprovalCarousel
+            key={`group-${gi}`}
+            approvals={group}
+            state={state}
+            onDecide={(approvalId, action) =>
+              void decide(approvalId, action)
+            }
           />
         );
       })}
+    </div>
+  );
+}
+
+function groupConsecutive<T, K>(
+  items: T[],
+  keyOf: (item: T) => K,
+): T[][] {
+  const out: T[][] = [];
+  for (const item of items) {
+    const last = out[out.length - 1];
+    if (last && keyOf(last[0] as T) === keyOf(item)) {
+      last.push(item);
+    } else {
+      out.push([item]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Carousel of N drafts of the same actionType (e.g., five email.send
+ * drafts, one per recipient and language). Operator pages through
+ * with arrows or 1/2/3 dots; each draft shows the inline preview
+ * + its own Approve/Reject. Approving / rejecting one auto-advances
+ * to the next pending draft so the operator can power through a
+ * batch without clicking the dot.
+ */
+function ApprovalCarousel({
+  approvals,
+  state,
+  onDecide,
+}: {
+  approvals: CreatedApprovalMeta[];
+  state: Record<string, ChatApprovalState>;
+  onDecide: (approvalId: string, action: "approve" | "reject") => void;
+}) {
+  const [index, setIndex] = useState(0);
+  const safeIndex = Math.max(0, Math.min(index, approvals.length - 1));
+  const current = approvals[safeIndex];
+  if (!current) return null;
+  const s = state[current.approvalId];
+  if (!s) return null;
+
+  const advanceToNextPending = (): void => {
+    for (let i = safeIndex + 1; i < approvals.length; i++) {
+      const a = approvals[i];
+      if (a && state[a.approvalId]?.decision === "pending") {
+        setIndex(i);
+        return;
+      }
+    }
+    // No further pending → just step forward by one (or stay).
+    setIndex(Math.min(safeIndex + 1, approvals.length - 1));
+  };
+
+  const handleDecide = (action: "approve" | "reject"): void => {
+    onDecide(current.approvalId, action);
+    // Auto-advance after a beat so the operator sees the state
+    // transition before the next draft slides in.
+    setTimeout(advanceToNextPending, 250);
+  };
+
+  return (
+    <div
+      data-testid="inline-approval-carousel"
+      className="rounded-lg border border-warn/30 bg-warn/5 p-3"
+    >
+      <div className="mb-2 flex items-center justify-between text-xs text-white/60">
+        <span className="font-mono">
+          {current.actionType}{" "}
+          <span className="text-white/40">·</span>{" "}
+          draft {safeIndex + 1} of {approvals.length}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label="Previous draft"
+            onClick={() => setIndex(Math.max(0, safeIndex - 1))}
+            disabled={safeIndex === 0}
+            className="rounded p-1 text-white/60 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
+          >
+            ←
+          </button>
+          <div className="flex gap-1">
+            {approvals.map((a, i) => {
+              const decided = state[a.approvalId]?.decision !== "pending";
+              return (
+                <button
+                  key={a.approvalId}
+                  type="button"
+                  aria-label={`Go to draft ${i + 1}`}
+                  onClick={() => setIndex(i)}
+                  className={`h-1.5 w-1.5 rounded-full transition ${
+                    i === safeIndex
+                      ? "bg-warn"
+                      : decided
+                        ? "bg-good/60"
+                        : "bg-white/30 hover:bg-white/50"
+                  }`}
+                />
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            aria-label="Next draft"
+            onClick={() =>
+              setIndex(Math.min(approvals.length - 1, safeIndex + 1))
+            }
+            disabled={safeIndex === approvals.length - 1}
+            className="rounded p-1 text-white/60 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
+          >
+            →
+          </button>
+        </div>
+      </div>
+      <InlineApprovalChip
+        approval={current}
+        state={s}
+        onDecide={handleDecide}
+        embedded
+      />
     </div>
   );
 }
@@ -556,11 +702,17 @@ function InlineApprovalChip({
   approval,
   state,
   onDecide,
+  embedded,
 }: {
   approval: CreatedApprovalMeta;
   state: ChatApprovalState;
   onDecide: (action: "approve" | "reject") => void;
+  /** When the chip is rendered inside the carousel, drop the outer
+   *  border + status-tinted background so the carousel's frame doesn't
+   *  double up. */
+  embedded?: boolean;
 }) {
+  const draft = extractDraftPreview(approval);
   const statusPill = (() => {
     if (state.outcome?.status === "applied") {
       return { tone: "bg-good/20 text-good", label: "applied" };
@@ -582,17 +734,18 @@ function InlineApprovalChip({
 
   const disabled = state.inFlight || state.decision !== "pending";
 
-  return (
-    <div
-      data-testid="inline-approval-chip"
-      className={`flex flex-col gap-1.5 rounded-lg border px-3 py-2 text-xs transition ${
+  const containerClass = embedded
+    ? "flex flex-col gap-1.5 text-xs"
+    : `flex flex-col gap-1.5 rounded-lg border px-3 py-2 text-xs transition ${
         state.decision === "pending"
           ? "border-warn/40 bg-warn/5"
           : state.outcome?.status === "failed"
             ? "border-bad/40 bg-bad/5"
             : "border-good/30 bg-good/5"
-      }`}
-    >
+      }`;
+
+  return (
+    <div data-testid="inline-approval-chip" className={containerClass}>
       <div className="flex flex-wrap items-center gap-2">
         <span
           aria-hidden="true"
@@ -645,6 +798,7 @@ function InlineApprovalChip({
           )}
         </span>
       </div>
+      {draft ? <DraftPreview draft={draft} /> : null}
       {state.outcome?.status === "failed" && state.outcome.reason ? (
         <p className="text-[11px] leading-relaxed text-bad">
           ⚠ {state.outcome.reason}
@@ -653,6 +807,82 @@ function InlineApprovalChip({
       {state.error ? (
         <p className="text-[11px] text-bad">⚠ {state.error}</p>
       ) : null}
+    </div>
+  );
+}
+
+interface DraftPreview {
+  /** "to: alice@x.com" / "to: +1 832 …" — the row's recipient line. */
+  recipient?: string;
+  /** Optional subject (email.send). */
+  subject?: string;
+  /** Body text — newlines preserved when rendered. */
+  body: string;
+  /** ISO 639-1 code if the draft is tagged with a language. */
+  lang?: string;
+}
+
+/**
+ * Pulls a renderable draft preview off an approval payload. Recognises
+ * email.send / sms.send / whatsapp.send today; returns null for other
+ * action types so the chip falls back to the bare actionType label.
+ */
+function extractDraftPreview(
+  approval: CreatedApprovalMeta,
+): DraftPreview | null {
+  const p = (approval.payload ?? {}) as Record<string, unknown>;
+  const body =
+    typeof p["body"] === "string" && (p["body"] as string).trim().length > 0
+      ? (p["body"] as string)
+      : null;
+  if (!body) return null;
+  const recipient = ((): string | undefined => {
+    const to = p["to"];
+    if (typeof to === "string") return `to: ${to}`;
+    if (Array.isArray(to) && to.length > 0 && typeof to[0] === "string") {
+      return to.length === 1
+        ? `to: ${to[0]}`
+        : `to: ${to[0]} +${to.length - 1}`;
+    }
+    return undefined;
+  })();
+  const subject =
+    typeof p["subject"] === "string" && (p["subject"] as string).trim()
+      ? (p["subject"] as string)
+      : undefined;
+  const lang =
+    typeof p["lang"] === "string" && (p["lang"] as string).length === 2
+      ? (p["lang"] as string)
+      : undefined;
+  return {
+    body,
+    ...(recipient ? { recipient } : {}),
+    ...(subject ? { subject } : {}),
+    ...(lang ? { lang } : {}),
+  };
+}
+
+function DraftPreview({ draft }: { draft: DraftPreview }) {
+  return (
+    <div className="mt-1 rounded-md border border-line/60 bg-canvas/40 p-2.5">
+      {draft.recipient ? (
+        <div className="text-[11px] text-white/60">
+          {draft.recipient}
+          {draft.lang ? (
+            <span className="ml-2 rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-white/50">
+              {draft.lang}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {draft.subject ? (
+        <div className="mt-1 text-xs font-semibold text-white/85">
+          {draft.subject}
+        </div>
+      ) : null}
+      <pre className="mt-1 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-white/80">
+        {draft.body}
+      </pre>
     </div>
   );
 }

@@ -6,6 +6,13 @@ export interface CreatedApproval {
   approvalId: string;
   actionType: string;
   tier: string;
+  /**
+   * Proposed action payload — used by the chat UI to render inline
+   * draft previews (subject + body for email.send, etc.) without an
+   * extra fetch per chip. Optional because the api shape evolved;
+   * older responses omit it.
+   */
+  payload?: Record<string, unknown>;
 }
 
 export interface RejectedProposal {
