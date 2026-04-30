@@ -25,7 +25,14 @@ export function EmailTab({
 }): React.ReactElement {
   const current = settings?.email_signature ?? {};
   const currentFromName = settings?.email_from_name ?? "";
-  const currentCc = settings?.email_cc ?? [];
+  // Memoise so this reference is stable across renders that don't
+  // change the underlying settings — otherwise the array literal on
+  // every render makes the useEffect / useMemo deps churn (eslint
+  // react-hooks/exhaustive-deps flagged it on Vercel).
+  const currentCc = useMemo(
+    () => settings?.email_cc ?? [],
+    [settings?.email_cc],
+  );
 
   const [fromName, setFromName] = useState("");
   const [ccText, setCcText] = useState("");
@@ -108,7 +115,7 @@ export function EmailTab({
             for every approved{" "}
             <code className="font-mono text-text-primary">email.send</code>{" "}
             action. Recipients see this name; the technical address stays on
-            the workspace's verified domain. Leave blank to send with the
+            the workspace&apos;s verified domain. Leave blank to send with the
             address alone.
           </p>
         </header>
