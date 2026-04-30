@@ -929,11 +929,20 @@ async function applyEmailSend(
     ...(configured ? { signature: configured } : {}),
     defaults,
   });
+  // Display-name override on the From header — the Resend client
+  // formats `"Display Name" <verified@domain>` from defaultFrom +
+  // fromName so the recipient sees the friendly name without us
+  // touching the verified envelope address. Always-CC list captures
+  // the operator's "send a copy to my own inbox" wish.
+  const fromName = workspace?.settings?.email_from_name;
+  const cc = workspace?.settings?.email_cc ?? [];
   const result = await deps.resend.send({
     to,
     subject,
     text: rendered.text,
     html: rendered.html,
+    ...(fromName ? { fromName } : {}),
+    ...(cc.length > 0 ? { cc } : {}),
     ...(headers ? { headers } : {}),
   });
   if (result.error) {

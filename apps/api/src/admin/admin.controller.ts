@@ -58,6 +58,8 @@ const SettingsPatchSchema = z
       })
       .strict()
       .optional(),
+    email_from_name: z.string().max(120).optional(),
+    email_cc: z.array(z.string().email()).max(5).optional(),
   })
   .strict();
 

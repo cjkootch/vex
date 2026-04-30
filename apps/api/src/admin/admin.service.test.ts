@@ -129,6 +129,57 @@ describe("AdminService.updateSettings", () => {
     await service.updateSettings(TENANT, WORKSPACE, {}, "user-1");
     expect(mocks.eventsInsertIfNotExists).toHaveBeenCalledOnce();
   });
+
+  it("trims and persists email_from_name", async () => {
+    const { service } = buildService();
+    const next = await service.updateSettings(
+      TENANT,
+      WORKSPACE,
+      { email_from_name: "  Cole Kutschinski  " },
+      "user-1",
+    );
+    expect(next.email_from_name).toBe("Cole Kutschinski");
+  });
+
+  it("clears email_from_name when set to empty/whitespace", async () => {
+    const { service } = buildService();
+    const next = await service.updateSettings(
+      TENANT,
+      WORKSPACE,
+      { email_from_name: "" },
+      "user-1",
+    );
+    expect(next.email_from_name).toBeUndefined();
+  });
+
+  it("dedupes + trims email_cc, drops empties, preserves order", async () => {
+    const { service } = buildService();
+    const next = await service.updateSettings(
+      TENANT,
+      WORKSPACE,
+      {
+        email_cc: [
+          "  cole@vector.test ",
+          "",
+          "Cole@Vector.test",
+          "ops@vector.test",
+        ],
+      },
+      "user-1",
+    );
+    expect(next.email_cc).toEqual(["cole@vector.test", "ops@vector.test"]);
+  });
+
+  it("clears email_cc when set to an empty array", async () => {
+    const { service } = buildService();
+    const next = await service.updateSettings(
+      TENANT,
+      WORKSPACE,
+      { email_cc: [] },
+      "user-1",
+    );
+    expect(next.email_cc).toBeUndefined();
+  });
 });
 
 describe("AdminService.getLatestEvalResults", () => {
