@@ -342,4 +342,95 @@ describe("IngestService.ingestProcurLead", () => {
     expect(result.wasExisting).toBe(false);
     expect(result.leadId).toBe("lead_1");
   });
+
+  it("persists procur PR #316 metadata onto the lead row (verbatim)", async () => {
+    const { service, mocks } = buildService();
+    const procurMetadata = {
+      procurApproval: {
+        status: "approved_with_kyc" as const,
+        approvedAt: "2026-04-01T10:00:00.000Z",
+        expiresAt: "2026-07-14T10:00:00.000Z",
+        notes: null,
+      },
+      productSpecs: [
+        {
+          property: "Sulphur Content",
+          astmMethod: "D5453",
+          units: "mg/kg (ppm)",
+          min: null,
+          max: "10",
+          typical: "8.5",
+        },
+      ],
+      sourceDocuments: [
+        {
+          url: "https://abc.public.blob.vercel-storage.com/proforma.pdf",
+          contentType: "application/pdf",
+          filename: "proforma.pdf",
+        },
+      ],
+      marketContext: {
+        benchmarkAsOf: "2026-04-29",
+        brentSpotUsdPerBbl: 103.42,
+        nyhDieselSpotUsdPerGal: 2.43,
+        nyhGasolineSpotUsdPerGal: 2.31,
+      },
+      procurTradingDefaults: {
+        defaultSourcingRegion: "med",
+        targetGrossMarginPct: 0.05,
+        targetNetMarginPerUsg: 0.012,
+        monthlyFixedOverheadUsdDefault: 50_000,
+      },
+      // Free-form keys we don't model — should be ignored by
+      // pickProcurMetadata, NOT persisted on the lead row.
+      source: "procur",
+      pushedAt: "2026-04-30T14:00:00.000Z",
+    };
+    await service.ingestProcurLead(
+      basePayload({ metadata: procurMetadata as never }),
+    );
+    const leadCall = mocks.leadCreate.mock.calls[0];
+    expect(leadCall).toBeDefined();
+    const passedProcur = leadCall![2].procurMetadata;
+    expect(passedProcur.procurApproval.status).toBe("approved_with_kyc");
+    expect(passedProcur.productSpecs).toHaveLength(1);
+    expect(passedProcur.productSpecs[0].max).toBe("10");
+    expect(passedProcur.sourceDocuments[0].url).toContain("vercel-storage.com");
+    expect(passedProcur.marketContext.brentSpotUsdPerBbl).toBe(103.42);
+    expect(passedProcur.procurTradingDefaults.defaultSourcingRegion).toBe(
+      "med",
+    );
+    // Free-form keys should NOT have leaked onto procurMetadata.
+    expect("source" in passedProcur).toBe(false);
+    expect("pushedAt" in passedProcur).toBe(false);
+  });
+
+  it("persists contact.linkedinUrl onto external_keys.linkedin", async () => {
+    const { service, mocks } = buildService();
+    await service.ingestProcurLead(
+      basePayload({
+        contacts: [
+          {
+            name: "M. Dupont",
+            title: "Procurement Officer",
+            email: "m.dupont@armasuisse.ch",
+            linkedinUrl: "https://www.linkedin.com/in/mdupont",
+          },
+        ],
+      }),
+    );
+    const contactArgs = mocks.contactCreateWithDedupe.mock.calls[0]?.[2];
+    expect(contactArgs).toBeDefined();
+    expect(contactArgs.externalKeys).toEqual({
+      linkedin: "https://www.linkedin.com/in/mdupont",
+    });
+  });
+
+  it("omits procurMetadata when the payload has no metadata", async () => {
+    const { service, mocks } = buildService();
+    await service.ingestProcurLead(basePayload());
+    const leadCall = mocks.leadCreate.mock.calls[0];
+    expect(leadCall).toBeDefined();
+    expect(leadCall![2].procurMetadata).toEqual({});
+  });
 });

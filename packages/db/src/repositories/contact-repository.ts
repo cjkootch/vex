@@ -13,6 +13,13 @@ export interface ContactCreateInput {
   emails?: string[];
   phones?: string[];
   timezone?: string | null;
+  /**
+   * External-system identifiers — `{ linkedin: "https://…" }` is the
+   * common case from procur ingest + contact-enrichment. Merged into
+   * `external_keys` on insert; later passes can grow it via
+   * dedicated repo methods.
+   */
+  externalKeys?: Record<string, string>;
 }
 
 /** Stateless. Caller must wrap in `withTenant` so RLS scopes the queries. */
@@ -109,7 +116,7 @@ export class ContactRepository {
         title: input.title ?? null,
         emails: input.emails ?? [],
         phones: input.phones ?? [],
-        externalKeys: {},
+        externalKeys: input.externalKeys ?? {},
         fieldConfidence: {},
         status: "active",
         timezone: input.timezone ?? null,

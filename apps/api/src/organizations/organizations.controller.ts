@@ -129,6 +129,16 @@ export interface OrganizationDetail extends OrganizationListRow {
   notes: OrganizationNote[];
   contacts: OrganizationContactSummary[];
   deals: OrganizationDealSummary[];
+  /**
+   * Procur sidecar context from the most-recent procur lead pushed
+   * for this org (procur PR #316). Drives the "Procur intelligence"
+   * panel on the company detail page — KYC badge, datasheet specs,
+   * source documents, market context, trading defaults. Null when
+   * the org isn't a procur lead.
+   */
+  procurMetadata: import("@vex/db").LeadProcurMetadata | null;
+  /** ISO timestamp of the procur push that supplied procurMetadata. */
+  procurMetadataAt: string | null;
 }
 
 const STATUS_VALUES = new Set<RecordStatus>([
@@ -520,8 +530,11 @@ export class OrganizationsController {
         ofacScreenedAt: after.ofacScreenedAt?.toISOString() ?? null,
         // After-PATCH detail; freshly-created or freshly-updated orgs
         // typically don't have notes yet — leave empty rather than
-        // round-trip the events query for a likely-empty result.
+        // round-trip the events query for a likely-empty result. Same
+        // story for procurMetadata (procur push is a separate flow).
         notes: [],
+        procurMetadata: null,
+        procurMetadataAt: null,
         createdAt: after.createdAt.toISOString(),
         updatedAt: after.updatedAt.toISOString(),
         contacts: contacts.map((c) => ({
@@ -631,6 +644,29 @@ export class OrganizationsController {
           })
           .filter((x): x is OrganizationNote => x !== null);
 
+        // Most-recent procur lead's sidecar metadata (PR #316). Drives
+        // the "Procur intelligence" panel. We pick the freshest by
+        // updatedAt so re-pushes (procur user re-clicks "Send to Vex"
+        // after editing the proforma) overwrite stale context.
+        const [procurLead] = await tx
+          .select({
+            procurMetadata: schema.leads.procurMetadata,
+            updatedAt: schema.leads.updatedAt,
+          })
+          .from(schema.leads)
+          .where(
+            and(
+              eq(schema.leads.orgId, id),
+              eq(schema.leads.stage, "procur_inbound"),
+            ),
+          )
+          .orderBy(desc(schema.leads.updatedAt))
+          .limit(1);
+        const procurMetadata = procurLead?.procurMetadata ?? null;
+        const procurMetadataAt = procurLead?.updatedAt
+          ? procurLead.updatedAt.toISOString()
+          : null;
+
         const country =
           (row.geo as { country?: unknown } | null)?.country;
 
@@ -661,6 +697,8 @@ export class OrganizationsController {
             optedOut: c.optOutAt !== null,
           })),
           deals,
+          procurMetadata,
+          procurMetadataAt,
         };
         return detail;
       },

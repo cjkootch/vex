@@ -37,6 +37,56 @@ interface OrganizationNote {
   createdAt: string;
 }
 
+interface ProcurApproval {
+  status:
+    | "pending"
+    | "kyc_in_progress"
+    | "approved_without_kyc"
+    | "approved_with_kyc"
+    | "rejected"
+    | "expired";
+  approvedAt: string | null;
+  expiresAt: string | null;
+  notes: string | null;
+}
+
+interface ProductSpec {
+  property: string;
+  astmMethod: string | null;
+  units: string | null;
+  min: string | null;
+  max: string | null;
+  typical: string | null;
+}
+
+interface SourceDocument {
+  url: string;
+  contentType: string;
+  filename: string;
+}
+
+interface MarketContext {
+  benchmarkAsOf: string | null;
+  brentSpotUsdPerBbl: number | null;
+  nyhDieselSpotUsdPerGal: number | null;
+  nyhGasolineSpotUsdPerGal: number | null;
+}
+
+interface ProcurTradingDefaults {
+  defaultSourcingRegion: string | null;
+  targetGrossMarginPct: number | null;
+  targetNetMarginPerUsg: number | null;
+  monthlyFixedOverheadUsdDefault: number | null;
+}
+
+interface ProcurMetadata {
+  procurApproval?: ProcurApproval;
+  productSpecs?: ProductSpec[];
+  sourceDocuments?: SourceDocument[];
+  marketContext?: MarketContext;
+  procurTradingDefaults?: ProcurTradingDefaults;
+}
+
 interface OrganizationDetail {
   id: string;
   legalName: string;
@@ -57,6 +107,8 @@ interface OrganizationDetail {
   updatedAt: string;
   contacts: OrganizationContact[];
   deals: OrganizationDeal[];
+  procurMetadata: ProcurMetadata | null;
+  procurMetadataAt: string | null;
 }
 
 export default function CompanyDetailPage({
@@ -299,6 +351,13 @@ function OverviewTab({
             </span>
           ))}
         </section>
+      ) : null}
+
+      {org.procurMetadata ? (
+        <ProcurIntelligencePanel
+          metadata={org.procurMetadata}
+          asOf={org.procurMetadataAt}
+        />
       ) : null}
 
       <section className="rounded-lg border border-line bg-muted/20 p-4">
@@ -608,4 +667,259 @@ function Breadcrumb({ name }: { name: string | null }) {
       )}
     </nav>
   );
+}
+
+/**
+ * Procur intelligence panel — surfaces the structured sidecar context
+ * procur attaches to every push (PR #316). Five sub-sections, each
+ * gated on the corresponding sub-object being present:
+ *   · KYC / approval state — colored pill + expiry warning
+ *   · Source documents — clickable list of Vercel-blob URLs
+ *   · Product specs — ASTM table from the user-uploaded datasheet
+ *   · Market context — benchmark snapshot at push time
+ *   · Trading defaults — pushing desk's profile (region + margin
+ *     targets), useful context for outreach drafts
+ *
+ * Numbers in productSpecs are rendered VERBATIM as strings — spec
+ * deviations are material; round-tripping them through `Number`
+ * would silently change values.
+ */
+function ProcurIntelligencePanel({
+  metadata,
+  asOf,
+}: {
+  metadata: ProcurMetadata;
+  asOf: string | null;
+}) {
+  const approval = metadata.procurApproval;
+  const specs = metadata.productSpecs ?? [];
+  const docs = metadata.sourceDocuments ?? [];
+  const market = metadata.marketContext;
+  const defaults = metadata.procurTradingDefaults;
+  const expired =
+    approval?.expiresAt && new Date(approval.expiresAt).getTime() < Date.now();
+  return (
+    <section className="rounded-lg border border-accent/30 bg-accent/5 p-4">
+      <header className="mb-3 flex items-baseline justify-between gap-4">
+        <h3 className="text-sm font-semibold text-accent">
+          Procur intelligence
+        </h3>
+        {asOf ? (
+          <span className="text-[11px] text-white/50">
+            Pushed {new Date(asOf).toLocaleDateString()}
+          </span>
+        ) : null}
+      </header>
+
+      {approval ? (
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-xs">
+          <span
+            className={`rounded-full border px-2 py-0.5 font-medium ${
+              approval.status === "approved_with_kyc" ||
+              approval.status === "approved_without_kyc"
+                ? expired
+                  ? "border-warn/50 bg-warn/15 text-warn"
+                  : "border-good/50 bg-good/15 text-good"
+                : approval.status === "rejected" ||
+                    approval.status === "expired"
+                  ? "border-bad/50 bg-bad/15 text-bad"
+                  : "border-line bg-white/5 text-white/70"
+            }`}
+            title={
+              approval.notes ??
+              `Procur-side KYC / approval state: ${approval.status}`
+            }
+          >
+            {approvalLabel(approval.status, expired)}
+          </span>
+          {approval.expiresAt ? (
+            <span className="text-[11px] text-white/50">
+              {expired ? "Expired" : "Expires"}{" "}
+              {new Date(approval.expiresAt).toLocaleDateString()}
+            </span>
+          ) : null}
+          {approval.notes ? (
+            <p className="basis-full text-[11px] text-white/60">
+              {approval.notes}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {docs.length > 0 ? (
+        <div className="mb-4">
+          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">
+            Source documents
+          </div>
+          <ul className="flex flex-col gap-1">
+            {docs.map((d) => (
+              <li key={d.url}>
+                <a
+                  href={d.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 text-xs text-accent hover:text-accent-strong hover:underline"
+                >
+                  <span aria-hidden>📎</span>
+                  <span className="font-mono">{d.filename}</span>
+                  <span className="text-[10px] text-white/40">
+                    {d.contentType.replace(/^application\//, "")}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {specs.length > 0 ? (
+        <div className="mb-4">
+          <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">
+            Product specs (verbatim from datasheet)
+          </div>
+          <div className="overflow-x-auto rounded-md border border-line/40">
+            <table className="w-full text-xs">
+              <thead className="bg-white/5 text-white/60">
+                <tr>
+                  <th className="px-2 py-1 text-left font-normal">Property</th>
+                  <th className="px-2 py-1 text-left font-normal">Method</th>
+                  <th className="px-2 py-1 text-right font-normal">Min</th>
+                  <th className="px-2 py-1 text-right font-normal">Max</th>
+                  <th className="px-2 py-1 text-right font-normal">Typical</th>
+                  <th className="px-2 py-1 text-left font-normal">Units</th>
+                </tr>
+              </thead>
+              <tbody className="text-white/80">
+                {specs.map((s, i) => (
+                  <tr key={i} className="border-t border-line/30">
+                    <td className="px-2 py-1">{s.property}</td>
+                    <td className="px-2 py-1 font-mono text-[11px] text-white/60">
+                      {s.astmMethod ?? "—"}
+                    </td>
+                    <td className="px-2 py-1 text-right font-mono">
+                      {s.min ?? "—"}
+                    </td>
+                    <td className="px-2 py-1 text-right font-mono">
+                      {s.max ?? "—"}
+                    </td>
+                    <td className="px-2 py-1 text-right font-mono">
+                      {s.typical ?? "—"}
+                    </td>
+                    <td className="px-2 py-1 text-[11px] text-white/60">
+                      {s.units ?? ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      {market || defaults ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {market ? (
+            <div>
+              <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">
+                Market context
+                {market.benchmarkAsOf
+                  ? ` · ${new Date(market.benchmarkAsOf).toLocaleDateString()}`
+                  : ""}
+              </div>
+              <ul className="space-y-0.5 text-xs">
+                {market.brentSpotUsdPerBbl != null && (
+                  <li className="flex justify-between">
+                    <span className="text-white/60">Brent spot</span>
+                    <span className="font-mono">
+                      ${market.brentSpotUsdPerBbl.toFixed(2)}/bbl
+                    </span>
+                  </li>
+                )}
+                {market.nyhDieselSpotUsdPerGal != null && (
+                  <li className="flex justify-between">
+                    <span className="text-white/60">NYH diesel</span>
+                    <span className="font-mono">
+                      ${market.nyhDieselSpotUsdPerGal.toFixed(4)}/gal
+                    </span>
+                  </li>
+                )}
+                {market.nyhGasolineSpotUsdPerGal != null && (
+                  <li className="flex justify-between">
+                    <span className="text-white/60">NYH gasoline</span>
+                    <span className="font-mono">
+                      ${market.nyhGasolineSpotUsdPerGal.toFixed(4)}/gal
+                    </span>
+                  </li>
+                )}
+              </ul>
+            </div>
+          ) : null}
+          {defaults ? (
+            <div>
+              <div className="mb-1.5 text-[10px] uppercase tracking-wider text-white/40">
+                Pushing desk defaults
+              </div>
+              <ul className="space-y-0.5 text-xs">
+                {defaults.defaultSourcingRegion && (
+                  <li className="flex justify-between">
+                    <span className="text-white/60">Region</span>
+                    <span className="font-mono uppercase">
+                      {defaults.defaultSourcingRegion}
+                    </span>
+                  </li>
+                )}
+                {defaults.targetGrossMarginPct != null && (
+                  <li className="flex justify-between">
+                    <span className="text-white/60">Gross margin target</span>
+                    <span className="font-mono">
+                      {(defaults.targetGrossMarginPct * 100).toFixed(1)}%
+                    </span>
+                  </li>
+                )}
+                {defaults.targetNetMarginPerUsg != null && (
+                  <li className="flex justify-between">
+                    <span className="text-white/60">Net per USG</span>
+                    <span className="font-mono">
+                      ${defaults.targetNetMarginPerUsg.toFixed(4)}
+                    </span>
+                  </li>
+                )}
+                {defaults.monthlyFixedOverheadUsdDefault != null && (
+                  <li className="flex justify-between">
+                    <span className="text-white/60">Monthly overhead</span>
+                    <span className="font-mono">
+                      ${defaults.monthlyFixedOverheadUsdDefault.toLocaleString()}
+                    </span>
+                  </li>
+                )}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function approvalLabel(
+  status: ProcurApproval["status"],
+  expired: boolean | null | "" | undefined,
+): string {
+  if (expired) return "✗ KYC expired";
+  switch (status) {
+    case "approved_with_kyc":
+      return "✓ Procur KYC'd";
+    case "approved_without_kyc":
+      return "✓ Procur approved";
+    case "kyc_in_progress":
+      return "⋯ KYC in progress";
+    case "pending":
+      return "⋯ Procur review pending";
+    case "rejected":
+      return "✗ Rejected by procur";
+    case "expired":
+      return "✗ Procur approval expired";
+    default:
+      return status;
+  }
 }
