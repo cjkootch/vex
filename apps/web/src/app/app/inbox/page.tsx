@@ -311,6 +311,7 @@ function TouchpointRow({
   item: TouchpointItem;
 }): React.ReactElement {
   const verb = item.channel.includes(".") ? item.channel.split(".", 2)[1] : null;
+  const counterparty = extractCounterparty(item);
   return (
     <li
       data-testid="inbox-row"
@@ -327,6 +328,12 @@ function TouchpointRow({
               <span className="capitalize">{item.channelGroup}</span>
               {item.direction && <DirectionArrow direction={item.direction} />}
               {verb && <StatusBadge status={verb} />}
+              {counterparty && (
+                <span className="truncate text-xs font-normal text-white/70">
+                  {counterparty.label}{" "}
+                  <span className="text-white/50">{counterparty.value}</span>
+                </span>
+              )}
             </div>
             {item.preview && (
               <div className="mt-0.5 truncate text-xs text-white/60">
@@ -344,6 +351,42 @@ function TouchpointRow({
       </Link>
     </li>
   );
+}
+
+/**
+ * Pulls the operator-relevant counterparty off a touchpoint's metadata.
+ * Outbound shows the recipient ("to: …"), inbound shows the sender
+ * ("from: …"). Email metadata stashes addresses as `to`/`from` (string
+ * or string[]); SMS/WhatsApp use the same field names with E.164. Falls
+ * back to whichever side is populated when direction is missing.
+ */
+function extractCounterparty(
+  item: TouchpointItem,
+): { label: string; value: string } | null {
+  const meta = item.metadata ?? {};
+  const pickSide = (key: "to" | "from"): string | null => {
+    const v = (meta as Record<string, unknown>)[key];
+    if (typeof v === "string" && v.trim().length > 0) return v.trim();
+    if (Array.isArray(v) && v.length > 0 && typeof v[0] === "string") {
+      return v.length === 1 ? v[0] : `${v[0]} +${v.length - 1}`;
+    }
+    return null;
+  };
+  const fromSide =
+    item.direction === "outbound"
+      ? "to"
+      : item.direction === "inbound"
+        ? "from"
+        : null;
+  if (fromSide) {
+    const v = pickSide(fromSide);
+    if (v) return { label: `${fromSide}:`, value: v };
+  }
+  const to = pickSide("to");
+  if (to) return { label: "to:", value: to };
+  const from = pickSide("from");
+  if (from) return { label: "from:", value: from };
+  return null;
 }
 
 function ChannelIcon({

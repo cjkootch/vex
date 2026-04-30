@@ -74,6 +74,14 @@ export interface CreatedApproval {
   approvalId: string;
   actionType: string;
   tier: string;
+  /**
+   * The proposed payload that will execute on approve. Surfaced so
+   * the chat UI can render an inline draft preview (subject + body
+   * for email.send, body for sms.send, etc.) without a follow-up
+   * fetch per chip. Stripped of the internal `tier`/`rationale`
+   * fields the executor injects but the UI doesn't render.
+   */
+  payload: Record<string, unknown>;
 }
 
 export interface RejectedProposal {
@@ -464,6 +472,7 @@ export class QueryService {
             approvalId: approval.id,
             actionType: action.kind,
             tier: action.tier,
+            payload: action.payload,
           });
         }
       });
