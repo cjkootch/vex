@@ -390,6 +390,31 @@ export class OrganizationRepository {
     if (!row) throw new Error(`organization ${id} not found`);
     return row;
   }
+
+  /**
+   * Bulk-flip status on a set of org ids. Used by the
+   * `/organizations/bulk-archive` endpoint when an operator
+   * soft-deletes companies from the list page. Single-SQL update so
+   * a 200-row archive is one round-trip, not N. Mirrors
+   * ContactRepository.updateStatusByIds.
+   */
+  async updateStatusByIds(
+    tx: Tx,
+    ids: readonly string[],
+    status: "active" | "inactive" | "archived",
+  ): Promise<Organization[]> {
+    if (ids.length === 0) return [];
+    return tx
+      .update(organizations)
+      .set({ status, updatedAt: new Date() })
+      .where(
+        sql`${organizations.id} IN (${sql.join(
+          ids.map((id) => sql`${id}`),
+          sql`, `,
+        )})`,
+      )
+      .returning();
+  }
 }
 
 // ---------------------------------------------------------------------------
