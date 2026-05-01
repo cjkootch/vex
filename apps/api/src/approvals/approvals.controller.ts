@@ -89,7 +89,7 @@ export class ApprovalsController {
       this.tenant.tenantId,
       id,
     );
-    return { outcome: result.outcome };
+    return { approval: result.approval, outcome: result.outcome };
   }
 
   @Post(":id/approve")
