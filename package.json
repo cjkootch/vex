@@ -17,6 +17,9 @@
     "db:migrate": "pnpm --filter=@vex/db run migrate",
     "db:seed": "pnpm --filter=@vex/db run seed",
     "eval:run": "pnpm --filter=@vex/agents run eval:run",
+    "deploy:api": "fly deploy -a vex-api -c fly.toml",
+    "deploy:worker": "fly deploy -a vex-worker -c fly.worker.toml",
+    "deploy:all": "pnpm deploy:api && pnpm deploy:worker",
     "clean": "pnpm -r run clean && rm -rf node_modules"
   },
   "devDependencies": {
