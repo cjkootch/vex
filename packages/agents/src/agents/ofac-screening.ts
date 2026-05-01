@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   OfacScreenRepository,
   SignalRepository,
@@ -209,6 +210,27 @@ export class OFACScreeningAgent implements IAgent {
       });
       internalWrites++;
 
+      // Best-effort push of the verdict back to procur for orgs we
+      // know about there. Fires for `clear` AND `potential_match` so
+      // procur learns "vex screened this and it came back clean as
+      // of T". `cleared_by_operator` is intentionally NOT shared —
+      // see shareOrgSanctionsStatus docstring (operator decisions
+      // stay tenant-local). Failure is fail-soft: a 5xx from procur
+      // doesn't fail the screen run; we just log and move on.
+      //
+      // `sourcesChecked` is the set of lists this run actually ran
+      // against — pull straight from the resolved `enabled` set so
+      // procur learns "vex screened against [us_csl, eu, uk_ofsi]"
+      // when the workspace has all three on, or just `["eu"]` for an
+      // EU-only tenant.
+      await this.maybeShareSanctionsToProcur(
+        ctx,
+        org,
+        status,
+        matches,
+        enabled,
+      );
+
       if (status === "clear") {
         clearCount++;
         continue;
@@ -303,6 +325,71 @@ export class OFACScreeningAgent implements IAgent {
           ? `${potentialCount}/${orgs.length} organizations flagged for OFAC review`
           : `${orgs.length}/${orgs.length} organizations clear`,
     };
+  }
+
+  /**
+   * Best-effort push of the screening verdict back to procur. Mirrors
+   * the contact-enrichment share path (`maybeShareToProcur` in
+   * contact-enrichment.ts): only fires for orgs procur already
+   * knows about (`external_keys.procur` set), only when procur is
+   * configured, and a failure here never fails the screen run.
+   *
+   * Privacy posture is documented on `ProcurClient.shareOrgSanctionsScreen`.
+   * Short version: share status + public list metadata + banded
+   * confidence + an opaque `vex_tenant_id` so procur can attribute
+   * cross-tenant disagreement. Don't share raw scores, matched-name
+   * strings, or operator-cleared decisions.
+   *
+   * Each call generates a fresh UUIDv4 `screenId` so procur dedupes
+   * on `(vex_tenant_id, screen_id)` for retry safety. We don't need
+   * the screen id on our side post-call — procur stores it; vex's
+   * own audit row is keyed by `id` in the `ofac_screens` table.
+   */
+  private async maybeShareSanctionsToProcur(
+    ctx: AgentContext,
+    org: Organization,
+    status: OfacScreenStatus,
+    matches: SdnScreenResult[],
+    sourcesChecked: string[],
+  ): Promise<void> {
+    // Operator-cleared verdicts stay tenant-local — procur's reviewers
+    // make their own judgement on the underlying objective match.
+    if (status === "cleared_by_operator") return;
+    const procurSlug = (org.externalKeys as Record<string, string> | null)?.[
+      "procur"
+    ];
+    if (!procurSlug) return;
+    if (!ctx.procur.isEnabled()) return;
+
+    const shareMatches = matches.map((r) => {
+      const sourceList =
+        (r.entry as Partial<CslEntry>).sourceList ?? "SDN";
+      return {
+        sourceList,
+        sdnUid: r.entry.uid,
+        programs: r.entry.programs,
+        confidenceBand:
+          r.score >= HIGH_CONFIDENCE_THRESHOLD
+            ? ("high_confidence" as const)
+            : ("fuzzy_review" as const),
+        sdnType: r.entry.sdnType,
+      };
+    });
+
+    try {
+      await ctx.procur.shareOrgSanctionsScreen({
+        entitySlug: procurSlug,
+        vexTenantId: ctx.tenantId,
+        screenId: randomUUID(),
+        legalName: org.legalName,
+        status: status as "clear" | "potential_match" | "confirmed_match",
+        sourcesChecked,
+        matches: shareMatches,
+        screenedAt: new Date().toISOString(),
+      });
+    } catch {
+      /* fail-soft — a procur outage shouldn't fail the screen run */
+    }
   }
 }
 

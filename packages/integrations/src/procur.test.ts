@@ -244,6 +244,114 @@ describe("createProcurClient", () => {
       /supplierId or supplierName required/,
     );
   });
+
+  it("shareOrgSanctionsScreen posts a snake-cased payload to the sanctions-screen path", async () => {
+    const fetchImpl = makeFetch(200, {
+      screenId: "11111111-1111-4111-8111-111111111111",
+      status: "created",
+    });
+    const c = createProcurClient({
+      ...BASE_CONFIG,
+      fetchImpl,
+      log: silentLog(),
+    });
+    const result = await c.shareOrgSanctionsScreen({
+      entitySlug: "armasuisse",
+      vexTenantId: "01HSEEDWRK0000000000000001",
+      screenId: "11111111-1111-4111-8111-111111111111",
+      legalName: "Armasuisse",
+      status: "potential_match",
+      sourcesChecked: ["us_csl", "eu"],
+      matches: [
+        {
+          sourceList: "EU",
+          sdnUid: "EU-RU-1234",
+          programs: ["RUS"],
+          confidenceBand: "high_confidence",
+          sdnType: "entity",
+        },
+      ],
+      screenedAt: "2026-05-01T03:00:00.000Z",
+    });
+    expect(result.ok).toBe(true);
+
+    const [url, init] = (fetchImpl as unknown as {
+      mock: { calls: [string, RequestInit][] };
+    }).mock.calls[0]!;
+    expect(url).toBe(
+      "https://procur.example.com/api/intelligence/entity/armasuisse/sanctions-screen",
+    );
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      vex_tenant_id: "01HSEEDWRK0000000000000001",
+      screen_id: "11111111-1111-4111-8111-111111111111",
+      legal_name: "Armasuisse",
+      status: "potential_match",
+      sources_checked: ["us_csl", "eu"],
+      screened_at: "2026-05-01T03:00:00.000Z",
+      source: "vex",
+      matches: [
+        {
+          source_list: "EU",
+          sdn_uid: "EU-RU-1234",
+          programs: ["RUS"],
+          confidence_band: "high_confidence",
+          sdn_type: "entity",
+        },
+      ],
+    });
+  });
+
+  it("shareOrgSanctionsScreen accepts the empty-matches case (clear screen)", async () => {
+    const fetchImpl = makeFetch(200, {
+      screenId: "22222222-2222-4222-8222-222222222222",
+      status: "created",
+    });
+    const c = createProcurClient({
+      ...BASE_CONFIG,
+      fetchImpl,
+      log: silentLog(),
+    });
+    await c.shareOrgSanctionsScreen({
+      entitySlug: "vector-trade-capital",
+      vexTenantId: "01HSEEDWRK0000000000000001",
+      screenId: "22222222-2222-4222-8222-222222222222",
+      legalName: "Vector Trade Capital",
+      status: "clear",
+      sourcesChecked: ["us_csl", "eu", "uk_ofsi"],
+      matches: [],
+      screenedAt: "2026-05-01T03:00:00.000Z",
+    });
+    const [, init] = (fetchImpl as unknown as {
+      mock: { calls: [string, RequestInit][] };
+    }).mock.calls[0]!;
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body["matches"]).toEqual([]);
+    expect(body["status"]).toBe("clear");
+    // vex_tenant_id + screen_id are required on the empty-matches
+    // path too — they're the dedupe key, not a per-match attribute.
+    expect(body["vex_tenant_id"]).toBe("01HSEEDWRK0000000000000001");
+    expect(body["screen_id"]).toBe("22222222-2222-4222-8222-222222222222");
+  });
+
+  it("shareOrgSanctionsScreen stays disabled-safe when procur isn't configured", async () => {
+    const c = createProcurClient({
+      baseUrl: null,
+      apiToken: null,
+      log: silentLog(),
+    });
+    const result = await c.shareOrgSanctionsScreen({
+      entitySlug: "x",
+      vexTenantId: "tenant-x",
+      screenId: "33333333-3333-4333-8333-333333333333",
+      legalName: "X",
+      status: "clear",
+      sourcesChecked: ["us_csl"],
+      matches: [],
+      screenedAt: "2026-05-01T03:00:00.000Z",
+    });
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+  });
 });
 
 describe("buildProcurQueryHash", () => {

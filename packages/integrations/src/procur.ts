@@ -323,6 +323,75 @@ export interface ProcurClient {
     name: string;
     fields: ContactEnrichmentFields;
   }): Promise<ProcurResult<ContactEnrichmentShareResult>>;
+
+  /**
+   * Push a vex sanctions-screening verdict back to procur. Closes the
+   * loop on per-org compliance: when vex's OFACScreeningAgent runs
+   * against a procur-sourced organisation, we share the verdict so
+   * procur's compliance graph stays current and other tenants benefit
+   * from the cross-list coverage we ship.
+   *
+   * Each call records ONE discrete screen event. Procur appends one
+   * row per (vex_tenant_id, screen_id); the unique index dedupes 5xx
+   * retries. Multi-tenant displays surface the union per (source_list)
+   * so reviewers see cross-tenant disagreement when it exists.
+   *
+   * Privacy posture (intentionally narrow):
+   *
+   *   SHARED on every screen of a procur org:
+   *     - vexTenantId: stable opaque id for this vex workspace.
+   *       Procur stores it as text and never derefs into our user
+   *       model — lets them attribute a screen to "vex tenant A"
+   *       without learning anything else about the tenant.
+   *     - screenId: UUIDv4 generated vex-side per-screen. Procur
+   *       dedupes on (vex_tenant_id, screen_id) so retries are safe.
+   *     - status: "clear" | "potential_match" | "confirmed_match"
+   *     - sources_checked: which lists ran (e.g. ["us_csl", "eu",
+   *       "uk_ofsi"]). Lets procur surface "vex screened against the
+   *       EU list 2h ago" as freshness signal.
+   *     - matches[] (empty for clear): per-hit { source_list, sdn_uid,
+   *       programs, confidence_band }. All public-list metadata —
+   *       no operator decisions, no raw scores, no matched-name
+   *       strings (could leak our normalisation / aliases).
+   *     - confidence_band: "high_confidence" (≥0.95) | "fuzzy_review"
+   *       (0.85–0.95). Banded so procur's reviewers don't anchor on
+   *       vex's specific Jaro-Winkler output.
+   *
+   *   NOT SHARED:
+   *     - cleared_by_operator status — that's a tenant-specific
+   *       judgement; procur's own reviewers make their own call on
+   *       the underlying objective match.
+   *     - The reviewer who cleared, or the reason they wrote.
+   *     - Raw similarity scores.
+   *     - Matched name strings or alias permutations.
+   *     - Sub-threshold (<0.85) probable-cause hits — already
+   *       filtered out by the agent.
+   *
+   * Procur is expected to:
+   *   - Store the row append-only, keyed on (vex_tenant_id, screen_id).
+   *   - Surface latest-wins per (source_list) on /entities/{slug}, with
+   *     full per-tenant breakdown available on demand.
+   *   - Stamp `source: "vex"` so operators can audit / promote
+   *     suggestions.
+   *   - Return 200 on accepted, 4xx if the entity isn't recognised.
+   *
+   * Vex side: only fires when (a) the org has `external_keys.procur`
+   * set, (b) procur is enabled, (c) the screen produced a verdict
+   * other than `cleared_by_operator` (skipped per posture above).
+   */
+  shareOrgSanctionsScreen(args: {
+    /** Procur's own slug for the entity. */
+    entitySlug: string;
+    /** Stable opaque id for the vex workspace running this screen. */
+    vexTenantId: string;
+    /** UUIDv4 generated per-screen, vex-side. Procur dedupes on (vexTenantId, screenId). */
+    screenId: string;
+    legalName: string;
+    status: "clear" | "potential_match" | "confirmed_match";
+    sourcesChecked: string[];
+    matches: SanctionsShareMatch[];
+    screenedAt: string;
+  }): Promise<ProcurResult<SanctionsShareResult>>;
 }
 
 export interface ContactEnrichmentField {
@@ -340,6 +409,39 @@ export interface ContactEnrichmentFields {
 
 export interface ContactEnrichmentShareResult {
   contactId: string;
+  status: "created" | "updated" | "noop";
+}
+
+/**
+ * One match row in a sanctions-screening share. Public-list metadata
+ * only — see `shareOrgSanctionsStatus` docstring for the privacy
+ * posture (no raw scores, no matched-name strings, no operator
+ * decisions).
+ */
+export interface SanctionsShareMatch {
+  /**
+   * Which list the entry came from. Mirrors `OfacMatchRecord.sourceList`
+   * — `SDN`, `EL`, `DPL`, `UVL`, `MEU`, `DTC`, `ISN`, `CAP`, `NS-PLC`,
+   * `SSI`, `FSE` (US CSL), `EU`, `UK_OFSI`, or `OTHER`.
+   */
+  sourceList: string;
+  /** Public unique id of the listing (OFAC SDN UID, EU logicalId, OFSI Group ID, …). */
+  sdnUid: string;
+  /** Sanction programmes the listing carries (public). */
+  programs: string[];
+  /** Banded so procur reviewers don't anchor on vex's raw similarity score. */
+  confidenceBand: "high_confidence" | "fuzzy_review";
+  /** individual | entity | vessel | aircraft. */
+  sdnType: string;
+}
+
+export interface SanctionsShareResult {
+  /**
+   * Echoes the `screenId` we sent (UUIDv4). Procur stores it on its
+   * `entity_sanctions_screens` row as the dedupe key alongside
+   * `vex_tenant_id`; the response confirms the row landed.
+   */
+  screenId: string;
   status: "created" | "updated" | "noop";
 }
 
@@ -553,6 +655,26 @@ export function createProcurClient(config: ProcurClientConfig): ProcurClient {
         fields: serializeFields(args.fields),
         source: "vex",
         enriched_at: new Date().toISOString(),
+      });
+    },
+
+    async shareOrgSanctionsScreen(args) {
+      const path = `/intelligence/entity/${encodeURIComponent(args.entitySlug)}/sanctions-screen`;
+      return call<SanctionsShareResult>("POST", path, {
+        vex_tenant_id: args.vexTenantId,
+        screen_id: args.screenId,
+        legal_name: args.legalName,
+        status: args.status,
+        sources_checked: args.sourcesChecked,
+        matches: args.matches.map((m) => ({
+          source_list: m.sourceList,
+          sdn_uid: m.sdnUid,
+          programs: m.programs,
+          confidence_band: m.confidenceBand,
+          sdn_type: m.sdnType,
+        })),
+        screened_at: args.screenedAt,
+        source: "vex",
       });
     },
   };
