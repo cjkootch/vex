@@ -17,6 +17,7 @@ import type {
   OpenAIAdapter,
   ProcurClient,
   ProposedAction,
+  SupplierAnalysisResult,
   TavilyClient,
   ToolDefinition,
   ToolRunner,
@@ -829,7 +830,7 @@ function manifestFallbackText(): string {
  * operator to pick the right entity or fall back gracefully.
  */
 export function shapeProcurSupplierResult(
-  data: import("@vex/integrations").SupplierAnalysisResult,
+  data: SupplierAnalysisResult,
 ): Record<string, unknown> {
   if (data.kind === "not_found") {
     return {
