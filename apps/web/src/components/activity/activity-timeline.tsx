@@ -164,6 +164,7 @@ const VERB_LABELS: Record<string, string> = {
   "sms.received": "SMS received",
   "whatsapp.sent": "WhatsApp sent",
   "whatsapp.received": "WhatsApp received",
+  "call.completed": "Call completed",
   "deal.milestone.bis_license_issued": "BIS licence issued",
   "deal.milestone.ofac_cleared": "OFAC cleared",
   "deal.milestone.contract_signed": "Contract signed",
@@ -227,6 +228,45 @@ function renderMetadata(event: ActivityEvent) {
     }
   }
 
+  // Voice call rows synthesised from the activities table carry the
+  // duration + an `activity_id` we can point a recording link at, plus
+  // the recording storage key on `transcript_ref` (only set once the
+  // post-call workflow uploads the MP3 to S3). Show duration always,
+  // recording link only when we have one to play.
+  if (event.verb === "call.completed") {
+    const durationSec =
+      typeof md["duration_seconds"] === "number"
+        ? (md["duration_seconds"] as number)
+        : null;
+    const activityId = stringField(md, "activity_id");
+    const transcriptRef = stringField(md, "transcript_ref");
+    const hasRecording =
+      !!transcriptRef && transcriptRef.startsWith("recordings/");
+    const summary = stringField(md, "summary_id");
+    const bits: string[] = [];
+    if (durationSec !== null) bits.push(formatCallDuration(durationSec));
+    if (summary) bits.push(`summary ${summary}`);
+    return (
+      <div className="mt-1 flex flex-col gap-1 text-xs text-white/70">
+        {bits.length > 0 && (
+          <div className="text-white/60">{bits.join(" · ")}</div>
+        )}
+        {hasRecording && activityId && (
+          <audio
+            data-testid="timeline-call-recording"
+            controls
+            preload="none"
+            className="w-full max-w-md"
+            src={`/api/calls/activities/${encodeURIComponent(activityId)}/recording`}
+          >
+            Listen to the recording at{" "}
+            <code>/api/calls/activities/{activityId}/recording</code>.
+          </audio>
+        )}
+      </div>
+    );
+  }
+
   const bits: string[] = [];
   const from = md["from_status"];
   const to = md["to_status"];
@@ -261,4 +301,11 @@ function stringField(
 ): string | null {
   const v = md[key];
   return typeof v === "string" && v.trim().length > 0 ? v : null;
+}
+
+function formatCallDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}m ${s.toString().padStart(2, "0")}s`;
 }

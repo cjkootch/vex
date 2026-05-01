@@ -97,6 +97,16 @@ export interface CallStatusResult {
      * (now - startedAt) while the durationSeconds column is still null.
      */
     startedAt: string;
+    /**
+     * Whether a playable recording exists for this activity. True
+     * when the row carries either a Twilio recording URL on
+     * `metadata.recording_url` (legacy demo path) or an S3 storage
+     * key on `transcript_ref` (the prod path stamps the recording's
+     * `recordings/{tenant}/{call_sid}.mp3` key there). The detail UI
+     * gates an `<audio>` player on this flag and points it at
+     * `/api/calls/activities/:id/recording`.
+     */
+    hasRecording: boolean;
   } | null;
   /**
    * Best-effort contact display — the approval's proposed_payload
@@ -334,6 +344,7 @@ export class CallsService {
             durationSeconds: activity.durationSeconds,
             transcriptRef: activity.transcriptRef,
             startedAt: activity.occurredAt.toISOString(),
+            hasRecording: hasPlayableRecording(activity),
           }
         : null;
 
@@ -704,6 +715,18 @@ export class CallsService {
     );
     if (!row) throw new NotFoundException();
     const meta = (row.metadata ?? {}) as Record<string, unknown>;
+    // Prod path: OutboundCallWorkflow → fetchAndStoreRecording uploads
+    // the MP3 to S3 under `recordings/{tenant}/{call_sid}.mp3` and
+    // stamps that key onto `transcript_ref`. We pull straight from S3
+    // — no Twilio round-trip — when that key is present.
+    const transcriptRef = row.transcriptRef ?? "";
+    if (transcriptRef.startsWith("recordings/")) {
+      const obj = await this.s3.getBuffer(transcriptRef);
+      return obj.body;
+    }
+    // Legacy demo path: the demo-recording webhook stamps a Twilio
+    // media URL onto `metadata.recording_url`; we fetch with our
+    // basic-auth creds and stream it back.
     const recordingUrl =
       typeof meta["recording_url"] === "string" ? meta["recording_url"] : null;
     if (!recordingUrl) throw new NotFoundException("no recording attached");
@@ -1188,6 +1211,36 @@ export class CallsService {
  * activity metadata mirror the webhook writes into — the activities
  * table is the canonical "is the call still live" signal in apps/api.
  */
+/**
+ * Whether the voice_call activity carries a playable recording. The
+ * detail UI gates the audio player on this so the row stays clean
+ * while a call is still in flight (no recording yet) or for the
+ * occasional call.completed.no_recording case.
+ *
+ *   - Legacy demo path: Twilio's recording webhook stamps the media
+ *     URL onto `metadata.recording_url`; the legacy fetchRecordingAudio
+ *     branch fetches it with our basic-auth creds.
+ *   - Prod path: OutboundCallWorkflow → fetchAndStoreRecording uploads
+ *     the MP3 to S3 under `recordings/{tenant}/{call_sid}.mp3` and
+ *     stamps that key onto `transcript_ref`.
+ *
+ * Either signal is enough. The shape check on `transcript_ref` keeps
+ * a transcript-only ref (`transcripts/...`) from being mis-flagged.
+ */
+function hasPlayableRecording(activity: {
+  metadata: Record<string, unknown>;
+  transcriptRef: string | null;
+}): boolean {
+  const meta = activity.metadata ?? {};
+  if (
+    typeof meta["recording_url"] === "string" &&
+    (meta["recording_url"] as string).length > 0
+  ) {
+    return true;
+  }
+  return (activity.transcriptRef ?? "").startsWith("recordings/");
+}
+
 function isTerminalCallStatus(activity: { metadata: Record<string, unknown>; result: string | null }): boolean {
   const status =
     (typeof activity.metadata["status"] === "string"
