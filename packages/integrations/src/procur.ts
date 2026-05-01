@@ -331,9 +331,20 @@ export interface ProcurClient {
    * procur's compliance graph stays current and other tenants benefit
    * from the cross-list coverage we ship.
    *
+   * Each call records ONE discrete screen event. Procur appends one
+   * row per (vex_tenant_id, screen_id); the unique index dedupes 5xx
+   * retries. Multi-tenant displays surface the union per (source_list)
+   * so reviewers see cross-tenant disagreement when it exists.
+   *
    * Privacy posture (intentionally narrow):
    *
    *   SHARED on every screen of a procur org:
+   *     - vexTenantId: stable opaque id for this vex workspace.
+   *       Procur stores it as text and never derefs into our user
+   *       model — lets them attribute a screen to "vex tenant A"
+   *       without learning anything else about the tenant.
+   *     - screenId: UUIDv4 generated vex-side per-screen. Procur
+   *       dedupes on (vex_tenant_id, screen_id) so retries are safe.
    *     - status: "clear" | "potential_match" | "confirmed_match"
    *     - sources_checked: which lists ran (e.g. ["us_csl", "eu",
    *       "uk_ofsi"]). Lets procur surface "vex screened against the
@@ -357,9 +368,9 @@ export interface ProcurClient {
    *       filtered out by the agent.
    *
    * Procur is expected to:
-   *   - Treat the push as one tenant's screening pass; multiple
-   *     vex tenants screening the same org should converge rather
-   *     than overwrite.
+   *   - Store the row append-only, keyed on (vex_tenant_id, screen_id).
+   *   - Surface latest-wins per (source_list) on /entities/{slug}, with
+   *     full per-tenant breakdown available on demand.
    *   - Stamp `source: "vex"` so operators can audit / promote
    *     suggestions.
    *   - Return 200 on accepted, 4xx if the entity isn't recognised.
@@ -368,8 +379,13 @@ export interface ProcurClient {
    * set, (b) procur is enabled, (c) the screen produced a verdict
    * other than `cleared_by_operator` (skipped per posture above).
    */
-  shareOrgSanctionsStatus(args: {
+  shareOrgSanctionsScreen(args: {
+    /** Procur's own slug for the entity. */
     entitySlug: string;
+    /** Stable opaque id for the vex workspace running this screen. */
+    vexTenantId: string;
+    /** UUIDv4 generated per-screen, vex-side. Procur dedupes on (vexTenantId, screenId). */
+    screenId: string;
     legalName: string;
     status: "clear" | "potential_match" | "confirmed_match";
     sourcesChecked: string[];
@@ -420,8 +436,12 @@ export interface SanctionsShareMatch {
 }
 
 export interface SanctionsShareResult {
-  /** Procur's own screen-record id. */
-  recordId: string;
+  /**
+   * Echoes the `screenId` we sent (UUIDv4). Procur stores it on its
+   * `entity_sanctions_screens` row as the dedupe key alongside
+   * `vex_tenant_id`; the response confirms the row landed.
+   */
+  screenId: string;
   status: "created" | "updated" | "noop";
 }
 
@@ -638,9 +658,11 @@ export function createProcurClient(config: ProcurClientConfig): ProcurClient {
       });
     },
 
-    async shareOrgSanctionsStatus(args) {
-      const path = `/intelligence/entity/${encodeURIComponent(args.entitySlug)}/sanctions-status`;
+    async shareOrgSanctionsScreen(args) {
+      const path = `/intelligence/entity/${encodeURIComponent(args.entitySlug)}/sanctions-screen`;
       return call<SanctionsShareResult>("POST", path, {
+        vex_tenant_id: args.vexTenantId,
+        screen_id: args.screenId,
         legal_name: args.legalName,
         status: args.status,
         sources_checked: args.sourcesChecked,

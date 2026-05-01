@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   OfacScreenRepository,
   SignalRepository,
@@ -292,10 +293,16 @@ export class OFACScreeningAgent implements IAgent {
    * knows about (`external_keys.procur` set), only when procur is
    * configured, and a failure here never fails the screen run.
    *
-   * Privacy posture is documented on `ProcurClient.shareOrgSanctionsStatus`.
+   * Privacy posture is documented on `ProcurClient.shareOrgSanctionsScreen`.
    * Short version: share status + public list metadata + banded
-   * confidence. Don't share raw scores, matched-name strings, or
-   * operator-cleared decisions.
+   * confidence + an opaque `vex_tenant_id` so procur can attribute
+   * cross-tenant disagreement. Don't share raw scores, matched-name
+   * strings, or operator-cleared decisions.
+   *
+   * Each call generates a fresh UUIDv4 `screenId` so procur dedupes
+   * on `(vex_tenant_id, screen_id)` for retry safety. We don't need
+   * the screen id on our side post-call — procur stores it; vex's
+   * own audit row is keyed by `id` in the `ofac_screens` table.
    */
   private async maybeShareSanctionsToProcur(
     ctx: AgentContext,
@@ -329,8 +336,10 @@ export class OFACScreeningAgent implements IAgent {
     });
 
     try {
-      await ctx.procur.shareOrgSanctionsStatus({
+      await ctx.procur.shareOrgSanctionsScreen({
         entitySlug: procurSlug,
+        vexTenantId: ctx.tenantId,
+        screenId: randomUUID(),
         legalName: org.legalName,
         status: status as "clear" | "potential_match" | "confirmed_match",
         sourcesChecked,
