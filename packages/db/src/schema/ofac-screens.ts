@@ -73,13 +73,23 @@ export interface OfacMatchRecord {
   /** individual | entity | vessel | aircraft. */
   sdnType: string;
   /**
-   * Which list the entry came from when the screen ran against the
-   * Consolidated Screening List (CSL): `SDN`, `EL` (BIS Entity List),
-   * `DPL`, `UVL`, `DTC`, `ISN`, `CAP`, `MEU`, `NS-PLC`, `SSI`, `FSE`,
-   * or `OTHER`. Optional for backward compatibility — historical rows
-   * written before CSL ingestion landed are implicitly `SDN` (the
-   * legacy adapter's only source). The reviewer UI surfaces this as a
-   * chip on each match row so triage stays list-aware.
+   * Which list the entry came from. The agent can run against
+   * multiple sources in a single pass (US CSL + EU + UK OFSI) and
+   * stamps each match with its origin so reviewers triage them
+   * differently — a BIS Entity List hit and a UK regime hit warrant
+   * very different escalation paths.
+   *
+   * US CSL codes: `SDN`, `NS-PLC`, `SSI`, `FSE` (Treasury);
+   *   `DPL`, `EL`, `UVL`, `MEU` (Commerce / BIS); `DTC`, `ISN`, `CAP`
+   *   (State).
+   * EU: `EU` (consolidated financial sanctions list).
+   * UK: `UK_OFSI` (Office of Financial Sanctions Implementation).
+   * Unknown source from a known adapter: `OTHER`.
+   *
+   * Optional for backward compatibility — historical rows written
+   * before CSL ingestion landed are implicitly `SDN` (the legacy
+   * adapter's only source). The reviewer UI surfaces this as a chip
+   * on each match row so triage stays list-aware.
    */
   sourceList?: string;
 }

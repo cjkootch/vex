@@ -203,6 +203,8 @@ export function OfacTab() {
         </div>
       </section>
 
+      <SanctionsSourcesPanel onPatchError={(msg) => setError(msg)} />
+
       <section>
         <header className="mb-2 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-white">
@@ -379,6 +381,8 @@ function SourceListChip({ source }: { source: string | undefined }) {
     DTC: "bg-bad/20 text-bad",
     ISN: "bg-bad/20 text-bad",
     CAP: "bg-warn/20 text-warn",
+    EU: "bg-bad/20 text-bad",
+    UK_OFSI: "bg-bad/20 text-bad",
     OTHER: "bg-muted/60 text-white/60",
   };
   return (
@@ -405,5 +409,164 @@ const SOURCE_LIST_TOOLTIPS: Record<string, string> = {
   DTC: "State ITAR Debarred parties",
   ISN: "State Nonproliferation Sanctions",
   CAP: "State CAATSA section 231",
+  EU: "European Council Consolidated Financial Sanctions",
+  UK_OFSI:
+    "UK Office of Financial Sanctions Implementation — consolidated targets",
   OTHER: "Source list unrecognised — see raw audit row",
 };
+
+type SanctionsSourceId = "us_csl" | "eu" | "uk_ofsi";
+
+interface SourceOption {
+  id: SanctionsSourceId;
+  label: string;
+  description: string;
+}
+
+const SOURCE_OPTIONS: SourceOption[] = [
+  {
+    id: "us_csl",
+    label: "US Trade.gov CSL",
+    description:
+      "Treasury (SDN/NS-PLC/SSI/FSE) + Commerce/BIS (DPL/EL/UVL/MEU) + State (DTC/ISN/CAP). Default.",
+  },
+  {
+    id: "eu",
+    label: "EU Consolidated",
+    description:
+      "European Council Consolidated Financial Sanctions list. Required for EU counterparties.",
+  },
+  {
+    id: "uk_ofsi",
+    label: "UK OFSI",
+    description:
+      "UK Office of Financial Sanctions Implementation. Required for UK counterparties.",
+  },
+];
+
+/**
+ * Workspace-level toggle for which sanctions lists the screening
+ * agent runs against. Default `["us_csl"]`. Persists via
+ * PATCH /api/admin/settings.
+ *
+ * UX: optimistic — checkbox flips immediately, PATCH fires in the
+ * background, revert + parent error on failure. Operators flipping
+ * a list during a busy day shouldn't have to wait on the round-trip.
+ */
+function SanctionsSourcesPanel({
+  onPatchError,
+}: {
+  onPatchError: (msg: string) => void;
+}) {
+  const [enabled, setEnabled] = useState<SanctionsSourceId[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState<SanctionsSourceId | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchWithRetry("/api/admin/settings", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) throw new Error(`settings ${res.status}`);
+        const body = (await res.json()) as {
+          settings: { enabled_sanctions_lists?: SanctionsSourceId[] };
+        };
+        if (cancelled) return;
+        setEnabled(body.settings.enabled_sanctions_lists ?? ["us_csl"]);
+        setLoading(false);
+      } catch (err) {
+        if (cancelled) return;
+        onPatchError((err as Error).message);
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [onPatchError]);
+
+  async function toggle(id: SanctionsSourceId): Promise<void> {
+    if (!enabled || savingId) return;
+    const next = enabled.includes(id)
+      ? enabled.filter((s) => s !== id)
+      : [...enabled, id];
+    // Block clearing all sources — the OFAC agent gates on at least
+    // one being enabled. The empty-list path on the server reverts to
+    // default ["us_csl"], but flipping every box off in the UI without
+    // feedback is confusing; refuse instead.
+    if (next.length === 0) {
+      onPatchError(
+        "At least one sanctions list must be enabled. Disabling all is not supported.",
+      );
+      return;
+    }
+    const previous = enabled;
+    setEnabled(next);
+    setSavingId(id);
+    try {
+      const res = await fetchWithRetry("/api/admin/settings", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ enabled_sanctions_lists: next }),
+      });
+      if (!res.ok) {
+        setEnabled(previous);
+        onPatchError(`save failed: ${res.status}`);
+      }
+    } catch (err) {
+      setEnabled(previous);
+      onPatchError((err as Error).message);
+    } finally {
+      setSavingId(null);
+    }
+  }
+
+  return (
+    <section className="rounded-md border border-line bg-muted/40 p-4 text-sm">
+      <header className="mb-3">
+        <h2 className="text-sm font-semibold text-white">
+          Sanctions sources
+        </h2>
+        <p className="mt-1 text-xs text-white/60">
+          Which lists the screening agent runs against. Each enabled
+          list contributes its own match rows; reviewers see a chip on
+          every row indicating the source. Default is US CSL only.
+        </p>
+      </header>
+      {loading ? (
+        <p className="text-xs text-white/40">Loading…</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {SOURCE_OPTIONS.map((opt) => {
+            const checked = enabled?.includes(opt.id) ?? false;
+            return (
+              <li key={opt.id} className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  id={`sanctions-${opt.id}`}
+                  checked={checked}
+                  disabled={savingId !== null}
+                  onChange={() => void toggle(opt.id)}
+                  className="mt-0.5 h-4 w-4 cursor-pointer accent-accent disabled:opacity-40"
+                />
+                <label
+                  htmlFor={`sanctions-${opt.id}`}
+                  className="cursor-pointer flex-1"
+                >
+                  <span className="font-medium text-white">{opt.label}</span>
+                  <span className="ml-2 text-xs text-white/60">
+                    {opt.description}
+                  </span>
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
