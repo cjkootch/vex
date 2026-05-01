@@ -244,6 +244,102 @@ describe("createProcurClient", () => {
       /supplierId or supplierName required/,
     );
   });
+
+  it("shareOrgSanctionsStatus posts a snake-cased payload to the per-entity path", async () => {
+    const fetchImpl = makeFetch(200, {
+      recordId: "proc-rec-1",
+      status: "created",
+    });
+    const c = createProcurClient({
+      ...BASE_CONFIG,
+      fetchImpl,
+      log: silentLog(),
+    });
+    const result = await c.shareOrgSanctionsStatus({
+      entitySlug: "armasuisse",
+      legalName: "Armasuisse",
+      status: "potential_match",
+      sourcesChecked: ["us_csl", "eu"],
+      matches: [
+        {
+          sourceList: "EU",
+          sdnUid: "EU-RU-1234",
+          programs: ["RUS"],
+          confidenceBand: "high_confidence",
+          sdnType: "entity",
+        },
+      ],
+      screenedAt: "2026-05-01T03:00:00.000Z",
+    });
+    expect(result.ok).toBe(true);
+
+    const [url, init] = (fetchImpl as unknown as {
+      mock: { calls: [string, RequestInit][] };
+    }).mock.calls[0]!;
+    expect(url).toBe(
+      "https://procur.example.com/api/intelligence/entity/armasuisse/sanctions-status",
+    );
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      legal_name: "Armasuisse",
+      status: "potential_match",
+      sources_checked: ["us_csl", "eu"],
+      screened_at: "2026-05-01T03:00:00.000Z",
+      source: "vex",
+      matches: [
+        {
+          source_list: "EU",
+          sdn_uid: "EU-RU-1234",
+          programs: ["RUS"],
+          confidence_band: "high_confidence",
+          sdn_type: "entity",
+        },
+      ],
+    });
+  });
+
+  it("shareOrgSanctionsStatus accepts the empty-matches case (clear screen)", async () => {
+    const fetchImpl = makeFetch(200, {
+      recordId: "proc-rec-2",
+      status: "created",
+    });
+    const c = createProcurClient({
+      ...BASE_CONFIG,
+      fetchImpl,
+      log: silentLog(),
+    });
+    await c.shareOrgSanctionsStatus({
+      entitySlug: "vector-trade-capital",
+      legalName: "Vector Trade Capital",
+      status: "clear",
+      sourcesChecked: ["us_csl", "eu", "uk_ofsi"],
+      matches: [],
+      screenedAt: "2026-05-01T03:00:00.000Z",
+    });
+    const [, init] = (fetchImpl as unknown as {
+      mock: { calls: [string, RequestInit][] };
+    }).mock.calls[0]!;
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body["matches"]).toEqual([]);
+    expect(body["status"]).toBe("clear");
+  });
+
+  it("shareOrgSanctionsStatus stays disabled-safe when procur isn't configured", async () => {
+    const c = createProcurClient({
+      baseUrl: null,
+      apiToken: null,
+      log: silentLog(),
+    });
+    const result = await c.shareOrgSanctionsStatus({
+      entitySlug: "x",
+      legalName: "X",
+      status: "clear",
+      sourcesChecked: ["us_csl"],
+      matches: [],
+      screenedAt: "2026-05-01T03:00:00.000Z",
+    });
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+  });
 });
 
 describe("buildProcurQueryHash", () => {
