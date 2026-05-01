@@ -854,6 +854,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyContactEnrich(tx, deps, workspace_id, approval);
           return;
         }
+        if (approval.actionType === "sanctions.screen") {
+          await applySanctionsScreen(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "deal.set_broker") {
           await applyDealSetBroker(tx, deps, workspace_id, approval);
           return;
@@ -2257,6 +2261,9 @@ async function dispatchBundleItem(
     case "contact.enrich":
       await applyContactEnrich(tx, deps, tenantId, child);
       return true;
+    case "sanctions.screen":
+      await applySanctionsScreen(tx, deps, tenantId, child);
+      return true;
     case "deal.set_broker":
       await applyDealSetBroker(tx, deps, tenantId, child);
       return true;
@@ -2786,6 +2793,89 @@ async function applyContactEnrich(
     tx,
     approval.id,
     `contact_enrichment:${contactId}`,
+  );
+}
+
+/**
+ * Chat-initiated OFAC re-screen. Operator asked Vex to take a fresh
+ * sanctions pass at one organisation ("re-screen Vitol", "OFAC check
+ * on Acme"); the agent emitted a `sanctions.screen` T1 action which
+ * auto-approved. We enqueue an `ofac_screening` agent job scoped to
+ * the single org. The agent then runs against whatever lists the
+ * workspace has enabled (us_csl / eu / uk_ofsi), persists the
+ * verdict to ofac_screens, fires the critical signal + T3
+ * `ofac.hold` action ONLY when a match lands above threshold, and
+ * shares the verdict back to procur (#293) for orgs with
+ * external_keys.procur set.
+ *
+ * Per-approval BullMQ dedupe key collapses double-tapped
+ * suggestions; re-screening the same org in a subsequent chat turn
+ * uses a fresh approval id and runs as expected.
+ */
+async function applySanctionsScreen(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | { organizationId?: string; rationale?: string }
+    | null;
+  const orgId = payload?.organizationId;
+  if (!orgId) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "sanctions.screen",
+      "missing organizationId",
+    );
+    return;
+  }
+  const org = await deps.organizations.findById(tx, orgId);
+  if (!org) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "sanctions.screen",
+      `organization ${orgId} not found`,
+    );
+    return;
+  }
+  await addAgentJob(
+    deps.agentsQueue,
+    {
+      kind: "ofac_screening",
+      workspace_id: tenantId,
+      input: {
+        organization_id: orgId,
+      },
+    },
+    `ofac_screening:rescreen:${approval.id}`,
+  );
+  await deps.events.insertIfNotExists(tx, tenantId, {
+    verb: "organization.rescreen_requested",
+    subjectType: "organization",
+    subjectId: orgId,
+    actorType: "system",
+    actorId: "approval_executor",
+    objectType: "approval",
+    objectId: approval.id,
+    occurredAt: new Date(),
+    idempotencyKey: `approval.executor:${approval.id}`,
+    metadata: {
+      action_type: "sanctions.screen",
+      org_id: orgId,
+      ...(payload?.rationale ? { rationale: payload.rationale } : {}),
+    },
+  });
+  await deps.approvals.markApplied(
+    tx,
+    approval.id,
+    `ofac_screening:${orgId}`,
   );
 }
 
