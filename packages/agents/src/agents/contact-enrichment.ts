@@ -9,6 +9,16 @@ import type { AgentContext, AgentOutput, IAgent } from "./types.js";
 
 export interface ContactEnrichmentAgentInput {
   contactId: string;
+  /**
+   * When true, skip the "already enriched" idempotency guard so the
+   * agent always hits Tavily + Anthropic. Used by the chat-driven
+   * `contact.enrich` re-enrichment flow — the operator explicitly
+   * asked for a fresh pass so the auto-skip on rows that already
+   * have an email + primary language would defeat the request.
+   * Default false; ingest-driven runs leave it unset so re-clicks
+   * stay free.
+   */
+  force?: boolean;
 }
 
 interface ExtractedField {
@@ -80,7 +90,15 @@ export class ContactEnrichmentAgent implements IAgent {
     // gained `primary_language` in v1.1; existing rows that have an
     // email but no language should still get a one-shot pass to fill
     // it in. Once both fields are present we're done.
-    if ((contact.emails ?? []).length > 0 && contact.primaryLanguage) {
+    //
+    // `input.force` bypasses the guard for chat-driven re-enrichment
+    // (operator explicitly asked for a fresh pass). Ingest-driven
+    // runs leave force unset so re-clicks stay free.
+    if (
+      !this.input.force &&
+      (contact.emails ?? []).length > 0 &&
+      contact.primaryLanguage
+    ) {
       return {
         costUsd: 0,
         outputRefs: { skipped: "already_enriched", contact_id: contact.id },

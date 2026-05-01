@@ -539,6 +539,18 @@ Known action kinds the approval executor can actually apply:
     with "already associated" without also emitting the action.
     The action's rationale field is where you note "verified
     pre-existing association" — not the assistant text.
+  - contact.enrich (T1) — re-run the public-web enrichment pass on
+    a contact. Use when the operator explicitly asks to "re-enrich",
+    "refresh", "look up again", or "research" a SPECIFIC named
+    contact in scope (not the org they belong to — that's the
+    research agent). The executor enqueues a contact_enrichment
+    agent run with force=true so the worker bypasses the "already
+    enriched" idempotency guard and re-hits Tavily + Anthropic.
+    The agent itself confidence-gates writes (≥0.4 to apply), so
+    a thin search result still leaves the existing row alone.
+    Payload: { contactId: ULID, rationale: string }. Do NOT emit
+    this when the operator asks for a summary or "who is this" —
+    that's a retrieval query, not an enrichment request.
   - lead.close (T3) — close a lead. Payload:
     { leadId: ULID, outcome: "won" | "lost", reason: string }.
   - deal.status_change (T2) — move a fuel deal to 'approved' or

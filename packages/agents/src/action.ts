@@ -219,6 +219,21 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     targetContactId: zUlid,
     rationale: z.string().min(1).max(1000),
   }),
+  // Chat-initiated contact re-enrichment. Operator says "re-enrich
+  // Amber" → the agent emits this action; the executor enqueues a
+  // `contact_enrichment` job with `force=true` so the worker bypasses
+  // the "already enriched" idempotency guard and re-runs Tavily +
+  // Anthropic against the public web. T1 because the side effect is
+  // the same kind of automated contact-row patch we already do on
+  // ingest — operator intent is explicit, the writes are confidence-
+  // gated by the agent itself (≥0.4 to apply), and a wrong field is
+  // editable from the contact page.
+  z.object({
+    kind: z.literal("contact.enrich"),
+    tier: z.literal(ApprovalTier.T1),
+    contactId: zUlid,
+    rationale: z.string().min(1).max(1000),
+  }),
   // Chat-initiated contact↔org link. Idempotent additive write — the
   // executor calls memberships.ensureMembership keyed on
   // (contact_id, org_id) so re-runs don't duplicate. T1 because the

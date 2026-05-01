@@ -171,6 +171,10 @@ function suggestionsFor(scope: AutonomyScope): AskSuggestion[] {
           ask: `Summarise ${scope.label}: role, company, last touchpoint, open deals.`,
         },
         {
+          label: "Re-enrich from web",
+          ask: `Re-enrich ${scope.label} from the public web — refresh title, email, phone, LinkedIn URL, and primary language from current sources.`,
+        },
+        {
           label: "Call them (AI mode)",
           ask: `Have Vex call ${scope.label} to check in on their open business with us.`,
         },
