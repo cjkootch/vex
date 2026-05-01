@@ -22,6 +22,12 @@ interface OfacMatch {
   matchType: string;
   programs: string[];
   sdnType: string;
+  /**
+   * Which CSL list the entry came from (BIS Entity, OFAC SDN, etc).
+   * Optional for backward compatibility — historical rows written
+   * before CSL ingestion landed are implicitly OFAC SDN.
+   */
+  sourceList?: string;
 }
 
 interface OfacScreenRow {
@@ -314,7 +320,8 @@ function MatchList({ matches }: { matches: OfacMatch[] | unknown }) {
       <table className="w-full text-xs">
         <thead className="bg-muted/40 text-left text-[10px] uppercase tracking-wide text-white/50">
           <tr>
-            <th className="px-2 py-1">SDN UID</th>
+            <th className="px-2 py-1">List</th>
+            <th className="px-2 py-1">Entry ID</th>
             <th className="px-2 py-1">Name</th>
             <th className="px-2 py-1">Type</th>
             <th className="px-2 py-1">Programs</th>
@@ -327,6 +334,9 @@ function MatchList({ matches }: { matches: OfacMatch[] | unknown }) {
               key={`${m.sdnUid}:${m.matchedName}`}
               className="border-t border-line/60"
             >
+              <td className="px-2 py-1">
+                <SourceListChip source={m.sourceList} />
+              </td>
               <td className="px-2 py-1 font-mono text-[11px] text-white/60">
                 {m.sdnUid}
               </td>
@@ -345,3 +355,55 @@ function MatchList({ matches }: { matches: OfacMatch[] | unknown }) {
     </div>
   );
 }
+
+/**
+ * Source-list chip. Tints by trust posture so reviewers visually
+ * triage which lists routinely produce probable-cause noise (UVL,
+ * NS-PLC) vs which always require a closer look (SDN, EL, DPL).
+ *
+ * Historical rows before CSL ingestion shipped lack `sourceList`; we
+ * render them as "SDN" since that was the only list the legacy
+ * adapter ingested.
+ */
+function SourceListChip({ source }: { source: string | undefined }) {
+  const code = source ?? "SDN";
+  const palette: Record<string, string> = {
+    SDN: "bg-bad/20 text-bad",
+    "NS-PLC": "bg-warn/20 text-warn",
+    SSI: "bg-warn/20 text-warn",
+    FSE: "bg-bad/20 text-bad",
+    DPL: "bg-bad/20 text-bad",
+    EL: "bg-bad/20 text-bad",
+    UVL: "bg-warn/20 text-warn",
+    MEU: "bg-bad/20 text-bad",
+    DTC: "bg-bad/20 text-bad",
+    ISN: "bg-bad/20 text-bad",
+    CAP: "bg-warn/20 text-warn",
+    OTHER: "bg-muted/60 text-white/60",
+  };
+  return (
+    <span
+      className={`inline-block rounded px-1.5 py-0.5 font-mono text-[10px] ${
+        palette[code] ?? palette["OTHER"]
+      }`}
+      title={SOURCE_LIST_TOOLTIPS[code] ?? code}
+    >
+      {code}
+    </span>
+  );
+}
+
+const SOURCE_LIST_TOOLTIPS: Record<string, string> = {
+  SDN: "OFAC Specially Designated Nationals — Treasury",
+  "NS-PLC": "OFAC Non-SDN Palestinian Legislative Council — Treasury",
+  SSI: "OFAC Sectoral Sanctions Identifications — Treasury",
+  FSE: "OFAC Foreign Sanctions Evaders — Treasury",
+  DPL: "BIS Denied Persons List — Commerce",
+  EL: "BIS Entity List — Commerce",
+  UVL: "BIS Unverified List — Commerce (probable-cause-only signal)",
+  MEU: "BIS Military End User List — Commerce",
+  DTC: "State ITAR Debarred parties",
+  ISN: "State Nonproliferation Sanctions",
+  CAP: "State CAATSA section 231",
+  OTHER: "Source list unrecognised — see raw audit row",
+};

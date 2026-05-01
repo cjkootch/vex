@@ -72,6 +72,16 @@ export interface OfacMatchRecord {
   programs: string[];
   /** individual | entity | vessel | aircraft. */
   sdnType: string;
+  /**
+   * Which list the entry came from when the screen ran against the
+   * Consolidated Screening List (CSL): `SDN`, `EL` (BIS Entity List),
+   * `DPL`, `UVL`, `DTC`, `ISN`, `CAP`, `MEU`, `NS-PLC`, `SSI`, `FSE`,
+   * or `OTHER`. Optional for backward compatibility — historical rows
+   * written before CSL ingestion landed are implicitly `SDN` (the
+   * legacy adapter's only source). The reviewer UI surfaces this as a
+   * chip on each match row so triage stays list-aware.
+   */
+  sourceList?: string;
 }
 
 export type OfacScreen = typeof ofacScreens.$inferSelect;

@@ -6,12 +6,45 @@ import {
   type Organization,
 } from "@vex/db";
 import {
+  CSLAdapter,
   OFACSdnAdapter,
+  type CslEntry,
   type SdnEntry,
   type SdnScreenResult,
 } from "@vex/integrations";
 import type { ProposedAction } from "@vex/integrations";
 import type { AgentContext, AgentOutput, IAgent } from "./types.js";
+
+/**
+ * Sanctions-screening source selector. The agent runs against either
+ * the legacy OFAC SDN feed (single Treasury list, ~10k entries) or
+ * the trade.gov Consolidated Screening List (CSL, ~13 US lists,
+ * ~150k entries — adds BIS Entity / Denied Persons / Unverified,
+ * State DDTC, etc).
+ *
+ * Selected by env var `SCREENING_SOURCE` (`"ofac"` | `"csl"`).
+ * Default `"ofac"` so this PR is non-breaking; flip to `"csl"` once
+ * the pilot tenant has confirmed the broader list is correct.
+ *
+ * Per-workspace override (workspace.settings.feature_rollout.csl_screening)
+ * is a planned follow-up — would need the AgentContext to expose a
+ * `db` handle since WorkspaceRepository.findById opens its own
+ * transaction. For the single-tenant pilot the env var is enough.
+ */
+type ScreeningSource = "ofac" | "csl";
+
+/**
+ * Adapter shape both implementations satisfy. Lets the agent treat
+ * them identically.
+ */
+interface SanctionsAdapter {
+  getEntries(): Promise<SdnEntry[]>;
+  screen(
+    name: string,
+    entries: SdnEntry[],
+    threshold?: number,
+  ): SdnScreenResult[];
+}
 
 /**
  * OFAC SDN screening agent. Runs in two modes:
@@ -61,15 +94,29 @@ export class OFACScreeningAgent implements IAgent {
 
   constructor(
     private readonly input: OfacScreeningAgentInput = {},
-    private readonly adapter: OFACSdnAdapter = new OFACSdnAdapter(),
+    /**
+     * Optional explicit adapter override — used by tests. In
+     * production, leave unset and let the agent pick between
+     * OFACSdnAdapter and CSLAdapter at run() time based on the
+     * workspace flag + env (resolveScreeningSource).
+     */
+    private readonly adapterOverride?: SanctionsAdapter,
   ) {}
 
   async run(ctx: AgentContext): Promise<AgentOutput> {
-    // Pull the SDN list up front so every org in this run screens
+    // Pick the source (OFAC SDN vs CSL) from env. Test-injected
+    // adapters bypass the env entirely.
+    const adapter: SanctionsAdapter =
+      this.adapterOverride ??
+      (resolveScreeningSource() === "csl"
+        ? new CSLAdapter()
+        : new OFACSdnAdapter());
+
+    // Pull the source list up front so every org in this run screens
     // against the same snapshot. Logged entry count makes it obvious
     // when the list itself is empty (common failure mode: the
     // download path redirected to an error page).
-    const entries = await this.adapter.getEntries();
+    const entries = await adapter.getEntries();
     if (entries.length === 0) {
       return {
         costUsd: 0,
@@ -101,7 +148,7 @@ export class OFACScreeningAgent implements IAgent {
     const potentialMatchOrgs: string[] = [];
 
     for (const org of orgs) {
-      const matches = screenOrg(org, entries, this.adapter);
+      const matches = screenOrg(org, entries, adapter);
       const status = deriveStatus(matches);
       const highestScore = matches[0]?.score ?? 0;
 
@@ -238,7 +285,7 @@ async function loadSingleOrg(
 function screenOrg(
   org: Organization,
   entries: SdnEntry[],
-  adapter: OFACSdnAdapter,
+  adapter: SanctionsAdapter,
 ): SdnScreenResult[] {
   const seen = new Set<string>();
   const combined: SdnScreenResult[] = [];
@@ -270,6 +317,13 @@ function deriveStatus(matches: SdnScreenResult[]): OfacScreenStatus {
 }
 
 function toMatchRecord(r: SdnScreenResult): OfacMatchRecord {
+  // CSL entries carry a `sourceList` tag; OFAC SDN entries don't.
+  // Capture it when present so the reviewer UI can render a list-
+  // specific chip (BIS Entity List vs OFAC SDN, etc). Historical
+  // rows written before this field existed read as undefined and
+  // the UI treats those as legacy SDN.
+  const cslEntry = r.entry as Partial<CslEntry>;
+  const sourceList = cslEntry.sourceList;
   return {
     sdnUid: r.entry.uid,
     matchedName: r.matchedName,
@@ -277,7 +331,19 @@ function toMatchRecord(r: SdnScreenResult): OfacMatchRecord {
     matchType: r.matchType,
     programs: r.entry.programs,
     sdnType: r.entry.sdnType,
+    ...(sourceList ? { sourceList } : {}),
   };
+}
+
+/**
+ * Decide which sanctions source this run uses. Reads `SCREENING_SOURCE`
+ * env var; defaults to OFAC SDN so existing tenants keep today's
+ * behaviour until an operator deliberately opts in.
+ */
+function resolveScreeningSource(): ScreeningSource {
+  const envSource = process.env["SCREENING_SOURCE"]?.toLowerCase();
+  if (envSource === "csl") return "csl";
+  return "ofac";
 }
 
 /**
