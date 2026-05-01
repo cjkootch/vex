@@ -113,7 +113,13 @@ export function AskVexButton({
         className="inline-flex items-center gap-1.5 rounded-l-md bg-accent px-3 py-1.5 text-sm font-medium text-bg transition-colors hover:bg-accent/85"
         title={defaultAsk}
       >
-        <SparkIcon />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/icon-black.svg"
+          alt=""
+          aria-hidden="true"
+          className="h-3.5 w-3.5"
+        />
         Ask Vex
       </Link>
       {hasActions ? (
@@ -180,25 +186,6 @@ export function AskVexButton({
           )
         : null}
     </div>
-  );
-}
-
-function SparkIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 2v6M12 16v6M4 12h6M14 12h6" />
-      <path d="M6 6l3 3M15 15l3 3M6 18l3-3M15 9l3-3" />
-    </svg>
   );
 }
 

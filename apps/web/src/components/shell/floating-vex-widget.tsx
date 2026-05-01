@@ -127,18 +127,19 @@ export function FloatingVexWidget() {
     <>
       {/* FAB — always visible on /app/*, hidden on /app/chat */}
       {/*
-        The SVG ring IS the FAB. No bg-accent on the button — the
-        VexIconMark paints its own circle in the accent color. Keeps
-        the pills their natural 80%-of-the-circle scale (matching the
-        reference icon), which a tiny SVG inside a bg-accent <button>
-        can't do.
+        The new (May 2026) icon mark renders via <img>, so the
+        accent-purple circle has to come from the button itself
+        (previously the SVG drew its own ring in `currentColor`).
+        Inset padding keeps the white emblem at ~70% of the circle —
+        matches the reference design and prevents the pills from
+        butting up against the rim.
       */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label={open ? "Close Vex widget" : "Ask Vex"}
         aria-expanded={open}
-        className="fixed bottom-6 right-6 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full text-accent shadow-[0_8px_24px_-8px_rgba(124,92,255,0.55),0_0_0_1px_rgba(124,92,255,0.2)] transition-transform duration-150 ease-out-quart hover:scale-[1.04] hover:text-accent-strong md:h-14 md:w-14"
+        className="fixed bottom-6 right-6 z-40 inline-flex h-12 w-12 items-center justify-center rounded-full bg-accent p-2 shadow-[0_8px_24px_-8px_rgba(124,92,255,0.55),0_0_0_1px_rgba(124,92,255,0.2)] transition-transform duration-150 ease-out-quart hover:scale-[1.04] hover:bg-accent-strong md:h-14 md:w-14 md:p-2.5"
       >
         <VexIconMark className="h-full w-full" title="Ask Vex" />
       </button>

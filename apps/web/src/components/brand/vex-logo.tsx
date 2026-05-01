@@ -1,14 +1,47 @@
-import type { SVGProps } from "react";
+import type { ImgHTMLAttributes, SVGProps } from "react";
 
 /**
- * The 22 paths that make up the Vex logo, extracted from
- * `public/vex-logo.svg`. Exposed as a React component so the static
- * mark (TopBar, favicon-ish fallbacks) and the animated datamosh
- * share the same shape data without duplicating 7KB of path strings.
+ * Static Vex wordmark. Renders the new (May 2026) brand asset from
+ * `public/vex-logo.svg` via `<img>` — the asset is single-fill
+ * `#f8f7ef` (off-white) and ships pre-coloured for the dark-theme
+ * surfaces it lands in (TopBar + sidebar). Both existing call sites
+ * already wanted white; the prior `currentColor` flexibility wasn't
+ * exercised meaningfully.
  *
- * Colour is overridable via the `fill` prop so the datamosh can
- * generate RGB-separation layers by re-rendering with different
- * fills.
+ * The legacy `<VexLogoPaths />` export below still draws the OLD
+ * wordmark inline. Datamosh uses it for RGB-separation rendering on
+ * the login splash; until the new design's paths are properly
+ * extracted (clip-paths flattened, single-fill normalized) the
+ * datamosh effect remains on the previous mark. Tracked as a
+ * follow-up — design review needed before extraction.
+ */
+export function VexLogo({
+  className,
+  title = "Vex",
+  alt,
+  ...rest
+}: ImgHTMLAttributes<HTMLImageElement> & { title?: string }) {
+  // Vector SVG; next/image's resize / lazy-load pipeline is
+  // irrelevant for a single shipping-once asset, and `unoptimized`
+  // only works under specific deployment configs.
+  return (
+    /* eslint-disable-next-line @next/next/no-img-element */
+    <img
+      {...rest}
+      src="/vex-logo.svg"
+      alt={alt ?? title}
+      className={className}
+      role="img"
+      aria-label={title}
+    />
+  );
+}
+
+/**
+ * Inline-path version of the OLD wordmark, retained ONLY so the
+ * login-splash datamosh keeps rendering until the new design's
+ * paths are extracted. Don't reach for this in new code — use
+ * `<VexLogo />` (which serves the new asset).
  */
 export function VexLogoPaths(
   props: Omit<SVGProps<SVGGElement>, "fill"> & { fill?: string },
@@ -39,30 +72,5 @@ export function VexLogoPaths(
       <path fill={fill} fillRule="evenodd" d="M 1367.082031 233.863281 C 1399.917969 253.066406 1410.964844 295.25 1391.761719 328.082031 C 1372.554688 360.917969 1330.371094 371.964844 1297.535156 352.761719 C 1264.703125 333.558594 1253.65625 291.375 1272.859375 258.539062 C 1292.0625 225.707031 1334.25 214.65625 1367.082031 233.863281 Z" />
       <path fill={fill} fillRule="evenodd" d="M 1014.605469 620.785156 C 1047.8125 602.234375 1089.769531 614.113281 1108.320312 647.320312 C 1126.871094 680.523438 1114.992188 722.484375 1081.785156 741.035156 C 1048.582031 759.589844 1006.625 747.707031 988.070312 714.503906 C 969.519531 681.296875 981.398438 639.335938 1014.605469 620.785156 Z" />
     </g>
-  );
-}
-
-/**
- * Static Vex mark. Defaults to `currentColor` so the surrounding text
- * colour drives the fill — drop it in a `text-white` container and
- * it's white, in a `text-accent` container it's accent, etc.
- */
-export function VexLogo({
-  className,
-  title = "Vex",
-  ...rest
-}: SVGProps<SVGSVGElement> & { title?: string }) {
-  return (
-    <svg
-      {...rest}
-      className={className}
-      viewBox="0 0 1500 975"
-      xmlns="http://www.w3.org/2000/svg"
-      role="img"
-      aria-label={title}
-    >
-      <title>{title}</title>
-      <VexLogoPaths />
-    </svg>
   );
 }
