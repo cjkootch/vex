@@ -52,6 +52,29 @@ export interface WorkspaceSettings {
    * inbox." Recipients see these addresses on the message.
    */
   email_cc?: string[];
+  /**
+   * Which sanctions lists the OFAC screening agent runs against.
+   * Each entry is an adapter id; the agent fans out to all listed
+   * adapters in parallel and merges the results, stamping each
+   * match row with its source list so reviewers triage them
+   * differently.
+   *
+   *   - `us_csl`  — US Trade.gov Consolidated Screening List (~13 US
+   *                 lists rolled up: OFAC SDN/NS-PLC/SSI/FSE, BIS
+   *                 DPL/EL/UVL/MEU, State DTC/ISN/CAP).
+   *   - `eu`     — European Council Consolidated Financial
+   *                 Sanctions list.
+   *   - `uk_ofsi` — UK Office of Financial Sanctions Implementation
+   *                 consolidated list.
+   *
+   * Default when unset / empty: `["us_csl"]`. EU/UK operators add
+   * theirs explicitly. Workspaces with regulatory data-residency
+   * concerns can set EU-only by passing `["eu"]`. The legacy
+   * `SCREENING_SOURCE` env var still gates whether the US adapter
+   * uses CSL or OFAC SDN — this setting controls the broader
+   * source set, not the US adapter choice itself.
+   */
+  enabled_sanctions_lists?: ("us_csl" | "eu" | "uk_ofsi")[];
 }
 
 /**

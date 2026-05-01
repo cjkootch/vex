@@ -60,6 +60,10 @@ const SettingsPatchSchema = z
       .optional(),
     email_from_name: z.string().max(120).optional(),
     email_cc: z.array(z.string().email()).max(5).optional(),
+    enabled_sanctions_lists: z
+      .array(z.enum(["us_csl", "eu", "uk_ofsi"]))
+      .max(3)
+      .optional(),
   })
   .strict();
 
