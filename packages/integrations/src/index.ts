@@ -157,3 +157,16 @@ export {
   type CslEntry,
   type CslSourceList,
 } from "./csl.js";
+export {
+  EUConsolidatedAdapter,
+  parseEuSanctionsXml,
+  type EUConsolidatedAdapterOptions,
+  type EuSanctionsEntry,
+} from "./eu-consolidated.js";
+export {
+  UKOFSIAdapter,
+  parseUkOfsiCsv,
+  readCsvRows,
+  type UKOFSIAdapterOptions,
+  type UkOfsiEntry,
+} from "./uk-ofsi.js";
