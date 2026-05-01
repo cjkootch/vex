@@ -234,6 +234,25 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     contactId: zUlid,
     rationale: z.string().min(1).max(1000),
   }),
+  // Chat-initiated OFAC re-screen. Operator says "screen Vitol",
+  // "re-screen Acme against OFAC", "is X sanctioned" → the agent
+  // emits this action; the executor enqueues an `ofac_screening`
+  // job scoped to the single org. The agent runs against whatever
+  // sanctions lists the workspace has enabled
+  // (WorkspaceSettings.enabled_sanctions_lists — US CSL, EU, UK
+  // OFSI), writes the verdict to `ofac_screens`, fires a signal +
+  // T3 hold action if a match lands above threshold, and pushes
+  // the verdict back to procur (#293) when the org has
+  // external_keys.procur. T1 because the side effect is a read
+  // against public lists + an audit-row write the operator can
+  // see immediately on the org page; the consequential T3
+  // `ofac.hold` only fires if the screen actually matches.
+  z.object({
+    kind: z.literal("sanctions.screen"),
+    tier: z.literal(ApprovalTier.T1),
+    organizationId: zUlid,
+    rationale: z.string().min(1).max(1000),
+  }),
   // Chat-initiated contact↔org link. Idempotent additive write — the
   // executor calls memberships.ensureMembership keyed on
   // (contact_id, org_id) so re-runs don't duplicate. T1 because the
