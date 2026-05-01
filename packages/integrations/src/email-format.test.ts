@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDefaultSignature,
+  htmlSignatureToText,
   renderEmailWithSignature,
 } from "./email-format.js";
 
@@ -70,6 +71,93 @@ describe("renderEmailWithSignature", () => {
     });
     expect(out.text.startsWith("Hi Priya,")).toBe(true);
     expect(out.text.endsWith("Cole")).toBe(true);
+  });
+
+  it("derives the text signature from html when text is empty", () => {
+    const out = renderEmailWithSignature({
+      body: "Hi.",
+      signature: {
+        html: '<div><strong>Cole Kutschinski</strong><br/>President<br/>Vector Trade Capital<br/><a href="tel:18324927169">+1 832 492 7169</a></div>',
+        text: "",
+      },
+    });
+    // Body + delimiter + each visible line as its own row.
+    expect(out.text).toContain("\n\n-- \n");
+    expect(out.text).toContain("Cole Kutschinski");
+    expect(out.text).toContain("President");
+    expect(out.text).toContain("Vector Trade Capital");
+    expect(out.text).toContain("+1 832 492 7169");
+    // Should not leak raw tags or href attributes.
+    expect(out.text).not.toContain("<");
+    expect(out.text).not.toContain("href=");
+    expect(out.text).not.toContain("tel:");
+  });
+
+  it("prefers an explicit text signature over the html-derived fallback", () => {
+    const out = renderEmailWithSignature({
+      body: "Hi.",
+      signature: {
+        html: "<div>HTML version</div>",
+        text: "Operator's preferred text",
+      },
+    });
+    expect(out.text).toContain("Operator's preferred text");
+    expect(out.text).not.toContain("HTML version");
+  });
+});
+
+describe("htmlSignatureToText", () => {
+  it("converts <br>, </p>, </div>, </tr> into newlines", () => {
+    const t = htmlSignatureToText(
+      "<div>Line A<br/>Line B</div><p>Line C</p>",
+    );
+    expect(t).toBe("Line A\nLine B\nLine C");
+  });
+
+  it("flattens table-shaped signatures into one line per cell row", () => {
+    const t = htmlSignatureToText(
+      '<table><tr><td>VTC TRADE DESK</td></tr><tr><td>+1 832 492 7169</td></tr><tr><td>vectortradecapital.com</td></tr></table>',
+    );
+    expect(t).toContain("VTC TRADE DESK");
+    expect(t).toContain("+1 832 492 7169");
+    expect(t).toContain("vectortradecapital.com");
+    // Each row landed on its own line — order preserved, no run-on.
+    expect(t.split("\n")).toEqual([
+      "VTC TRADE DESK",
+      "+1 832 492 7169",
+      "vectortradecapital.com",
+    ]);
+  });
+
+  it("strips images and link hrefs but keeps anchor text", () => {
+    const t = htmlSignatureToText(
+      '<div><img src="https://x/y.png" alt="logo"/><a href="mailto:cole@vtc.com">cole@vtc.com</a></div>',
+    );
+    expect(t).toContain("cole@vtc.com");
+    expect(t).not.toContain("https://x/y.png");
+    expect(t).not.toContain("mailto:");
+    expect(t).not.toContain("<img");
+  });
+
+  it("decodes the entities our html escaper emits + &nbsp;", () => {
+    const t = htmlSignatureToText(
+      "Tom&nbsp;&amp;&nbsp;Jerry &lt;test&gt; &quot;quoted&quot; &#39;apos&#39;",
+    );
+    expect(t).toBe('Tom & Jerry <test> "quoted" \'apos\'');
+  });
+
+  it("drops <script> / <style> blocks entirely", () => {
+    const t = htmlSignatureToText(
+      '<style>.x{color:red}</style><div>Visible</div><script>alert(1)</script>',
+    );
+    expect(t).toBe("Visible");
+  });
+
+  it("collapses runs of blank lines and trims overall", () => {
+    const t = htmlSignatureToText(
+      "<div></div><div></div><div>A</div><div></div><div></div><div>B</div>",
+    );
+    expect(t).toBe("A\n\nB");
   });
 });
 

@@ -52,7 +52,19 @@ export function renderEmailWithSignature(
   const sigText = pickNonEmpty(input.signature?.text, input.defaults?.text);
   const sigHtml = pickNonEmpty(input.signature?.html, input.defaults?.html);
 
-  const text = sigText ? `${body}\n\n-- \n${sigText.trim()}` : body;
+  // When the operator only filled in the HTML signature, derive a
+  // matching plain-text fallback by stripping tags. Outlook /
+  // Microsoft 365 score wide divergence between the HTML and text
+  // bodies as a spam signal — surfacing the same content in both
+  // parts keeps the alignment heuristic happy. The admin tab
+  // already advertises this behaviour ("Plain text falls back to
+  // HTML-stripped when not provided"); this is the half that was
+  // missing.
+  const sigTextFallback = sigText ?? (sigHtml ? htmlSignatureToText(sigHtml) : undefined);
+
+  const text = sigTextFallback
+    ? `${body}\n\n-- \n${sigTextFallback.trim()}`
+    : body;
   const html = buildHtml(body, sigHtml ?? null);
   return { text, html };
 }
@@ -181,6 +193,60 @@ function escapeHtmlAttr(s: string): string {
 
 function stripPhoneFormatting(s: string): string {
   return s.replace(/[^\d+]/g, "");
+}
+
+/**
+ * Best-effort HTML → plain-text conversion for an operator-authored
+ * signature. Used when the workspace has an HTML signature but no
+ * matching text signature — surfacing the same content in both
+ * MIME parts is a deliverability signal (Outlook / M365 down-rank
+ * wide HTML/text divergence as a spam pattern).
+ *
+ * Not a general-purpose HTML sanitiser — intentionally narrow:
+ *   1. Drop entire <script>/<style> blocks (defence in depth, even
+ *      though the renderer doesn't use either).
+ *   2. Treat <br>, </p>, </div>, </tr>, </li>, </h1..6> as line breaks
+ *      so a tabular signature collapses into one-line-per-row instead
+ *      of running into a single blob.
+ *   3. Strip remaining tags.
+ *   4. Decode the handful of HTML entities the formatter itself emits
+ *      (`&amp;`, `&lt;`, `&gt;`, `&quot;`, `&#39;`, plus `&nbsp;`).
+ *   5. Trim each line and collapse runs of >2 blank lines to 1 — a
+ *      typical signature table renders into a tidy 4–6 line block.
+ *
+ * Operator-pasted HTML often contains `<img>`, `<a>` href attrs, and
+ * inline CSS we don't surface in text. That's intentional: the text
+ * fallback is for screen readers and plain-text-only clients; the
+ * full styled experience lives in the HTML part.
+ */
+export function htmlSignatureToText(html: string): string {
+  let s = html;
+  // 1. Drop script / style blocks entirely.
+  s = s.replace(/<script[\s\S]*?<\/script>/gi, "");
+  s = s.replace(/<style[\s\S]*?<\/style>/gi, "");
+  // 2. Block-ish tags become line breaks.
+  s = s.replace(/<br\s*\/?>/gi, "\n");
+  s = s.replace(/<\/(p|div|tr|li|h[1-6])>/gi, "\n");
+  // 3. Strip remaining tags.
+  s = s.replace(/<[^>]+>/g, "");
+  // 4. Decode the entities our HTML escaper emits, plus &nbsp;.
+  s = s
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+  // 5. Tidy whitespace: trim each line, collapse 3+ blank lines.
+  const lines = s
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[ \t]+/g, " ").trim());
+  const collapsed: string[] = [];
+  for (const line of lines) {
+    if (line.length === 0 && collapsed[collapsed.length - 1] === "") continue;
+    collapsed.push(line);
+  }
+  return collapsed.join("\n").trim();
 }
 
 function pickNonEmpty(
