@@ -21,7 +21,6 @@
  */
 import pg from "pg";
 const { Pool } = pg;
-import { loadEnv } from "@vex/config";
 
 // Every table enabled in `0001_enable_rls.sql` plus the Sprint 11
 // fuel-deal tables from `0002_fuel_deals.sql`. Kept as a literal
@@ -64,13 +63,37 @@ interface TableResult {
 }
 
 async function main(): Promise<void> {
-  const env = loadEnv();
-  if (!env.MIGRATION_DATABASE_URL) {
-    console.error("MIGRATION_DATABASE_URL is required");
+  // Read MIGRATION_DATABASE_URL directly. Mirroring the same posture
+  // as packages/db/src/migrate.ts — see #275: this script connects via
+  // pg.Pool, runs SELECT-only RLS probes, and never touches S3 / Redis
+  // / OpenAI / Anthropic. Calling loadEnv() forced operators to inline
+  // six placeholder secrets to run the audit, and broke nightly CI
+  // when any of those secrets weren't piped through to the workflow
+  // step. Validate the URL inline instead.
+  const url = process.env["MIGRATION_DATABASE_URL"];
+  if (!url || url.trim().length === 0) {
+    console.error(
+      "MIGRATION_DATABASE_URL is required (use the Neon direct connection string, NOT the pooled one).",
+    );
+    process.exit(1);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    console.error(
+      "MIGRATION_DATABASE_URL must be a valid Postgres connection URL (e.g. postgres://user:pwd@host/db?sslmode=require).",
+    );
+    process.exit(1);
+  }
+  if (!parsed.protocol.startsWith("postgres")) {
+    console.error(
+      `MIGRATION_DATABASE_URL must use the postgres:// scheme; got ${parsed.protocol}`,
+    );
     process.exit(1);
   }
 
-  const pool = new Pool({ connectionString: env.MIGRATION_DATABASE_URL });
+  const pool = new Pool({ connectionString: url });
   const client = await pool.connect();
   const results: TableResult[] = [];
 
