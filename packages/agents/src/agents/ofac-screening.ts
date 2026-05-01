@@ -219,15 +219,16 @@ export class OFACScreeningAgent implements IAgent {
       // doesn't fail the screen run; we just log and move on.
       //
       // `sourcesChecked` is the set of lists this run actually ran
-      // against. On the current single-adapter agent that's always
-      // `["us_csl"]`. The multi-list agent (#290) will pass the
-      // workspace's `enabled_sanctions_lists` here.
+      // against — pull straight from the resolved `enabled` set so
+      // procur learns "vex screened against [us_csl, eu, uk_ofsi]"
+      // when the workspace has all three on, or just `["eu"]` for an
+      // EU-only tenant.
       await this.maybeShareSanctionsToProcur(
         ctx,
         org,
         status,
         matches,
-        ["us_csl"],
+        enabled,
       );
 
       if (status === "clear") {
