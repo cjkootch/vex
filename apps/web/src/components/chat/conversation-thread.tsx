@@ -236,8 +236,9 @@ export function ConversationThread({ turns, onTurns, scope, initialDraft }: Prop
             </p>
           )}
           {turns.length > 0 ? (
-            <div className="-mb-2 flex justify-end">
+            <div className="-mb-2 flex justify-end gap-2">
               <CopyAsMarkdownButton turns={turns} />
+              <DownloadAsMarkdownButton turns={turns} />
             </div>
           ) : null}
           <AnimatePresence initial={false}>
@@ -1314,6 +1315,10 @@ function MicStopIcon() {
  * a markdown blob suitable for pasting into a bug report, into procur's
  * chat for cross-platform diagnosis, etc. Faster than screenshots and
  * preserves the action / approval state alongside prose.
+ *
+ * Sized to pair with `<DownloadAsMarkdownButton>` — both render in the
+ * top-right header bar of the thread, matching the two-button pattern
+ * procur's chat uses.
  */
 function CopyAsMarkdownButton({ turns }: { turns: ChatTurn[] }) {
   const [copied, setCopied] = useState(false);
@@ -1333,11 +1338,108 @@ function CopyAsMarkdownButton({ turns }: { turns: ChatTurn[] }) {
       type="button"
       onClick={onClick}
       data-testid="chat-copy-md"
-      className="rounded-md border border-line-soft bg-surface-2/40 px-2.5 py-1 text-[11px] text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary"
+      className="inline-flex items-center gap-1.5 rounded-md border border-line-soft bg-surface-2/40 px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary"
       title="Copy the whole conversation as Markdown — including action chips and decision state."
     >
+      <CopyMdIcon />
       {copied ? "Copied" : "Copy as Markdown"}
     </button>
+  );
+}
+
+/**
+ * "Download" affordance — same content as `<CopyAsMarkdownButton>`
+ * but writes to a `.md` file the operator can drag into a Slack
+ * thread, attach to a Linear ticket, or commit to a runbook repo
+ * without round-tripping through the clipboard.
+ *
+ * Filename: `vex-chat-<YYYY-MM-DD>-<HHMM>.md` with a slug derived
+ * from the first user turn so download folders don't fill up with
+ * `vex-chat.md (1)`, `vex-chat.md (2)`, …
+ */
+function DownloadAsMarkdownButton({ turns }: { turns: ChatTurn[] }) {
+  function onClick() {
+    const md = formatConversationAsMarkdown(turns);
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = buildDownloadFilename(turns);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    // Free the blob URL after the click handler has had a chance to
+    // initiate the download — Chrome/Safari are happy with a
+    // microtask-deferred revoke.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid="chat-download-md"
+      className="inline-flex items-center gap-1.5 rounded-md border border-line-soft bg-surface-2/40 px-3 py-1.5 text-xs text-text-secondary transition-colors hover:border-line-strong hover:text-text-primary"
+      title="Download the conversation as a .md file."
+    >
+      <DownloadIcon />
+      Download
+    </button>
+  );
+}
+
+function buildDownloadFilename(turns: ChatTurn[]): string {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const hhmm = `${String(now.getHours()).padStart(2, "0")}${String(
+    now.getMinutes(),
+  ).padStart(2, "0")}`;
+  const firstUserTurn = turns.find((t) => t.role === "user");
+  const slug = firstUserTurn
+    ? firstUserTurn.text
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40)
+    : "";
+  const stem = slug.length > 0 ? `vex-chat-${slug}-${yyyy}-${mm}-${dd}-${hhmm}` : `vex-chat-${yyyy}-${mm}-${dd}-${hhmm}`;
+  return `${stem}.md`;
+}
+
+function CopyMdIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+      aria-hidden="true"
+    >
+      <rect x="5" y="5" width="9" height="9" rx="1.5" />
+      <path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H11" />
+    </svg>
+  );
+}
+
+function DownloadIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+      aria-hidden="true"
+    >
+      <path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M3 13h10" />
+    </svg>
   );
 }
 
