@@ -17,7 +17,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
-import { and, count, desc, eq, inArray, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { createId } from "@vex/domain";
 import type { Queue } from "bullmq";
@@ -529,7 +529,9 @@ export class OrganizationsController {
       });
 
       // Rehydrate contacts + deals so the response mirrors the detail
-      // endpoint shape the UI already renders.
+      // endpoint shape the UI already renders. Same filter set as the
+      // detail handler — drop archived contacts, merge tombstones,
+      // and ended memberships.
       const contactRows = await tx
         .select({
           contact: schema.contacts,
@@ -541,7 +543,14 @@ export class OrganizationsController {
           schema.contacts,
           eq(schema.contactOrgMemberships.contactId, schema.contacts.id),
         )
-        .where(eq(schema.contactOrgMemberships.orgId, id))
+        .where(
+          and(
+            eq(schema.contactOrgMemberships.orgId, id),
+            isNull(schema.contactOrgMemberships.until),
+            eq(schema.contacts.status, "active"),
+            isNull(schema.contacts.mergedIntoContactId),
+          ),
+        )
         .orderBy(desc(schema.contacts.updatedAt))
         .limit(200);
       const contacts = contactRows.map((r) => r.contact);
@@ -633,6 +642,20 @@ export class OrganizationsController {
         // represents multiple orgs shows up on every one of its orgs'
         // detail pages — not only the single org stored in
         // `contacts.org_id`.
+        //
+        // Three filters keep tombstoned / removed rows out of the
+        // tab list. Without them, archived contacts (operator hit
+        // bulk-archive) and merged-into ones (contact.merge writes a
+        // tombstone pointer) keep showing up on the company page —
+        // exactly the bug an operator caught on a workspace with
+        // ~half the contacts being old test data.
+        //   - contacts.status = 'active' — drop archived rows.
+        //   - contacts.merged_into_contact_id IS NULL — drop tombstones
+        //     left behind by contact.merge so we don't render the
+        //     old archived row.
+        //   - contact_org_memberships.until IS NULL — drop memberships
+        //     the operator explicitly ended (set when a contact moves
+        //     between orgs without us deleting the row outright).
         const contactRows = await tx
           .select({
             contact: schema.contacts,
@@ -644,7 +667,14 @@ export class OrganizationsController {
             schema.contacts,
             eq(schema.contactOrgMemberships.contactId, schema.contacts.id),
           )
-          .where(eq(schema.contactOrgMemberships.orgId, id))
+          .where(
+            and(
+              eq(schema.contactOrgMemberships.orgId, id),
+              isNull(schema.contactOrgMemberships.until),
+              eq(schema.contacts.status, "active"),
+              isNull(schema.contacts.mergedIntoContactId),
+            ),
+          )
           .orderBy(desc(schema.contacts.updatedAt))
           .limit(200);
         const contacts = contactRows.map((r) => r.contact);
@@ -901,7 +931,18 @@ export class OrganizationsController {
         tx
           .select({ id: schema.contactOrgMemberships.contactId })
           .from(schema.contactOrgMemberships)
-          .where(eq(schema.contactOrgMemberships.orgId, id)),
+          .innerJoin(
+            schema.contacts,
+            eq(schema.contactOrgMemberships.contactId, schema.contacts.id),
+          )
+          .where(
+            and(
+              eq(schema.contactOrgMemberships.orgId, id),
+              isNull(schema.contactOrgMemberships.until),
+              eq(schema.contacts.status, "active"),
+              isNull(schema.contacts.mergedIntoContactId),
+            ),
+          ),
         tx
           .select({
             channel: schema.touchpoints.channel,
@@ -1282,13 +1323,28 @@ function clampLimit(raw: string | undefined, fallback: number, max: number): num
 
 async function loadContactCounts(tx: Tx): Promise<Map<string, number>> {
   // Count via the m:n memberships table so a contact shared across
-  // multiple orgs counts once per org it belongs to.
+  // multiple orgs counts once per org it belongs to. Filter out
+  // tombstoned and ended rows so the column on the companies list
+  // matches the count operators see when they actually open the
+  // org's Contacts tab — same posture as the detail handler's
+  // `contacts` query.
   const rows = await tx
     .select({
       orgId: schema.contactOrgMemberships.orgId,
       count: count(),
     })
     .from(schema.contactOrgMemberships)
+    .innerJoin(
+      schema.contacts,
+      eq(schema.contactOrgMemberships.contactId, schema.contacts.id),
+    )
+    .where(
+      and(
+        isNull(schema.contactOrgMemberships.until),
+        eq(schema.contacts.status, "active"),
+        isNull(schema.contacts.mergedIntoContactId),
+      ),
+    )
     .groupBy(schema.contactOrgMemberships.orgId);
   const out = new Map<string, number>();
   for (const r of rows) out.set(r.orgId, Number(r.count));
