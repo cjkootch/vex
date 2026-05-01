@@ -1,62 +1,37 @@
-import type { SVGProps } from "react";
+import type { ImgHTMLAttributes } from "react";
 
 /**
- * The square Vex icon mark — three horizontal pills inside a circle,
- * matching `public/icon-black.svg`.
+ * Square Vex icon mark — the new (May 2026) brand emblem from
+ * `public/icon-white.svg`. Renders via `<img>` so we ship the asset
+ * once and skip the inline-SVG complexity (the new design uses
+ * 95 paths with nested clipPaths — not JSX-friendly).
  *
- * - `ringFill`   : outer circle colour. Defaults to `currentColor` so
- *                  dropping it in a `text-accent` container paints it
- *                  accent-purple, in a `text-black` one paints it black,
- *                  etc.
- * - `glyphFill`  : pill colour. Defaults to `#ffffff` so a purple/black
- *                  ring reads with high contrast.
- * - `ring`       : pass `false` if you want only the pills (e.g. inside
- *                  an already-coloured background that IS the circle).
- *                  Defaults to `true` — without the ring the pills sit
- *                  in a too-large viewBox and look tiny.
+ * The white-fill variant works well over the accent-coloured surface
+ * the floating Ask-Vex widget paints (see `floating-vex-widget.tsx`).
+ * For light-bg surfaces, point at `/icon-black.svg` instead via the
+ * standard `<img>` `src` override. The previous component's
+ * `ringFill` / `glyphFill` / `ring` props were retired — only one
+ * call site uses this and didn't override any of them.
  */
 export function VexIconMark({
   className,
   title = "Vex",
-  ringFill,
-  glyphFill = "#ffffff",
-  ring = true,
+  alt,
+  src = "/icon-white.svg",
   ...rest
-}: Omit<SVGProps<SVGSVGElement>, "fill"> & {
-  title?: string;
-  ringFill?: string;
-  glyphFill?: string;
-  ring?: boolean;
-}) {
+}: ImgHTMLAttributes<HTMLImageElement> & { title?: string }) {
+  // Vector SVG; next/image's optimization pipeline doesn't help
+  // for a static, single-fill brand asset.
   return (
-    <svg
+    /* eslint-disable-next-line @next/next/no-img-element */
+    <img
       {...rest}
+      src={src}
+      alt={alt ?? title}
       className={className}
-      viewBox="0 0 1500 1500"
-      xmlns="http://www.w3.org/2000/svg"
       role="img"
       aria-label={title}
-    >
-      <title>{title}</title>
-      {ring ? (
-        <path
-          fill={ringFill ?? "currentColor"}
-          fillRule="evenodd"
-          d="M 126.667969 750.457031 C 126.667969 405.785156 405.945312 126.375 750.457031 126.375 C 1094.96875 126.375 1374.25 405.785156 1374.25 750.457031 C 1374.25 1095.128906 1094.96875 1374.539062 750.457031 1374.539062 C 405.945312 1374.539062 126.667969 1095.128906 126.667969 750.457031 Z M 126.667969 750.457031 "
-        />
-      ) : null}
-      <g fill={glyphFill}>
-        <path d="M 541.164062 294.160156 L 967.9375 294.160156 L 967.9375 533.855469 L 541.164062 533.855469 Z M 541.164062 294.160156 " fillRule="nonzero" />
-        <path d="M 1087.785156 414.007812 C 1087.785156 480.199219 1034.128906 533.855469 967.9375 533.855469 C 901.746094 533.855469 848.089844 480.199219 848.089844 414.007812 C 848.089844 347.820312 901.746094 294.160156 967.9375 294.160156 C 1034.128906 294.160156 1087.785156 347.820312 1087.785156 414.007812 Z M 1087.785156 414.007812 " fillRule="evenodd" />
-        <path d="M 527.71875 632.074219 L 967.9375 632.074219 L 967.9375 871.765625 L 527.71875 871.765625 Z M 527.71875 632.074219 " fillRule="nonzero" />
-        <path d="M 652.828125 751.917969 C 652.828125 818.109375 599.035156 871.765625 532.6875 871.765625 C 466.339844 871.765625 412.546875 818.109375 412.546875 751.917969 C 412.546875 685.730469 466.339844 632.074219 532.6875 632.074219 C 599.035156 632.074219 652.828125 685.730469 652.828125 751.917969 Z M 652.828125 751.917969 " fillRule="evenodd" />
-        <path d="M 1088.367188 751.917969 C 1088.367188 818.109375 1034.578125 871.765625 968.230469 871.765625 C 901.882812 871.765625 848.089844 818.109375 848.089844 751.917969 C 848.089844 685.730469 901.882812 632.074219 968.230469 632.074219 C 1034.578125 632.074219 1088.367188 685.730469 1088.367188 751.917969 Z M 1088.367188 751.917969 " fillRule="evenodd" />
-        <path d="M 527.71875 967.058594 L 967.9375 967.058594 L 967.9375 1206.753906 L 527.71875 1206.753906 Z M 527.71875 967.058594 " fillRule="nonzero" />
-        <path d="M 652.828125 1086.90625 C 652.828125 1153.097656 599.035156 1206.753906 532.6875 1206.753906 C 466.339844 1206.753906 412.546875 1153.097656 412.546875 1086.90625 C 412.546875 1020.714844 466.339844 967.058594 532.6875 967.058594 C 599.035156 967.058594 652.828125 1020.714844 652.828125 1086.90625 Z M 652.828125 1086.90625 " fillRule="evenodd" />
-        <path d="M 1087.785156 1086.90625 C 1087.785156 1153.097656 1034.128906 1206.753906 967.9375 1206.753906 C 901.746094 1206.753906 848.089844 1153.097656 848.089844 1086.90625 C 848.089844 1020.714844 901.746094 967.058594 967.9375 967.058594 C 1034.128906 967.058594 1087.785156 1020.714844 1087.785156 1086.90625 Z M 1087.785156 1086.90625 " fillRule="evenodd" />
-        <path d="M 652.828125 414.007812 C 652.828125 480.199219 599.035156 533.855469 532.6875 533.855469 C 466.339844 533.855469 412.546875 480.199219 412.546875 414.007812 C 412.546875 347.820312 466.339844 294.160156 532.6875 294.160156 C 599.035156 294.160156 652.828125 347.820312 652.828125 414.007812 Z M 652.828125 414.007812 " fillRule="evenodd" />
-      </g>
-    </svg>
+    />
   );
 }
 
