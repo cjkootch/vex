@@ -260,4 +260,55 @@ describe("ActionDescriptor", () => {
       }),
     ).toThrow();
   });
+
+  describe("whatsapp.send_template", () => {
+    it("accepts a valid template send with variables", () => {
+      const parsed = ActionDescriptor.parse({
+        kind: "whatsapp.send_template",
+        tier: ApprovalTier.T2,
+        to: "+18324927169",
+        contentSid: "HX0123456789abcdef0123456789abcdef",
+        contentVariables: { "1": "Cole", "2": "VTC-2026-003" },
+        templateName: "welcome_check_in",
+        rationale: "Cold outreach to new contact",
+      });
+      expect(parsed.kind).toBe("whatsapp.send_template");
+      expect(actionRequiresApproval(parsed)).toBe(true);
+    });
+
+    it("accepts a template with no variables", () => {
+      const parsed = ActionDescriptor.parse({
+        kind: "whatsapp.send_template",
+        tier: ApprovalTier.T2,
+        to: "+18324927169",
+        contentSid: "HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        rationale: "Static template, no vars",
+      });
+      expect(parsed.kind).toBe("whatsapp.send_template");
+    });
+
+    it("rejects a malformed contentSid", () => {
+      expect(() =>
+        ActionDescriptor.parse({
+          kind: "whatsapp.send_template",
+          tier: ApprovalTier.T2,
+          to: "+18324927169",
+          contentSid: "not-a-content-sid",
+          rationale: "x",
+        }),
+      ).toThrow(/HX/);
+    });
+
+    it("rejects a non-E.164 phone", () => {
+      expect(() =>
+        ActionDescriptor.parse({
+          kind: "whatsapp.send_template",
+          tier: ApprovalTier.T2,
+          to: "832-492-7169",
+          contentSid: "HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          rationale: "x",
+        }),
+      ).toThrow(/E.164/);
+    });
+  });
 });

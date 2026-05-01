@@ -134,6 +134,42 @@ export function createTwilioClient(deps: TwilioDeps) {
     },
 
     /**
+     * Send a Meta-approved WhatsApp Business Message Template. Used for
+     * COLD outreach — the only way to start a WhatsApp conversation
+     * with a recipient who hasn't messaged us within the last 24h
+     * (Twilio error 63016 fires on freeform freeform sends outside
+     * that window).
+     *
+     * `contentSid` is the `HX...` SID Twilio assigns when the template
+     * lands in the Content Template Builder. `contentVariables` maps
+     * `{{1}}`, `{{2}}` placeholders to concrete values; Twilio expects
+     * a JSON-stringified object keyed by the placeholder index as a
+     * string, e.g. `{"1": "Cole", "2": "VTC-2026-003"}`. We accept a
+     * plain `Record<string, string>` and serialize once here so callers
+     * can't get the encoding wrong.
+     */
+    async sendWhatsAppTemplate(
+      to: string,
+      contentSid: string,
+      contentVariables?: Record<string, string>,
+    ) {
+      if (!deps.whatsappFrom) {
+        throw new Error(
+          "twilio.sendWhatsAppTemplate: whatsappFrom not configured (set TWILIO_WHATSAPP_FROM)",
+        );
+      }
+      const toAddr = to.startsWith("whatsapp:") ? to : `whatsapp:${to}`;
+      return client.messages.create({
+        from: deps.whatsappFrom,
+        to: toAddr,
+        contentSid,
+        ...(contentVariables && Object.keys(contentVariables).length > 0
+          ? { contentVariables: JSON.stringify(contentVariables) }
+          : {}),
+      });
+    },
+
+    /**
      * Create an outbound PSTN call. The workflow has already cleared the
      * call window, suppression, and T3 approval checks before this runs.
      * `record: true` is the default so Sprint 12 transcripts always have

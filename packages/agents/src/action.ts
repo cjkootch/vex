@@ -338,6 +338,39 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     contactId: zUlid.optional(),
     rationale: z.string().min(1).max(1000),
   }),
+  // Cold WhatsApp outbound via a Meta-approved template. Required when
+  // the recipient hasn't messaged the workspace's WhatsApp number in
+  // the last 24h — outside that window Twilio rejects freeform sends
+  // with error 63016. The template body itself is registered with
+  // Twilio (Content Template Builder); we just supply the contentSid
+  // + variable values per send. Tier T2 because it sends a real
+  // message and is operator-approved.
+  z.object({
+    kind: z.literal("whatsapp.send_template"),
+    tier: z.literal(ApprovalTier.T2),
+    to: z
+      .string()
+      .regex(/^\+[1-9]\d{7,14}$/, "to must be E.164 (e.g. +18324927169)"),
+    /** Twilio Content Template SID. */
+    contentSid: z
+      .string()
+      .regex(/^HX[a-fA-F0-9]{32}$/, "contentSid must be HX + 32 hex chars"),
+    /**
+     * Map of Twilio variable index → value. Keys must be stringified
+     * 1-based indices ("1", "2", …) matching the template's `{{N}}`
+     * placeholders. Empty / omitted is valid for templates with no
+     * variables.
+     */
+    contentVariables: z.record(z.string(), z.string()).optional(),
+    /**
+     * Operator-friendly template name (matches WorkspaceSettings
+     * .whatsapp_templates[].name). Carried for chip rendering and
+     * audit; the executor uses contentSid for the actual send.
+     */
+    templateName: z.string().min(1).max(120).optional(),
+    contactId: zUlid.optional(),
+    rationale: z.string().min(1).max(1000),
+  }),
   // Sprint N — chat-initiated deal status transition. Matches the
   // executor branch that's already wired (applyDealStatusChange).
   // Tier T2 because it has meaningful downstream effects but is

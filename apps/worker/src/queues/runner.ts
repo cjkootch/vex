@@ -785,6 +785,10 @@ export function buildApprovalExecutor(deps: ApprovalExecutorDeps) {
           await applyMessageSend(tx, deps, workspace_id, approval, "whatsapp");
           return;
         }
+        if (approval.actionType === "whatsapp.send_template") {
+          await applyWhatsAppTemplate(tx, deps, workspace_id, approval);
+          return;
+        }
         if (approval.actionType === "contact.opt_out") {
           await applyContactOptOut(tx, deps, workspace_id, approval);
           return;
@@ -1101,6 +1105,120 @@ async function applyMessageSend(
       tenantId,
       approval.id,
       `${kind}.send`,
+      (err as Error).message,
+    );
+  }
+}
+
+/**
+ * Cold WhatsApp outreach via a Meta-approved Content Template. Used
+ * when freeform `whatsapp.send` would fail with Twilio error 63016
+ * (recipient hasn't messaged us in the last 24h). The template body
+ * is registered server-side at Twilio; we supply contentSid +
+ * per-variable values.
+ *
+ * Touchpoint channel is `whatsapp.template_sent` so the inbox
+ * channelGroupFor classifier still groups it under WhatsApp while
+ * leaving `whatsapp.sent` distinct for freeform sends. The cost
+ * ledger records one WhatsApp session unit — same pricing as
+ * freeform per Twilio's billing model (templates count as the
+ * outbound conversation that opens the 24h session).
+ */
+async function applyWhatsAppTemplate(
+  tx: Parameters<Parameters<typeof withTenant>[2]>[0],
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  approval: ApprovalRow,
+): Promise<void> {
+  const payload = approval.proposedPayload as
+    | {
+        to?: string;
+        contentSid?: string;
+        contentVariables?: Record<string, string>;
+        templateName?: string;
+        contactId?: string;
+      }
+    | null;
+  const to = payload?.to;
+  const contentSid = payload?.contentSid;
+  if (!to || !contentSid) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "whatsapp.send_template",
+      "missing to / contentSid",
+    );
+    return;
+  }
+  if (!deps.twilio) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "whatsapp.send_template",
+      "twilio_unconfigured",
+    );
+    return;
+  }
+  try {
+    const msg = await deps.twilio.sendWhatsAppTemplate(
+      to,
+      contentSid,
+      payload?.contentVariables,
+    );
+    await deps.costLedger.record({
+      idempotencyKey: `whatsapp.send_template:${approval.id}`,
+      tenantId: TenantId(tenantId),
+      operation: "whatsapp.send_template",
+      provider: "twilio",
+      units: 1,
+      unitKind: "session",
+      costUsdMicros: unitsToUsdMicros(1, pricing.twilio.whatsappSessionUsd),
+      occurredAt: new Date(),
+    });
+    await deps.touchpoints.insert(tx, tenantId, {
+      channel: "whatsapp.template_sent",
+      actor: `approval:${approval.id}`,
+      occurredAt: new Date(),
+      ...(payload?.contactId ? { contactId: payload.contactId } : {}),
+      metadata: {
+        direction: "outbound",
+        provider_message_id: msg.sid,
+        to,
+        content_sid: contentSid,
+        ...(payload?.templateName ? { template_name: payload.templateName } : {}),
+        ...(payload?.contentVariables &&
+        Object.keys(payload.contentVariables).length > 0
+          ? { content_variables: payload.contentVariables }
+          : {}),
+      },
+    });
+    await deps.events.insertIfNotExists(tx, tenantId, {
+      verb: "approval.executor.applied",
+      subjectType: "approval",
+      subjectId: approval.id,
+      actorType: "system",
+      actorId: "approval_executor",
+      objectType: "approval",
+      objectId: approval.id,
+      occurredAt: new Date(),
+      idempotencyKey: `approval.executor:${approval.id}`,
+      metadata: {
+        action_type: "whatsapp.send_template",
+        provider_message_id: msg.sid,
+        content_sid: contentSid,
+      },
+    });
+  } catch (err) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "whatsapp.send_template",
       (err as Error).message,
     );
   }
