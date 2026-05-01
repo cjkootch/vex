@@ -24,6 +24,7 @@ import type { Queue } from "bullmq";
 import { addAgentJob, type AgentJobData } from "@vex/agents";
 import type {
   EventRepository,
+  LeadProcurMetadata,
   OfacScreenRepository,
   OrganizationProductRepository,
   OrganizationRelationshipRepository,
@@ -136,7 +137,7 @@ export interface OrganizationDetail extends OrganizationListRow {
    * source documents, market context, trading defaults. Null when
    * the org isn't a procur lead.
    */
-  procurMetadata: import("@vex/db").LeadProcurMetadata | null;
+  procurMetadata: LeadProcurMetadata | null;
   /** ISO timestamp of the procur push that supplied procurMetadata. */
   procurMetadataAt: string | null;
 }
