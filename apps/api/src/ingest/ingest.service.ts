@@ -7,6 +7,7 @@ import {
   type ContactRepository,
   type Db,
   type EventRepository,
+  type LeadProcurMetadata,
   type LeadRepository,
   type OrganizationRepository,
 } from "@vex/db";
@@ -311,9 +312,9 @@ export class IngestService {
  */
 function pickProcurMetadata(
   metadata: ProcurLeadIngestPayload["metadata"],
-): import("@vex/db").LeadProcurMetadata {
+): LeadProcurMetadata {
   if (!metadata) return {};
-  const picked: import("@vex/db").LeadProcurMetadata = {};
+  const picked: LeadProcurMetadata = {};
   if (metadata.procurApproval) picked.procurApproval = metadata.procurApproval;
   if (metadata.productSpecs) picked.productSpecs = metadata.productSpecs;
   if (metadata.sourceDocuments) picked.sourceDocuments = metadata.sourceDocuments;
