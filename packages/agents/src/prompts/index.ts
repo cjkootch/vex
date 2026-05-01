@@ -23,6 +23,7 @@ export {
   INTENT_CLASSIFIER_PROMPT_VERSION,
 } from "./intent-classifier.js";
 export { renderStrategyPreamble } from "./strategy.js";
+export { renderWhatsAppTemplatesPreamble } from "./whatsapp-templates.js";
 export {
   STRATEGY_DRAFT_SYSTEM_PROMPT,
   STRATEGY_DRAFT_PROMPT_VERSION,

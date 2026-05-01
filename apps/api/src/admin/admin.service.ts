@@ -52,6 +52,14 @@ export interface SettingsPatch {
   email_from_name?: string | undefined;
   email_cc?: string[] | undefined;
   enabled_sanctions_lists?: ("us_csl" | "eu" | "uk_ofsi")[] | undefined;
+  whatsapp_templates?:
+    | Array<{
+        name: string;
+        contentSid: string;
+        description?: string | undefined;
+        variables?: string[] | undefined;
+      }>
+    | undefined;
 }
 
 export interface HealthMetrics {
@@ -408,6 +416,22 @@ function mergeSettings(
       next.enabled_sanctions_lists = cleaned;
     } else {
       delete next.enabled_sanctions_lists;
+    }
+  }
+  // Empty array clears the registry (cold WhatsApp outreach becomes
+  // unavailable). Names deduped (last write wins) so an operator
+  // re-uploading a list with a renamed template doesn't end up with
+  // two entries under different names pointing at the same SID.
+  if (patch.whatsapp_templates !== undefined) {
+    const byName = new Map<string, NonNullable<typeof patch.whatsapp_templates>[number]>();
+    for (const t of patch.whatsapp_templates) {
+      byName.set(t.name, t);
+    }
+    const cleaned = Array.from(byName.values());
+    if (cleaned.length > 0) {
+      next.whatsapp_templates = cleaned;
+    } else {
+      delete next.whatsapp_templates;
     }
   }
   return next;

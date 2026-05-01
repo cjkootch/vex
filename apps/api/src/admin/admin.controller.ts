@@ -64,6 +64,25 @@ const SettingsPatchSchema = z
       .array(z.enum(["us_csl", "eu", "uk_ofsi"]))
       .max(3)
       .optional(),
+    whatsapp_templates: z
+      .array(
+        z
+          .object({
+            name: z
+              .string()
+              .min(1)
+              .max(120)
+              .regex(/^[a-z0-9_]+$/, "name must be lowercase + snake_case"),
+            contentSid: z
+              .string()
+              .regex(/^HX[a-fA-F0-9]{32}$/, "contentSid must be HX + 32 hex chars"),
+            description: z.string().max(500).optional(),
+            variables: z.array(z.string().min(1).max(60)).max(20).optional(),
+          })
+          .strict(),
+      )
+      .max(50)
+      .optional(),
   })
   .strict();
 

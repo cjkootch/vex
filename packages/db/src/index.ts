@@ -27,6 +27,7 @@ export type {
   NewWorkspace,
   WorkspaceSettings,
   WorkspaceStrategy,
+  WhatsAppTemplate,
 } from "./schema/workspaces.js";
 export type { Thread, NewThread } from "./schema/threads.js";
 export type { Lead, LeadProcurMetadata, NewLead } from "./schema/leads.js";

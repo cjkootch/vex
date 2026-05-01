@@ -22,7 +22,12 @@ import type {
   ToolDefinition,
   ToolRunner,
 } from "@vex/integrations";
-import { QUERY_SYSTEM_PROMPT, renderStrategyPreamble, ActionDescriptor } from "@vex/agents";
+import {
+  QUERY_SYSTEM_PROMPT,
+  renderStrategyPreamble,
+  renderWhatsAppTemplatesPreamble,
+  ActionDescriptor,
+} from "@vex/agents";
 import { createId, isUlid, TenantId, type AgentRunId } from "@vex/domain";
 import { manifestFallback, validateManifest, type ViewManifest } from "@vex/ui";
 import type { CostLedger } from "@vex/telemetry";
@@ -306,9 +311,16 @@ export class QueryService {
     // preamble → prompt is the vanilla QUERY_SYSTEM_PROMPT.
     const strategy = await this.workspaces.getStrategy(this.db, tenantId);
     const preamble = renderStrategyPreamble(strategy);
-    const systemPrompt = preamble
-      ? `${preamble}${QUERY_SYSTEM_PROMPT}`
-      : QUERY_SYSTEM_PROMPT;
+    // Surface registered WhatsApp templates so the chat agent knows
+    // which contentSids it can emit in `whatsapp.send_template` for
+    // cold outreach. Empty list → preamble is empty string and the
+    // agent gracefully responds "no templates registered" if the
+    // operator asks for one.
+    const settings = await this.workspaces.getSettings(this.db, tenantId);
+    const waTemplatesPreamble = renderWhatsAppTemplatesPreamble(
+      settings?.whatsapp_templates,
+    );
+    const systemPrompt = `${preamble}${waTemplatesPreamble}${QUERY_SYSTEM_PROMPT}`;
 
     const queryResult = await this.anthropic.query({
       tenantId,

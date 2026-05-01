@@ -11,6 +11,7 @@ export type CostOperation =
   | "email.send"
   | "sms.send"
   | "whatsapp.send"
+  | "whatsapp.send_template"
   | "web.search";
 
 export interface CostEntry {

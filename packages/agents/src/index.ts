@@ -29,6 +29,7 @@ export {
   INTENT_CLASSIFIER_SYSTEM_PROMPT,
   INTENT_CLASSIFIER_PROMPT_VERSION,
   renderStrategyPreamble,
+  renderWhatsAppTemplatesPreamble,
   STRATEGY_DRAFT_SYSTEM_PROMPT,
   STRATEGY_DRAFT_PROMPT_VERSION,
   buildStrategyDraftUserMessage,
