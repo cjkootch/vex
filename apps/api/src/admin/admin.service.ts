@@ -51,6 +51,7 @@ export interface SettingsPatch {
     | undefined;
   email_from_name?: string | undefined;
   email_cc?: string[] | undefined;
+  enabled_sanctions_lists?: ("us_csl" | "eu" | "uk_ofsi")[] | undefined;
 }
 
 export interface HealthMetrics {
@@ -393,6 +394,20 @@ function mergeSettings(
       next.email_cc = cleaned;
     } else {
       delete next.email_cc;
+    }
+  }
+  // Empty array clears the override (reverts to default
+  // `["us_csl"]`). Filter to known list ids defensively in case
+  // the client sends a stale enum value the server doesn't support.
+  if (patch.enabled_sanctions_lists !== undefined) {
+    const allowed = new Set(["us_csl", "eu", "uk_ofsi"]);
+    const cleaned = patch.enabled_sanctions_lists.filter(
+      (s): s is "us_csl" | "eu" | "uk_ofsi" => allowed.has(s),
+    );
+    if (cleaned.length > 0) {
+      next.enabled_sanctions_lists = cleaned;
+    } else {
+      delete next.enabled_sanctions_lists;
     }
   }
   return next;
