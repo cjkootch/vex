@@ -79,12 +79,44 @@ interface ProcurTradingDefaults {
   monthlyFixedOverheadUsdDefault: number | null;
 }
 
+interface ProcurSignal {
+  kind:
+    | "rfq"
+    | "tender_award"
+    | "vessel_clearance"
+    | "customs_event"
+    | "news"
+    | "other";
+  occurredAt: string;
+  source: string;
+  narrative: string;
+  weight?: number;
+}
+
+interface ProcurOwnershipEdge {
+  orgKey: string;
+  legalName?: string;
+  role?: string;
+  distance: number;
+}
+
 interface ProcurMetadata {
   procurApproval?: ProcurApproval;
   productSpecs?: ProductSpec[];
   sourceDocuments?: SourceDocument[];
   marketContext?: MarketContext;
   procurTradingDefaults?: ProcurTradingDefaults;
+  pushReason?: string;
+  signals?: ProcurSignal[];
+  matchQueue?: {
+    score: number;
+    reasons: string[];
+    relatedOpportunities?: string[];
+  };
+  ownership?: {
+    parents?: ProcurOwnershipEdge[];
+    subsidiaries?: ProcurOwnershipEdge[];
+  };
 }
 
 interface OrganizationDetail {
@@ -723,6 +755,10 @@ function ProcurIntelligencePanel({
   const docs = metadata.sourceDocuments ?? [];
   const market = metadata.marketContext;
   const defaults = metadata.procurTradingDefaults;
+  const pushReason = metadata.pushReason?.trim();
+  const signals = metadata.signals ?? [];
+  const matchQueue = metadata.matchQueue;
+  const ownership = metadata.ownership;
   const expired =
     approval?.expiresAt && new Date(approval.expiresAt).getTime() < Date.now();
   return (
@@ -770,6 +806,85 @@ function ProcurIntelligencePanel({
             <p className="basis-full text-[11px] text-white/60">
               {approval.notes}
             </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {pushReason ||
+      signals.length > 0 ||
+      matchQueue ||
+      (ownership &&
+        ((ownership.parents && ownership.parents.length > 0) ||
+          (ownership.subsidiaries && ownership.subsidiaries.length > 0))) ? (
+        <div className="mb-4 rounded-md border border-line/40 bg-white/5 p-3">
+          <div className="mb-2 text-[10px] uppercase tracking-wider text-white/40">
+            Why we&apos;re tracking this
+          </div>
+          {pushReason ? (
+            <p className="mb-2 text-xs text-white/80">{pushReason}</p>
+          ) : null}
+          {matchQueue ? (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-white/70">
+              <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-accent">
+                Match {(matchQueue.score * 100).toFixed(0)}/100
+              </span>
+              {matchQueue.reasons.length > 0 ? (
+                <span className="text-white/60">
+                  {matchQueue.reasons.slice(0, 3).join(" · ")}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {signals.length > 0 ? (
+            <ul className="mb-2 flex flex-col gap-1">
+              {signals.slice(0, 5).map((s, i) => (
+                <li
+                  key={`${s.kind}-${s.occurredAt}-${i}`}
+                  className="flex items-baseline gap-2 text-[11px] text-white/70"
+                >
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-white/40">
+                    {s.kind}
+                  </span>
+                  <span className="text-white/40">
+                    {new Date(s.occurredAt).toLocaleDateString()}
+                  </span>
+                  <span className="flex-1">{s.narrative}</span>
+                  {s.source.startsWith("http") ? (
+                    <a
+                      href={s.source}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-accent hover:text-accent-strong"
+                      title={s.source}
+                    >
+                      ↗
+                    </a>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {ownership ? (
+            <div className="flex flex-col gap-1 text-[11px] text-white/60">
+              {ownership.parents && ownership.parents.length > 0 ? (
+                <div>
+                  <span className="text-white/40">Parents: </span>
+                  {ownership.parents
+                    .slice(0, 3)
+                    .map((p) => p.legalName ?? p.orgKey)
+                    .join(", ")}
+                </div>
+              ) : null}
+              {ownership.subsidiaries && ownership.subsidiaries.length > 0 ? (
+                <div>
+                  <span className="text-white/40">Subsidiaries: </span>
+                  {ownership.subsidiaries
+                    .slice(0, 3)
+                    .map((s) => s.legalName ?? s.orgKey)
+                    .join(", ")}
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

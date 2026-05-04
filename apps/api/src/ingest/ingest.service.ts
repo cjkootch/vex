@@ -322,6 +322,15 @@ function pickProcurMetadata(
   if (metadata.procurTradingDefaults) {
     picked.procurTradingDefaults = metadata.procurTradingDefaults;
   }
+  // Procur work item 3 follow-up: the WHY context. The chat agent
+  // reads these directly from the lead row's procur_metadata via
+  // the evidence pack — see retrieval-service.ts.
+  if (metadata.pushReason) picked.pushReason = metadata.pushReason;
+  if (metadata.signals && metadata.signals.length > 0) {
+    picked.signals = metadata.signals;
+  }
+  if (metadata.matchQueue) picked.matchQueue = metadata.matchQueue;
+  if (metadata.ownership) picked.ownership = metadata.ownership;
   return picked;
 }
 

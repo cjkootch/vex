@@ -29,6 +29,7 @@ import { followUps } from "../schema/follow-ups.js";
 import { embeddingChunks } from "../schema/embedding-chunks.js";
 import { fuelDeals } from "../schema/fuel-deals.js";
 import { fuelDealScenarios } from "../schema/fuel-deal-scenarios.js";
+import { leads, type LeadProcurMetadata } from "../schema/leads.js";
 import { organizations } from "../schema/organizations.js";
 import { summaries } from "../schema/summaries.js";
 import { touchpoints } from "../schema/touchpoints.js";
@@ -289,6 +290,7 @@ export class RetrievalService {
     const documentItems = await this.fetchDocuments(tx);
     const dealDossierItems = await this.fetchDealDossier(tx);
     const orgGraphItems = await this.fetchOrgProductsAndGraph(tx);
+    const procurContextItems = await this.fetchProcurContext(tx);
 
     const allItems = [
       ...(items.length > 0 ? items : fallbackItems),
@@ -299,6 +301,7 @@ export class RetrievalService {
       ...documentItems,
       ...dealDossierItems,
       ...orgGraphItems,
+      ...procurContextItems,
     ];
 
     const aggregates = await this.fetchAggregates(tx);
@@ -825,6 +828,59 @@ export class RetrievalService {
         summary_version: null,
       } satisfies EvidenceItem;
     });
+  }
+
+  /**
+   * Procur work item 3 follow-up — surface the WHY context attached
+   * to procur-sourced leads. Each lead with `procur_metadata.pushReason`
+   * (or `signals` / `matchQueue`) becomes an evidence item the chat
+   * agent can quote from when an operator asks "why this contact?" /
+   * "what's the angle on Acme?". Empty-metadata leads are skipped —
+   * the existing `Counterparty {id}` chunk still covers them.
+   *
+   * Bounded at 30 rows to keep the pack small; ORDER BY updated_at
+   * DESC so the freshest pushes win when a workspace has more
+   * procur leads than the cap.
+   */
+  private async fetchProcurContext(tx: Tx): Promise<EvidenceItem[]> {
+    const rows = await tx
+      .select({
+        id: leads.id,
+        orgId: leads.orgId,
+        procurMetadata: leads.procurMetadata,
+        externalKeys: leads.externalKeys,
+        updatedAt: leads.updatedAt,
+      })
+      .from(leads)
+      .orderBy(desc(leads.updatedAt))
+      .limit(60);
+
+    const items: EvidenceItem[] = [];
+    for (const r of rows) {
+      const meta = r.procurMetadata as LeadProcurMetadata;
+      if (!hasProcurContext(meta)) continue;
+      const text = renderProcurContextChunk(r.id, meta);
+      items.push({
+        chunk_id: `procur_context:${r.id}`,
+        // Render against the org so the chat agent surfaces it when
+        // the operator asks about the buyer org by name (without
+        // having to know the lead id).
+        object_type: "organization",
+        object_id: r.orgId,
+        chunk_text: text,
+        source_ref: `lead ${r.id} (procur)`,
+        source_type: "hydration",
+        occurred_at: r.updatedAt instanceof Date ? r.updatedAt : new Date(),
+        freshness_hours: 0,
+        confidence_score: 0.85,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      });
+      if (items.length >= 30) break;
+    }
+    return items;
   }
 
   private async fetchAggregates(tx: Tx): Promise<EvidenceAggregates> {
@@ -1727,5 +1783,94 @@ function mostCommon(values: string[]): string | undefined {
   return top?.value;
 }
 
+/**
+ * Detect whether a procur metadata blob carries any of the
+ * "WHY context" fields (pushReason / signals / matchQueue / ownership).
+ * Other fields (productSpecs, marketContext, etc.) don't qualify on
+ * their own — they're already covered by the existing org chunk.
+ */
+function hasProcurContext(meta: LeadProcurMetadata | null | undefined): boolean {
+  if (!meta) return false;
+  if (typeof meta.pushReason === "string" && meta.pushReason.trim().length > 0) {
+    return true;
+  }
+  if (Array.isArray(meta.signals) && meta.signals.length > 0) return true;
+  if (meta.matchQueue) return true;
+  if (
+    meta.ownership &&
+    ((meta.ownership.parents && meta.ownership.parents.length > 0) ||
+      (meta.ownership.subsidiaries && meta.ownership.subsidiaries.length > 0))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Render a procur-context chunk to the chat agent. Cited as
+ * `[procur]` in answers — the source_ref is `lead {id} (procur)` so
+ * an inspector can trace back to the originating row.
+ */
+function renderProcurContextChunk(
+  leadId: string,
+  meta: LeadProcurMetadata,
+): string {
+  const lines: string[] = [`Procur context for lead ${leadId}:`];
+  if (meta.pushReason) {
+    lines.push(`  Push reason: ${meta.pushReason.trim()}`);
+  }
+  if (meta.matchQueue) {
+    const score = (meta.matchQueue.score * 100).toFixed(0);
+    lines.push(`  Match-queue score: ${score}/100`);
+    if (meta.matchQueue.reasons.length > 0) {
+      lines.push(`  Match reasons: ${meta.matchQueue.reasons.join("; ")}`);
+    }
+    if (
+      meta.matchQueue.relatedOpportunities &&
+      meta.matchQueue.relatedOpportunities.length > 0
+    ) {
+      lines.push(
+        `  Related opportunities: ${meta.matchQueue.relatedOpportunities.slice(0, 5).join(", ")}`,
+      );
+    }
+  }
+  if (Array.isArray(meta.signals) && meta.signals.length > 0) {
+    lines.push("  Recent signals:");
+    for (const s of meta.signals.slice(0, 5)) {
+      const weight = typeof s.weight === "number" ? ` (weight ${s.weight.toFixed(2)})` : "";
+      lines.push(
+        `    - [${s.kind} @ ${s.occurredAt}] ${s.narrative}${weight}`,
+      );
+    }
+  }
+  if (meta.ownership) {
+    const parents = meta.ownership.parents ?? [];
+    const subs = meta.ownership.subsidiaries ?? [];
+    if (parents.length > 0) {
+      lines.push(
+        `  Parents: ${parents
+          .slice(0, 5)
+          .map((p) => `${p.legalName ?? p.orgKey}${p.role ? ` (${p.role})` : ""}`)
+          .join(", ")}`,
+      );
+    }
+    if (subs.length > 0) {
+      lines.push(
+        `  Subsidiaries: ${subs
+          .slice(0, 5)
+          .map((s) => `${s.legalName ?? s.orgKey}${s.role ? ` (${s.role})` : ""}`)
+          .join(", ")}`,
+      );
+    }
+  }
+  return lines.join("\n");
+}
+
 // kept for test reuse
-export const __test = { rerankScore, truncateToCap, normalizedRrf };
+export const __test = {
+  rerankScore,
+  truncateToCap,
+  normalizedRrf,
+  hasProcurContext,
+  renderProcurContextChunk,
+};
