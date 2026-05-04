@@ -27,6 +27,7 @@ import {
   renderStrategyPreamble,
   renderWhatsAppTemplatesPreamble,
   renderTemplatesPreamble,
+  extractPlaceholders,
   ActionDescriptor,
 } from "@vex/agents";
 import { createId, isUlid, TenantId, type AgentRunId } from "@vex/domain";
@@ -480,9 +481,7 @@ export class QueryService {
         ...(a.rationale ? { rationale: a.rationale } : {}),
       };
       const parsed = ActionDescriptor.safeParse(flattened);
-      if (parsed.success) {
-        pending.push(a);
-      } else {
+      if (!parsed.success) {
         const reason = parsed.error.issues
           .map((i) => `${i.path.join(".") || "<root>"}: ${i.message}`)
           .join("; ");
@@ -490,7 +489,24 @@ export class QueryService {
           `rejecting malformed ${a.kind} proposal from chat: ${reason}`,
         );
         rejected.push({ actionType: a.kind, tier: a.tier, reason });
+        continue;
       }
+      // Hard guard: if the agent rendered a templated action and left
+      // any `{{name}}` placeholder unresolved, refuse to persist —
+      // the literal braces would otherwise ship to the recipient
+      // (email/SMS) or to the AI agent's system prompt during a
+      // call, which sounds broken in both modes. Rejected with a
+      // structured reason so the operator sees exactly what the
+      // model was missing.
+      const unresolvedReason = unresolvedPlaceholderReason(a, flattened);
+      if (unresolvedReason) {
+        this.log.warn(
+          `rejecting ${a.kind} proposal from chat with unresolved variables: ${unresolvedReason}`,
+        );
+        rejected.push({ actionType: a.kind, tier: a.tier, reason: unresolvedReason });
+        continue;
+      }
+      pending.push(a);
     }
     if (pending.length === 0) return { created: [], rejected };
     const created: CreatedApproval[] = [];
@@ -755,6 +771,69 @@ export function bundleActionsIfMultiple(
       rationale,
     },
   ];
+}
+
+/**
+ * Scan the rendered fields of a templated action proposal for any
+ * `{{name}}` placeholders the agent failed to substitute. Returns a
+ * structured reason string when found (e.g.
+ * `"unresolved variables in body: call_topic, proposed_windows"`),
+ * `null` otherwise.
+ *
+ * Per-kind which fields are user-visible content:
+ *   - email.send      → subject + body
+ *   - sms.send        → body
+ *   - whatsapp.send   → body  (freeform path)
+ *   - outbound_call   → aiInstructions
+ *   - whatsapp.send_template
+ *                     → contentVariables values  (the rendered values
+ *                       Twilio will splice into the template)
+ *
+ * Other action kinds (org.tag, deal.status_change, …) don't take
+ * free-text content from templates, so they never need this check.
+ */
+function unresolvedPlaceholderReason(
+  action: ProposedAction,
+  flattened: Record<string, unknown>,
+): string | null {
+  const fields: Array<{ label: string; value: unknown }> = [];
+  switch (action.kind) {
+    case "email.send":
+      fields.push({ label: "subject", value: flattened["subject"] });
+      fields.push({ label: "body", value: flattened["body"] });
+      break;
+    case "sms.send":
+    case "whatsapp.send":
+      fields.push({ label: "body", value: flattened["body"] });
+      break;
+    case "outbound_call":
+      fields.push({
+        label: "aiInstructions",
+        value: flattened["aiInstructions"],
+      });
+      break;
+    case "whatsapp.send_template": {
+      const vars = flattened["contentVariables"];
+      if (vars && typeof vars === "object") {
+        for (const [k, v] of Object.entries(vars as Record<string, unknown>)) {
+          fields.push({ label: `contentVariables[${k}]`, value: v });
+        }
+      }
+      break;
+    }
+    default:
+      return null;
+  }
+  const offenders: string[] = [];
+  for (const { label, value } of fields) {
+    if (typeof value !== "string") continue;
+    const unresolved = extractPlaceholders(value);
+    if (unresolved.length > 0) {
+      offenders.push(`${label}: ${unresolved.join(", ")}`);
+    }
+  }
+  if (offenders.length === 0) return null;
+  return `unresolved template variable(s) — ${offenders.join("; ")}`;
 }
 
 function isConversationalOpener(message: string): boolean {

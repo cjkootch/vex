@@ -36,6 +36,43 @@ export function extractPlaceholders(text: string): string[] {
 }
 
 /**
+ * Error thrown when a rendered template (subject / body /
+ * aiInstructions) still has `{{name}}` placeholders after
+ * substitution — i.e., a variable the operator declared in the
+ * template wasn't resolvable from the recipient context. Carries the
+ * full list of unresolved names so the caller can surface them
+ * specifically (e.g. as a rejected-proposal reason or a workflow
+ * skip reason). Never thrown during render itself; render leaves
+ * placeholders intact and the caller asserts after.
+ */
+export class UnresolvedTemplateVariablesError extends Error {
+  constructor(public readonly variables: readonly string[]) {
+    super(`unresolved template variables: ${variables.join(", ")}`);
+    this.name = "UnresolvedTemplateVariablesError";
+  }
+}
+
+/**
+ * Throw `UnresolvedTemplateVariablesError` if `rendered` still
+ * contains any `{{name}}` placeholders. Used as a hard guard at the
+ * boundaries — chat-time before persisting an approval, workflow-
+ * time before writing the dispatched payload — so vex never
+ * delivers literal `{{...}}` to a recipient or to the AI-call
+ * system prompt.
+ *
+ * Multiple field strings (e.g. email subject AND body) can be
+ * checked in one call by joining with whitespace; the error's
+ * `variables` array is deduped so each unresolved name shows once.
+ */
+export function assertNoUnresolvedPlaceholders(...rendered: string[]): void {
+  const merged = rendered.join("\n");
+  const unresolved = extractPlaceholders(merged);
+  if (unresolved.length > 0) {
+    throw new UnresolvedTemplateVariablesError(unresolved);
+  }
+}
+
+/**
  * Renders the workspace's Vex-native email / SMS / call template
  * registry as a compact preamble for the chat system prompt. Lets the
  * agent pick a template by name when the operator says

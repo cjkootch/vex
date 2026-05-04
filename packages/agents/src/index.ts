@@ -33,6 +33,8 @@ export {
   renderTemplatesPreamble,
   substituteTemplate,
   extractPlaceholders,
+  assertNoUnresolvedPlaceholders,
+  UnresolvedTemplateVariablesError,
   STRATEGY_DRAFT_SYSTEM_PROMPT,
   STRATEGY_DRAFT_PROMPT_VERSION,
   buildStrategyDraftUserMessage,

@@ -1081,6 +1081,27 @@ interface DraftPreview {
   body: string;
   /** ISO 639-1 code if the draft is tagged with a language. */
   lang?: string;
+  /**
+   * Operator-friendly name of the registered template the chat
+   * agent applied. Surfaced as a "from template: {name}" badge
+   * above the body so the operator sees provenance without
+   * inspecting the payload.
+   */
+  templateName?: string;
+  /**
+   * One-line summary of the call's purpose (outbound_call only,
+   * but stored generically here so the preview component can
+   * render it for any action that supplies it). Bolded above the
+   * full instructions block so the operator can approve without
+   * reading the entire system prompt.
+   */
+  goalHint?: string;
+  /**
+   * Whether this is a voice action — affects the body header label
+   * ("Instructions" vs "Body") so operators don't confuse a call
+   * script with an outgoing message.
+   */
+  isCall?: boolean;
 }
 
 /**
@@ -1092,12 +1113,26 @@ function extractDraftPreview(
   approval: CreatedApprovalMeta,
 ): DraftPreview | null {
   const p = (approval.payload ?? {}) as Record<string, unknown>;
-  const body =
-    typeof p["body"] === "string" && (p["body"] as string).trim().length > 0
+  const isCall = approval.actionType === "outbound_call";
+  // outbound_call carries its content as `aiInstructions`; messaging
+  // actions carry it as `body`. Either one renders as the chip's
+  // body block — the header label flips to "Instructions" for
+  // calls so an operator approving doesn't confuse a script with
+  // an outgoing message.
+  const bodyField = isCall
+    ? typeof p["aiInstructions"] === "string"
+      ? (p["aiInstructions"] as string)
+      : null
+    : typeof p["body"] === "string"
       ? (p["body"] as string)
       : null;
-  if (!body) return null;
+  if (!bodyField || bodyField.trim().length === 0) return null;
   const recipient = ((): string | undefined => {
+    if (isCall) {
+      const to = p["toNumber"];
+      if (typeof to === "string") return `to: ${to}`;
+      return undefined;
+    }
     const to = p["to"];
     if (typeof to === "string") return `to: ${to}`;
     if (Array.isArray(to) && to.length > 0 && typeof to[0] === "string") {
@@ -1115,30 +1150,60 @@ function extractDraftPreview(
     typeof p["lang"] === "string" && (p["lang"] as string).length === 2
       ? (p["lang"] as string)
       : undefined;
+  const templateName =
+    typeof p["templateName"] === "string" && (p["templateName"] as string).trim()
+      ? (p["templateName"] as string)
+      : undefined;
+  const goalHint =
+    typeof p["goalHint"] === "string" && (p["goalHint"] as string).trim()
+      ? (p["goalHint"] as string)
+      : undefined;
   return {
-    body,
+    body: bodyField,
     ...(recipient ? { recipient } : {}),
     ...(subject ? { subject } : {}),
     ...(lang ? { lang } : {}),
+    ...(templateName ? { templateName } : {}),
+    ...(goalHint ? { goalHint } : {}),
+    ...(isCall ? { isCall: true } : {}),
   };
 }
 
 function DraftPreview({ draft }: { draft: DraftPreview }) {
   return (
     <div className="mt-1 rounded-md border border-line/60 bg-canvas/40 p-2.5">
-      {draft.recipient ? (
-        <div className="text-[11px] text-white/60">
-          {draft.recipient}
-          {draft.lang ? (
-            <span className="ml-2 rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-white/50">
-              {draft.lang}
-            </span>
-          ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        {draft.recipient ? (
+          <span className="text-[11px] text-white/60">{draft.recipient}</span>
+        ) : null}
+        {draft.lang ? (
+          <span className="rounded border border-line px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-white/50">
+            {draft.lang}
+          </span>
+        ) : null}
+        {draft.templateName ? (
+          <span
+            className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-mono text-accent"
+            title={`Rendered from the registered template "${draft.templateName}".`}
+          >
+            from template: {draft.templateName}
+          </span>
+        ) : null}
+      </div>
+      {draft.goalHint ? (
+        <div className="mt-1.5 text-xs font-semibold text-white/85">
+          {draft.isCall ? "Goal: " : ""}
+          {draft.goalHint}
         </div>
       ) : null}
       {draft.subject ? (
         <div className="mt-1 text-xs font-semibold text-white/85">
           {draft.subject}
+        </div>
+      ) : null}
+      {draft.isCall ? (
+        <div className="mt-2 text-[10px] uppercase tracking-wider text-white/40">
+          Instructions
         </div>
       ) : null}
       <pre className="mt-1 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-white/80">
