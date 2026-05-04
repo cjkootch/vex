@@ -62,6 +62,40 @@ const ProcurTradingDefaultsSchema = z.object({
   monthlyFixedOverheadUsdDefault: z.number().nullable().optional(),
 });
 
+/**
+ * Procur work item 3 follow-up (2026-Q3) — the WHY context. Every
+ * field optional so older procur deploys without these in the push
+ * shape keep validating cleanly. See `LeadProcurMetadata` for the
+ * downstream type.
+ */
+const ProcurSignalSchema = z.object({
+  kind: z.enum([
+    "rfq",
+    "tender_award",
+    "vessel_clearance",
+    "customs_event",
+    "news",
+    "other",
+  ]),
+  occurredAt: z.string().min(1).max(40),
+  source: z.string().min(1).max(2000),
+  narrative: z.string().min(1).max(2000),
+  weight: z.number().min(0).max(1).optional(),
+});
+
+const ProcurOwnershipEdgeSchema = z.object({
+  orgKey: z.string().min(1).max(300),
+  legalName: z.string().min(1).max(500).optional(),
+  role: z.string().max(200).optional(),
+  distance: z.number().int().min(1).max(20),
+});
+
+const ProcurMatchQueueSchema = z.object({
+  score: z.number().min(0).max(1),
+  reasons: z.array(z.string().min(1).max(500)).max(20),
+  relatedOpportunities: z.array(z.string().min(1).max(200)).max(50).optional(),
+});
+
 const ProcurMetadataSchema = z
   .object({
     procurApproval: ProcurApprovalSchema.optional(),
@@ -69,6 +103,15 @@ const ProcurMetadataSchema = z
     sourceDocuments: z.array(SourceDocumentSchema).max(50).optional(),
     marketContext: MarketContextSchema.optional(),
     procurTradingDefaults: ProcurTradingDefaultsSchema.optional(),
+    pushReason: z.string().min(1).max(4000).optional(),
+    signals: z.array(ProcurSignalSchema).max(50).optional(),
+    matchQueue: ProcurMatchQueueSchema.optional(),
+    ownership: z
+      .object({
+        parents: z.array(ProcurOwnershipEdgeSchema).max(20).optional(),
+        subsidiaries: z.array(ProcurOwnershipEdgeSchema).max(20).optional(),
+      })
+      .optional(),
   })
   // Procur also stamps free-form context (source, sourceRef,
   // triggeredBy, pushedAt, awardCount, …) on the same metadata

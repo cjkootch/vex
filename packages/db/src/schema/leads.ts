@@ -57,6 +57,68 @@ export interface LeadProcurMetadata {
     targetNetMarginPerUsg?: number | null | undefined;
     monthlyFixedOverheadUsdDefault?: number | null | undefined;
   };
+  /**
+   * Procur work item 3 follow-up (2026-Q3): the WHY behind a push.
+   * Operator asks "why this lead?" / "what's the angle?" — vex
+   * answers from these fields without round-tripping to procur.
+   *
+   * - `pushReason`: free-text, one paragraph max. Lead-with-this when
+   *    explaining the lead in chat.
+   * - `signals`: ordered (most-recent first) list of procurement events
+   *    that motivated the push. Surfaced in the evidence pack so the
+   *    chat agent can cite them as `[procur]`.
+   * - `matchQueue`: how procur's match queue ranked this counterparty
+   *    + the reasons. Optional — only present when the lead came from
+   *    the match queue (vs a manual operator push).
+   * - `ownership`: parent / subsidiary chain (work item 2 — populated
+   *    once procur ships ownership graph). Used during OFAC review to
+   *    flag transitive sanctions exposure.
+   *
+   * All fields optional; absent fields render as empty in the evidence
+   * pack and the agent falls back to whatever data IS present.
+   */
+  pushReason?: string | undefined;
+  signals?: Array<ProcurSignal> | undefined;
+  matchQueue?:
+    | {
+        score: number;
+        reasons: string[];
+        relatedOpportunities?: string[] | undefined;
+      }
+    | undefined;
+  ownership?:
+    | {
+        parents?: Array<ProcurOwnershipEdge> | undefined;
+        subsidiaries?: Array<ProcurOwnershipEdge> | undefined;
+      }
+    | undefined;
+}
+
+export interface ProcurSignal {
+  kind:
+    | "rfq"
+    | "tender_award"
+    | "vessel_clearance"
+    | "customs_event"
+    | "news"
+    | "other";
+  occurredAt: string;
+  /** URL, document id, or system reference where this signal was observed. */
+  source: string;
+  /** Human-readable summary surfaced to operators in chat + the org detail page. */
+  narrative: string;
+  /** Optional procur-side relevance score in [0, 1]; unscored when absent. */
+  weight?: number | undefined;
+}
+
+export interface ProcurOwnershipEdge {
+  /** Procur's external key for the linked org (companyKey or entitySlug). */
+  orgKey: string;
+  /** Display name for UI rendering when the linked org isn't yet a vex row. */
+  legalName?: string | undefined;
+  role?: string | undefined;
+  /** Hops between this lead's org and the linked org. 1 = direct parent / sub. */
+  distance: number;
 }
 
 export const leads = pgTable(
