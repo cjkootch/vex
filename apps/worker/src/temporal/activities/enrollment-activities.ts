@@ -6,10 +6,15 @@ import {
   type ContactRepository,
   type Db,
   type EventRepository,
+  type OrganizationRepository,
   type TouchpointRepository,
+  type WorkspaceRepository,
+  type WorkspaceSettings,
+  type Contact,
 } from "@vex/db";
 import {
   evaluateGate,
+  substituteTemplate,
   type GateContext,
   type GateNode,
   type GateResult,
@@ -35,7 +40,15 @@ export interface EnrollmentActivitiesDeps {
   approvals: ApprovalRepository;
   touchpoints: TouchpointRepository;
   contacts: ContactRepository;
+  organizations: OrganizationRepository;
   events: EventRepository;
+  /**
+   * Read-only settings access for template lookup. Workflow dispatch
+   * resolves the named template + renders {{variables}} from the
+   * recipient context before writing the approval payload, so
+   * downstream executors stay unchanged.
+   */
+  workspaces: WorkspaceRepository;
 }
 
 export interface WorkflowEnrollmentRow {
@@ -56,6 +69,8 @@ export interface WorkflowStepRow {
   channel: string;
   delayAfterPriorMs: number;
   templateRef: string | null;
+  subjectOverride: string | null;
+  bodyOverride: string | null;
   gateConditionJson: Record<string, unknown>;
   tier: string;
   autoApprove: boolean;
@@ -162,6 +177,8 @@ export function buildEnrollmentActivities(deps: EnrollmentActivitiesDeps) {
                 channel: s.channel,
                 delayAfterPriorMs: s.delayAfterPriorMs,
                 templateRef: s.templateRef,
+                subjectOverride: s.subjectOverride,
+                bodyOverride: s.bodyOverride,
                 gateConditionJson: s.gateConditionJson,
                 tier: s.tier,
                 autoApprove: s.autoApprove,
@@ -211,14 +228,19 @@ export function buildEnrollmentActivities(deps: EnrollmentActivitiesDeps) {
     },
 
     /**
-     * Dispatch a step: when `autoApprove` is true, create an approval
-     * row already flagged `approved` so the approval-executor fires
-     * the side effect immediately. Otherwise, create a pending
-     * approval — the workflow then waits for the decision signal.
+     * Dispatch a step: resolve the actual channel-specific payload
+     * (subject + body for email, body + to for SMS / WhatsApp,
+     * aiInstructions + toNumber for outbound_call) by looking up the
+     * named template OR rendering the inline override, then create an
+     * approval whose proposed_payload is what the executor branches
+     * (applyEmailSend / applyMessageSend / applyOutboundCall) already
+     * expect to consume — no executor changes needed.
      *
-     * The approval's proposed_payload mirrors the step's `channel` +
-     * `templateRef` so the existing email.send / sms.send /
-     * whatsapp.send executor branches (Sprints A + B) pick it up.
+     * If the step is misconfigured (no template AND no override, OR
+     * the named template doesn't exist in the registry, OR a required
+     * variable can't be resolved from contact context), dispatch fails
+     * loud with a `skipped` result and a logged reason; the workflow
+     * advances past the broken step rather than stalling forever.
      */
     async dispatchStep(input: {
       tenantId: string;
@@ -226,8 +248,8 @@ export function buildEnrollmentActivities(deps: EnrollmentActivitiesDeps) {
       step: WorkflowStepRow;
       contactId: string;
     }): Promise<DispatchResult> {
-      const actionType = channelToActionType(input.step.channel);
-      if (!actionType) {
+      const channelActionType = channelToActionType(input.step.channel);
+      if (!channelActionType) {
         log.warn("dispatchStep: no action type for channel", {
           enrollment_id: input.enrollmentId,
           channel: input.step.channel,
@@ -235,11 +257,34 @@ export function buildEnrollmentActivities(deps: EnrollmentActivitiesDeps) {
         return { kind: "skipped", approvalId: null, skipReason: "manual_or_unknown_channel" };
       }
 
+      // Resolve the rendered content + final actionType. WhatsApp
+      // template steps flip `whatsapp.send` → `whatsapp.send_template`
+      // because the executor branch is different.
+      let resolved: ResolvedStepPayload;
+      try {
+        resolved = await resolveStepPayload(deps, {
+          tenantId: input.tenantId,
+          contactId: input.contactId,
+          step: input.step,
+          channelActionType,
+        });
+      } catch (err) {
+        const reason = (err as Error).message;
+        log.warn("dispatchStep: payload resolution failed", {
+          enrollment_id: input.enrollmentId,
+          step_id: input.step.id,
+          channel: input.step.channel,
+          reason,
+        });
+        return { kind: "skipped", approvalId: null, skipReason: reason };
+      }
+
       return withTenant(deps.db, input.tenantId, async (tx) => {
         const approval = await deps.approvals.create(tx, input.tenantId, {
           agentRunId: null,
-          actionType,
+          actionType: resolved.actionType,
           proposedPayload: {
+            ...resolved.payload,
             tier: input.step.tier,
             enrollment_id: input.enrollmentId,
             step_id: input.step.id,
@@ -270,7 +315,7 @@ export function buildEnrollmentActivities(deps: EnrollmentActivitiesDeps) {
             metadata: {
               enrollment_id: input.enrollmentId,
               step_id: input.step.id,
-              action_type: actionType,
+              action_type: resolved.actionType,
             },
           });
           return { kind: "auto_approved", approvalId: approval.id };
@@ -289,7 +334,7 @@ export function buildEnrollmentActivities(deps: EnrollmentActivitiesDeps) {
           metadata: {
             enrollment_id: input.enrollmentId,
             step_id: input.step.id,
-            action_type: actionType,
+            action_type: resolved.actionType,
           },
         });
         return { kind: "approval_created", approvalId: approval.id };
@@ -371,4 +416,305 @@ function channelToActionType(channel: string): string | null {
     default:
       return null;
   }
+}
+
+interface ResolvedStepPayload {
+  /**
+   * Final actionType for the approval. Usually matches the channel
+   * default (email.send / sms.send / whatsapp.send / outbound_call),
+   * but flips to `whatsapp.send_template` when a WhatsApp step
+   * references a template registered in workspace settings.
+   */
+  actionType: string;
+  /**
+   * Channel-specific payload fields. Spread into the approval's
+   * proposed_payload so the executor branches see the same shape
+   * they'd see for a chat-driven send (no executor changes needed).
+   */
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Resolve a workflow step + recipient context into a ready-to-dispatch
+ * approval payload. Handles four cases per channel:
+ *
+ *   email + templateRef       → look up email_templates[name],
+ *                                render subject + body, payload =
+ *                                { to: [contact.email], subject, body,
+ *                                  contactId, rationale }
+ *   email + bodyOverride      → render subject_override + body_override,
+ *                                same payload shape
+ *   sms + templateRef         → look up sms_templates[name], render body,
+ *                                payload = { to: contact.phone, body,
+ *                                            contactId, rationale }
+ *   sms + bodyOverride        → render body_override, same payload
+ *   whatsapp + templateRef    → look up whatsapp_templates[name] (Twilio
+ *                                Content Template by HX SID); flip
+ *                                actionType to whatsapp.send_template,
+ *                                resolve contentVariables by position,
+ *                                payload = { to, contentSid,
+ *                                            contentVariables,
+ *                                            templateName, contactId,
+ *                                            rationale }
+ *   whatsapp + bodyOverride   → freeform whatsapp.send (only works in
+ *                                the 24h window — operator's call)
+ *   voice + templateRef       → look up call_templates[name], render
+ *                                aiInstructions, aiMode=true, payload =
+ *                                { contactId, orgId, toNumber,
+ *                                  aiMode: true, aiInstructions, rationale }
+ *   voice + bodyOverride      → bodyOverride becomes aiInstructions
+ *                                directly, same outer shape
+ *
+ * Throws on misconfiguration so dispatch can fail loud and the
+ * workflow advances past a broken step rather than retrying forever.
+ */
+async function resolveStepPayload(
+  deps: EnrollmentActivitiesDeps,
+  input: {
+    tenantId: string;
+    contactId: string;
+    step: WorkflowStepRow;
+    channelActionType: string;
+  },
+): Promise<ResolvedStepPayload> {
+  const { tenantId, contactId, step, channelActionType } = input;
+
+  // Workspace settings (template registries). Bail loud if missing —
+  // a step with a templateRef can't dispatch without them.
+  const settings = await deps.workspaces.getSettings(deps.db, tenantId);
+
+  // Contact + linked org for variable resolution.
+  const contact = await withTenant(deps.db, tenantId, async (tx) =>
+    deps.contacts.findById(tx, contactId),
+  );
+  if (!contact) {
+    throw new Error(`contact ${contactId} not found`);
+  }
+  const org = contact.orgId
+    ? await withTenant(deps.db, tenantId, async (tx) =>
+        deps.organizations.findById(tx, contact.orgId!),
+      )
+    : null;
+
+  const vars = buildVariableMap(contact, org?.legalName ?? null);
+  const rationale = `campaign_enrollment_workflow step ${step.position}`;
+
+  switch (step.channel) {
+    case "email": {
+      const recipientEmail = (contact.emails ?? [])[0];
+      if (!recipientEmail) {
+        throw new Error(`contact ${contactId} has no email on file`);
+      }
+      const { subject, body } = resolveEmailContent(step, settings, vars);
+      return {
+        actionType: channelActionType,
+        payload: {
+          to: [recipientEmail],
+          subject,
+          body,
+          contactId: contact.id,
+          rationale,
+        },
+      };
+    }
+
+    case "sms": {
+      const recipientPhone = (contact.phones ?? [])[0];
+      if (!recipientPhone) {
+        throw new Error(`contact ${contactId} has no phone on file`);
+      }
+      const body = resolveBody(step, settings?.sms_templates, vars, "sms");
+      return {
+        actionType: channelActionType,
+        payload: {
+          to: recipientPhone,
+          body,
+          contactId: contact.id,
+          rationale,
+        },
+      };
+    }
+
+    case "whatsapp": {
+      const recipientPhone = (contact.phones ?? [])[0];
+      if (!recipientPhone) {
+        throw new Error(`contact ${contactId} has no phone on file`);
+      }
+      // Templated WhatsApp → Content Template send (cold-outreach path).
+      if (step.templateRef) {
+        const tmpl = (settings?.whatsapp_templates ?? []).find(
+          (t) => t.name === step.templateRef,
+        );
+        if (!tmpl) {
+          throw new Error(
+            `whatsapp template "${step.templateRef}" not registered`,
+          );
+        }
+        const contentVariables: Record<string, string> = {};
+        const declared = tmpl.variables ?? [];
+        for (let i = 0; i < declared.length; i++) {
+          const varName = declared[i]!;
+          const value = vars[varName];
+          if (value === undefined) {
+            throw new Error(
+              `whatsapp template "${tmpl.name}" variable {{${i + 1}}} (${varName}) not resolvable from contact context`,
+            );
+          }
+          contentVariables[String(i + 1)] = value;
+        }
+        return {
+          actionType: "whatsapp.send_template",
+          payload: {
+            to: recipientPhone,
+            contentSid: tmpl.contentSid,
+            contentVariables,
+            templateName: tmpl.name,
+            contactId: contact.id,
+            rationale,
+          },
+        };
+      }
+      // Untemplated WhatsApp (freeform) — only succeeds when the
+      // recipient is in the 24h window. Operator's responsibility to
+      // sequence inbound first.
+      const body = resolveBody(step, undefined, vars, "whatsapp");
+      return {
+        actionType: channelActionType,
+        payload: {
+          to: recipientPhone,
+          body,
+          contactId: contact.id,
+          rationale,
+        },
+      };
+    }
+
+    case "voice": {
+      const recipientPhone = (contact.phones ?? [])[0];
+      if (!recipientPhone) {
+        throw new Error(`contact ${contactId} has no phone on file`);
+      }
+      if (!contact.orgId) {
+        throw new Error(
+          `contact ${contactId} has no org link — outbound_call requires orgId`,
+        );
+      }
+      const aiInstructions = resolveAiInstructions(step, settings, vars);
+      return {
+        actionType: channelActionType,
+        payload: {
+          contactId: contact.id,
+          orgId: contact.orgId,
+          toNumber: recipientPhone,
+          aiMode: true,
+          ...(aiInstructions ? { aiInstructions } : {}),
+          rationale,
+        },
+      };
+    }
+
+    default:
+      throw new Error(`unsupported workflow channel: ${step.channel}`);
+  }
+}
+
+/** Email = (subject, body), either from a registered template or the override pair. */
+function resolveEmailContent(
+  step: WorkflowStepRow,
+  settings: WorkspaceSettings | null,
+  vars: Record<string, string>,
+): { subject: string; body: string } {
+  if (step.templateRef) {
+    const tmpl = (settings?.email_templates ?? []).find(
+      (t) => t.name === step.templateRef,
+    );
+    if (!tmpl) {
+      throw new Error(`email template "${step.templateRef}" not registered`);
+    }
+    return {
+      subject: substituteTemplate(tmpl.subject, vars),
+      body: substituteTemplate(tmpl.body, vars),
+    };
+  }
+  if (!step.subjectOverride || !step.bodyOverride) {
+    throw new Error(
+      "email step is missing both templateRef and (subjectOverride + bodyOverride)",
+    );
+  }
+  return {
+    subject: substituteTemplate(step.subjectOverride, vars),
+    body: substituteTemplate(step.bodyOverride, vars),
+  };
+}
+
+/** SMS / WhatsApp freeform / Voice fallback — body-only resolution. */
+function resolveBody(
+  step: WorkflowStepRow,
+  registry:
+    | ReadonlyArray<{ name: string; body: string }>
+    | undefined,
+  vars: Record<string, string>,
+  kind: string,
+): string {
+  if (step.templateRef) {
+    const tmpl = (registry ?? []).find((t) => t.name === step.templateRef);
+    if (!tmpl) {
+      throw new Error(`${kind} template "${step.templateRef}" not registered`);
+    }
+    return substituteTemplate(tmpl.body, vars);
+  }
+  if (!step.bodyOverride) {
+    throw new Error(
+      `${kind} step is missing both templateRef and bodyOverride`,
+    );
+  }
+  return substituteTemplate(step.bodyOverride, vars);
+}
+
+/** Voice = aiInstructions, either from call_templates or directly from bodyOverride. */
+function resolveAiInstructions(
+  step: WorkflowStepRow,
+  settings: WorkspaceSettings | null,
+  vars: Record<string, string>,
+): string {
+  if (step.templateRef) {
+    const tmpl = (settings?.call_templates ?? []).find(
+      (t) => t.name === step.templateRef,
+    );
+    if (!tmpl) {
+      throw new Error(`call template "${step.templateRef}" not registered`);
+    }
+    return substituteTemplate(tmpl.aiInstructions, vars);
+  }
+  if (!step.bodyOverride) {
+    throw new Error(
+      "voice step is missing both templateRef and bodyOverride",
+    );
+  }
+  return substituteTemplate(step.bodyOverride, vars);
+}
+
+/**
+ * Standard variable bindings available in every workflow step, derived
+ * from the recipient + their primary org. Operators writing templates
+ * for use in workflows should stick to these names — chat-time evidence
+ * (deal refs, recent touchpoints, free-form context) isn't accessible
+ * from a Temporal activity, by design.
+ */
+function buildVariableMap(
+  contact: Contact,
+  orgLegalName: string | null,
+): Record<string, string> {
+  const fullName = contact.fullName ?? "";
+  const firstName = fullName.split(/\s+/)[0] ?? "";
+  const map: Record<string, string> = {
+    recipient_name: firstName || fullName,
+    recipient_full_name: fullName,
+  };
+  const email = (contact.emails ?? [])[0];
+  if (email) map["recipient_email"] = email;
+  const phone = (contact.phones ?? [])[0];
+  if (phone) map["recipient_phone"] = phone;
+  if (orgLegalName) map["org_name"] = orgLegalName;
+  return map;
 }

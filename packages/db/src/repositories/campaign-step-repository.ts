@@ -22,6 +22,8 @@ export interface CampaignStepCreateInput {
   channel: string;
   delayAfterPriorMs?: number;
   templateRef?: string | null;
+  subjectOverride?: string | null;
+  bodyOverride?: string | null;
   gateConditionJson?: Record<string, unknown>;
   tier?: string;
   autoApprove?: boolean;
@@ -31,6 +33,8 @@ export interface CampaignStepUpdatePatch {
   channel?: string;
   delayAfterPriorMs?: number;
   templateRef?: string | null;
+  subjectOverride?: string | null;
+  bodyOverride?: string | null;
   gateConditionJson?: Record<string, unknown>;
   tier?: string;
   autoApprove?: boolean;
@@ -74,6 +78,8 @@ export class CampaignStepRepository {
         channel: data.channel,
         delayAfterPriorMs: data.delayAfterPriorMs ?? 0,
         templateRef: data.templateRef ?? null,
+        subjectOverride: data.subjectOverride ?? null,
+        bodyOverride: data.bodyOverride ?? null,
         gateConditionJson: data.gateConditionJson ?? {},
         tier: data.tier ?? "T2",
         autoApprove: data.autoApprove ?? false,
@@ -94,6 +100,10 @@ export class CampaignStepRepository {
       values["delayAfterPriorMs"] = patch.delayAfterPriorMs;
     if (patch.templateRef !== undefined)
       values["templateRef"] = patch.templateRef;
+    if (patch.subjectOverride !== undefined)
+      values["subjectOverride"] = patch.subjectOverride;
+    if (patch.bodyOverride !== undefined)
+      values["bodyOverride"] = patch.bodyOverride;
     if (patch.gateConditionJson !== undefined)
       values["gateConditionJson"] = patch.gateConditionJson;
     if (patch.tier !== undefined) values["tier"] = patch.tier;

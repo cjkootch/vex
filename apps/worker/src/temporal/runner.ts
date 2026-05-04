@@ -14,6 +14,7 @@ import {
   SummaryRepository,
   ThreadRepository,
   TouchpointRepository,
+  WorkspaceRepository,
   type Db,
 } from "@vex/db";
 import type {
@@ -87,6 +88,7 @@ export async function startTemporalWorker(
     agentRuns: new AgentRunRepository(),
     campaignSteps: new CampaignStepRepository(),
     campaignEnrollments: new CampaignEnrollmentRepository(),
+    workspaces: new WorkspaceRepository(),
   };
 
   const followUpActivities = buildFollowUpActivities({
@@ -105,7 +107,9 @@ export async function startTemporalWorker(
     approvals: repos.approvals,
     touchpoints: repos.touchpoints,
     contacts: repos.contacts,
+    organizations: repos.organizations,
     events: repos.events,
+    workspaces: repos.workspaces,
   });
 
   const researchActivities = buildResearchActivities({

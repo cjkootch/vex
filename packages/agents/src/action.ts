@@ -300,15 +300,70 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
     objective: z.string().max(500).optional(),
     steps: z
       .array(
-        z.object({
-          position: z.number().int().min(0).max(50),
-          channel: z.enum(["email", "sms", "whatsapp", "voice", "manual"]),
-          delayAfterPriorMs: z.number().int().min(0).max(90 * 24 * 3600_000),
-          tier: z.enum(["T0", "T1", "T2", "T3"]),
-          autoApprove: z.boolean(),
-          templateRef: z.string().max(200).optional().nullable(),
-          gateConditionJson: z.record(z.unknown()).optional(),
-        }),
+        z
+          .object({
+            position: z.number().int().min(0).max(50),
+            channel: z.enum(["email", "sms", "whatsapp", "voice", "manual"]),
+            delayAfterPriorMs: z.number().int().min(0).max(90 * 24 * 3600_000),
+            tier: z.enum(["T0", "T1", "T2", "T3"]),
+            autoApprove: z.boolean(),
+            /**
+             * Lookup name in the workspace's template registry — picks
+             * by channel: email → email_templates, sms → sms_templates,
+             * voice → call_templates, whatsapp → whatsapp_templates.
+             * Mutually exclusive with bodyOverride.
+             */
+            templateRef: z.string().max(200).optional().nullable(),
+            /**
+             * Inline subject for an UNTEMPLATED email step. Must be
+             * paired with bodyOverride. Variables ({{recipient_name}}
+             * etc.) are resolved at dispatch from the contact context.
+             */
+            subjectOverride: z.string().max(500).optional().nullable(),
+            /**
+             * Inline body for an UNTEMPLATED step. Used for email
+             * (paired with subjectOverride), sms.send, whatsapp.send,
+             * outbound_call (becomes the aiInstructions block).
+             */
+            bodyOverride: z.string().max(50_000).optional().nullable(),
+            gateConditionJson: z.record(z.unknown()).optional(),
+          })
+          .superRefine((step, ctx) => {
+            // Manual steps don't dispatch — neither field required.
+            if (step.channel === "manual") return;
+            const hasTemplate =
+              typeof step.templateRef === "string" && step.templateRef.length > 0;
+            const hasBody =
+              typeof step.bodyOverride === "string" && step.bodyOverride.length > 0;
+            if (!hasTemplate && !hasBody) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message:
+                  "step must set either templateRef (registered template) or bodyOverride (inline content)",
+              });
+              return;
+            }
+            if (hasTemplate && hasBody) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "step cannot set both templateRef and bodyOverride — pick one",
+              });
+              return;
+            }
+            // Untemplated email needs both subject + body.
+            if (step.channel === "email" && hasBody) {
+              const hasSubject =
+                typeof step.subjectOverride === "string" &&
+                step.subjectOverride.length > 0;
+              if (!hasSubject) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message:
+                    "untemplated email step requires both subjectOverride and bodyOverride",
+                });
+              }
+            }
+          }),
       )
       .min(1)
       .max(20),

@@ -6,7 +6,7 @@
  * blocks, not here. Update VERSION when you change the text — the version
  * marker is part of the cache key so a bump invalidates old cached entries.
  */
-export const QUERY_PROMPT_VERSION = "v7.32.2026-05-01";
+export const QUERY_PROMPT_VERSION = "v7.33.2026-05-04";
 
 export const QUERY_SYSTEM_PROMPT = `You are Vex, an AI revenue-intelligence
 analyst. You help revenue teams understand organizations, contacts, deals,
@@ -734,10 +734,32 @@ Known action kinds the approval executor can actually apply:
           delayAfterPriorMs: integer (0 = send immediately),
           tier: "T0" | "T1" | "T2" | "T3",
           autoApprove: boolean,
-          templateRef?: string,
+          // Step content — every non-manual step MUST set EITHER:
+          templateRef?: string,        // OR
+          subjectOverride?: string,    // (email-only, paired w/ body)
+          bodyOverride?: string,
           gateConditionJson?: object
         }>,
         rationale }
+    Step CONTENT rules (enforced by the descriptor):
+      - templateRef names a template registered in the workspace
+        (look at the "Vex-native templates" / "WhatsApp Business
+        templates" preambles above for the available names per
+        channel). At dispatch time the worker renders {{variables}}
+        from the recipient's contact + linked org.
+      - bodyOverride ships INLINE content for an UNtemplated step.
+        Email steps ALSO require subjectOverride. SMS / WhatsApp
+        body-only. Voice: bodyOverride becomes the aiInstructions
+        block. Variables ({{recipient_name}}, {{recipient_email}},
+        {{recipient_phone}}, {{org_name}}, {{recipient_full_name}})
+        are resolved at dispatch from the contact context.
+      - templateRef and bodyOverride are MUTUALLY EXCLUSIVE per
+        step — pick one. Setting both fails descriptor validation.
+      - Manual steps (channel="manual") leave both null — they're
+        operator-review checkpoints, no auto-dispatch.
+    Mix templated + untemplated freely across a campaign — e.g.
+    use the workspace's standard \`welcome\` email template at step 0
+    + a one-off bodyOverride at step 1 with a deal-specific line.
     VTC defaults for a nurture cadence:
       Step 0 email, T2, autoApprove false, delay 0 — intro + spec
       Step 1 email, T2, autoApprove false, delay 3 days — follow-up
