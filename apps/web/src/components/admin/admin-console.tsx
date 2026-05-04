@@ -10,6 +10,37 @@ import { EvalsTab } from "./evals-tab";
 import { OfacTab } from "./ofac-tab";
 import { PortsTab } from "./ports-tab";
 import { EmailTab } from "./email-tab";
+import { TemplatesTab } from "./templates-tab";
+
+export interface WhatsAppTemplate {
+  name: string;
+  contentSid: string;
+  description?: string | undefined;
+  variables?: string[] | undefined;
+}
+
+export interface EmailTemplate {
+  name: string;
+  subject: string;
+  body: string;
+  description?: string | undefined;
+  variables?: string[] | undefined;
+}
+
+export interface SmsTemplate {
+  name: string;
+  body: string;
+  description?: string | undefined;
+  variables?: string[] | undefined;
+}
+
+export interface CallTemplate {
+  name: string;
+  aiInstructions: string;
+  goal_hint?: string | undefined;
+  description?: string | undefined;
+  variables?: string[] | undefined;
+}
 
 export interface WorkspaceSettings {
   source_priority: string[];
@@ -26,6 +57,10 @@ export interface WorkspaceSettings {
   };
   email_from_name?: string;
   email_cc?: string[];
+  whatsapp_templates?: WhatsAppTemplate[];
+  email_templates?: EmailTemplate[];
+  sms_templates?: SmsTemplate[];
+  call_templates?: CallTemplate[];
 }
 
 type TabKey =
@@ -36,7 +71,8 @@ type TabKey =
   | "evals"
   | "ofac"
   | "ports"
-  | "email";
+  | "email"
+  | "templates";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "agents", label: "Agents" },
@@ -47,6 +83,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "ofac", label: "OFAC" },
   { key: "ports", label: "Ports" },
   { key: "email", label: "Email" },
+  { key: "templates", label: "Templates" },
 ];
 
 /**
@@ -174,6 +211,9 @@ export function AdminConsole() {
       {activeTab === "ports" ? <PortsTab /> : null}
       {activeTab === "email" ? (
         <EmailTab settings={settings} onPatch={patchSettings} />
+      ) : null}
+      {activeTab === "templates" ? (
+        <TemplatesTab settings={settings} onPatch={patchSettings} />
       ) : null}
     </main>
   );
