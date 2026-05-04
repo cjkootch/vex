@@ -25,6 +25,11 @@ export {
 export { renderStrategyPreamble } from "./strategy.js";
 export { renderWhatsAppTemplatesPreamble } from "./whatsapp-templates.js";
 export {
+  renderTemplatesPreamble,
+  substituteTemplate,
+  extractPlaceholders,
+} from "./templates.js";
+export {
   STRATEGY_DRAFT_SYSTEM_PROMPT,
   STRATEGY_DRAFT_PROMPT_VERSION,
   buildStrategyDraftUserMessage,

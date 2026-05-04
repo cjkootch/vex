@@ -91,6 +91,30 @@ export interface WorkspaceSettings {
    * sends still work inside the 24h window.
    */
   whatsapp_templates?: WhatsAppTemplate[];
+  /**
+   * Operator-authored email templates (Vex-side, distinct from
+   * WhatsApp Content Templates which live at Twilio). Used to keep
+   * outbound emails consistent across operators and over time.
+   * Variables are NAMED placeholders (`{{recipient_name}}`,
+   * `{{deal_ref}}`) — the chat agent resolves them from the evidence
+   * pack at send time. Untemplated freeform `email.send` continues
+   * to work; templates are an opt-in library, not a default.
+   */
+  email_templates?: EmailTemplate[];
+  /**
+   * Operator-authored SMS templates. Same shape as email but body-only
+   * (no subject) and shorter cap. Bodies should fit ≤320 chars
+   * (2 SMS segments) so a templated send doesn't accidentally cost 5x
+   * because of variable expansion.
+   */
+  sms_templates?: SmsTemplate[];
+  /**
+   * Operator-authored AI-call templates. Body is the `aiInstructions`
+   * system prompt the OpenAI Realtime bridge runs against. Used when
+   * the operator says "have vex call X with the {name} script". Same
+   * variable-resolution rules as email / SMS templates.
+   */
+  call_templates?: CallTemplate[];
 }
 
 export interface WhatsAppTemplate {
@@ -120,6 +144,49 @@ export interface WhatsAppTemplate {
    * "deal_ref"]` becomes `{"1": evidence.contact.firstName, "2":
    * evidence.deal.dealRef}`).
    */
+  variables?: string[] | undefined;
+}
+
+/**
+ * Vex-native email template. Variables in `subject` and `body` use
+ * named placeholders (`{{recipient_name}}`, `{{deal_ref}}`), resolved
+ * at send time by the chat agent from the evidence pack. The
+ * declared `variables[]` is a hint to the agent + a render-time
+ * sanity check (warn / refuse if a placeholder isn't declared).
+ */
+export interface EmailTemplate {
+  /** Lowercase + snake_case slug. Unique within the workspace. */
+  name: string;
+  subject: string;
+  body: string;
+  description?: string | undefined;
+  variables?: string[] | undefined;
+}
+
+/**
+ * Vex-native SMS template. Body-only (no subject). Should be kept
+ * ≤320 chars including any worst-case variable expansion to stay
+ * within 2 Twilio segments per send.
+ */
+export interface SmsTemplate {
+  name: string;
+  body: string;
+  description?: string | undefined;
+  variables?: string[] | undefined;
+}
+
+/**
+ * Vex-native AI-call template. `aiInstructions` is the system prompt
+ * the OpenAI Realtime bridge runs against during the call.
+ * `goal_hint` is a one-line summary of what the call is trying to
+ * accomplish; surfaced to the operator on the chip preview so they
+ * know what they're approving without reading the full prompt.
+ */
+export interface CallTemplate {
+  name: string;
+  aiInstructions: string;
+  goal_hint?: string | undefined;
+  description?: string | undefined;
   variables?: string[] | undefined;
 }
 

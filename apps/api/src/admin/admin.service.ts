@@ -60,6 +60,32 @@ export interface SettingsPatch {
         variables?: string[] | undefined;
       }>
     | undefined;
+  email_templates?:
+    | Array<{
+        name: string;
+        subject: string;
+        body: string;
+        description?: string | undefined;
+        variables?: string[] | undefined;
+      }>
+    | undefined;
+  sms_templates?:
+    | Array<{
+        name: string;
+        body: string;
+        description?: string | undefined;
+        variables?: string[] | undefined;
+      }>
+    | undefined;
+  call_templates?:
+    | Array<{
+        name: string;
+        aiInstructions: string;
+        goal_hint?: string | undefined;
+        description?: string | undefined;
+        variables?: string[] | undefined;
+      }>
+    | undefined;
 }
 
 export interface HealthMetrics {
@@ -432,6 +458,38 @@ function mergeSettings(
       next.whatsapp_templates = cleaned;
     } else {
       delete next.whatsapp_templates;
+    }
+  }
+  // Vex-native templates (email / sms / call). Same dedupe-by-name +
+  // empty-list-clears semantics as whatsapp_templates above.
+  if (patch.email_templates !== undefined) {
+    const byName = new Map<string, NonNullable<typeof patch.email_templates>[number]>();
+    for (const t of patch.email_templates) byName.set(t.name, t);
+    const cleaned = Array.from(byName.values());
+    if (cleaned.length > 0) {
+      next.email_templates = cleaned;
+    } else {
+      delete next.email_templates;
+    }
+  }
+  if (patch.sms_templates !== undefined) {
+    const byName = new Map<string, NonNullable<typeof patch.sms_templates>[number]>();
+    for (const t of patch.sms_templates) byName.set(t.name, t);
+    const cleaned = Array.from(byName.values());
+    if (cleaned.length > 0) {
+      next.sms_templates = cleaned;
+    } else {
+      delete next.sms_templates;
+    }
+  }
+  if (patch.call_templates !== undefined) {
+    const byName = new Map<string, NonNullable<typeof patch.call_templates>[number]>();
+    for (const t of patch.call_templates) byName.set(t.name, t);
+    const cleaned = Array.from(byName.values());
+    if (cleaned.length > 0) {
+      next.call_templates = cleaned;
+    } else {
+      delete next.call_templates;
     }
   }
   return next;
