@@ -147,6 +147,7 @@ describe("ActionDescriptor", () => {
           delayAfterPriorMs: 0,
           tier: "T2",
           autoApprove: false,
+          templateRef: "haiti_intro",
         },
         {
           position: 1,
@@ -154,6 +155,8 @@ describe("ActionDescriptor", () => {
           delayAfterPriorMs: 3 * 86_400_000,
           tier: "T2",
           autoApprove: false,
+          subjectOverride: "Following up — {{recipient_name}}",
+          bodyOverride: "Quick check on parboiled rice availability for Q3.",
         },
         {
           position: 2,
@@ -161,12 +164,108 @@ describe("ActionDescriptor", () => {
           delayAfterPriorMs: 7 * 86_400_000,
           tier: "T2",
           autoApprove: false,
+          templateRef: "haiti_sms_followup",
         },
       ],
       rationale: "No existing Haitian-importer cadence; propose a new 3-step multi-channel nurture.",
     });
     expect(parsed.kind).toBe("campaign.create");
     expect(actionRequiresApproval(parsed)).toBe(true);
+  });
+
+  it("rejects a campaign step that's neither templated nor inline", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "campaign.create",
+        tier: ApprovalTier.T2,
+        name: "bad",
+        channel: "email",
+        steps: [
+          {
+            position: 0,
+            channel: "email",
+            delayAfterPriorMs: 0,
+            tier: "T2",
+            autoApprove: false,
+            // neither templateRef nor bodyOverride set
+          },
+        ],
+        rationale: "x",
+      }),
+    ).toThrow(/either templateRef.*or bodyOverride/);
+  });
+
+  it("rejects an untemplated email step missing a subjectOverride", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "campaign.create",
+        tier: ApprovalTier.T2,
+        name: "bad",
+        channel: "email",
+        steps: [
+          {
+            position: 0,
+            channel: "email",
+            delayAfterPriorMs: 0,
+            tier: "T2",
+            autoApprove: false,
+            bodyOverride: "Body without subject.",
+          },
+        ],
+        rationale: "x",
+      }),
+    ).toThrow(/subjectOverride and bodyOverride/);
+  });
+
+  it("rejects a step that sets BOTH templateRef and bodyOverride", () => {
+    expect(() =>
+      ActionDescriptor.parse({
+        kind: "campaign.create",
+        tier: ApprovalTier.T2,
+        name: "bad",
+        channel: "sms",
+        steps: [
+          {
+            position: 0,
+            channel: "sms",
+            delayAfterPriorMs: 0,
+            tier: "T2",
+            autoApprove: false,
+            templateRef: "tpl_x",
+            bodyOverride: "Inline body.",
+          },
+        ],
+        rationale: "x",
+      }),
+    ).toThrow(/cannot set both/);
+  });
+
+  it("accepts a campaign with a manual step that has neither templateRef nor bodyOverride", () => {
+    const parsed = ActionDescriptor.parse({
+      kind: "campaign.create",
+      tier: ApprovalTier.T2,
+      name: "manual-then-email",
+      channel: "multi",
+      steps: [
+        {
+          position: 0,
+          channel: "manual",
+          delayAfterPriorMs: 0,
+          tier: "T1",
+          autoApprove: false,
+        },
+        {
+          position: 1,
+          channel: "email",
+          delayAfterPriorMs: 86_400_000,
+          tier: "T2",
+          autoApprove: false,
+          templateRef: "tpl_followup",
+        },
+      ],
+      rationale: "Reviewer note step then a templated follow-up.",
+    });
+    expect(parsed.kind).toBe("campaign.create");
   });
 
   it("rejects campaign.create with zero steps", () => {

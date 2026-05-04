@@ -32,9 +32,50 @@ function buildDeps() {
     touchpoints: {
       listForContactSince: vi.fn().mockResolvedValue([]),
     },
-    contacts: {},
+    contacts: {
+      findById: vi.fn().mockResolvedValue({
+        id: "ct1",
+        fullName: "Cole Kutschinski",
+        emails: ["cole@example.com"],
+        phones: ["+18324927169"],
+        orgId: "org1",
+      }),
+    },
+    organizations: {
+      findById: vi.fn().mockResolvedValue({
+        id: "org1",
+        legalName: "Vector Trade Capital",
+      }),
+    },
     events: {
       insertIfNotExists: vi.fn().mockResolvedValue(undefined),
+    },
+    workspaces: {
+      getSettings: vi.fn().mockResolvedValue({
+        email_templates: [
+          {
+            name: "tpl_foo",
+            subject: "Hi {{recipient_name}}",
+            body: "Body for {{recipient_name}} at {{org_name}}.",
+          },
+        ],
+        sms_templates: [
+          { name: "tpl_foo", body: "SMS for {{recipient_name}}." },
+        ],
+        whatsapp_templates: [
+          {
+            name: "tpl_foo",
+            contentSid: "HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            variables: ["recipient_name"],
+          },
+        ],
+        call_templates: [
+          {
+            name: "tpl_foo",
+            aiInstructions: "Ask {{recipient_name}} about the deal.",
+          },
+        ],
+      }),
     },
   };
 }
@@ -88,6 +129,8 @@ describe("enrollment activities — loadEnrollmentContext", () => {
         channel: "email",
         delayAfterPriorMs: 0,
         templateRef: "tpl_foo",
+        subjectOverride: null,
+        bodyOverride: null,
         gateConditionJson: {},
         tier: "T2",
         autoApprove: false,
@@ -98,6 +141,8 @@ describe("enrollment activities — loadEnrollmentContext", () => {
         channel: "sms",
         delayAfterPriorMs: 3600_000,
         templateRef: null,
+        subjectOverride: null,
+        bodyOverride: null,
         gateConditionJson: { intent: "interested" },
         tier: "T2",
         autoApprove: false,
@@ -131,120 +176,193 @@ describe("enrollment activities — loadEnrollmentContext", () => {
   });
 });
 
+
 describe("enrollment activities — dispatchStep", () => {
-  it("creates an approval + emits enrollment.step.approval_created for a T2 email step", async () => {
+  function makeStep(overrides: Partial<{
+    id: string;
+    position: number;
+    channel: string;
+    templateRef: string | null;
+    subjectOverride: string | null;
+    bodyOverride: string | null;
+    autoApprove: boolean;
+    tier: string;
+  }> = {}) {
+    return {
+      id: "s0",
+      position: 0,
+      channel: "email",
+      delayAfterPriorMs: 0,
+      templateRef: "tpl_foo" as string | null,
+      subjectOverride: null as string | null,
+      bodyOverride: null as string | null,
+      gateConditionJson: {},
+      tier: "T2",
+      autoApprove: false,
+      ...overrides,
+    };
+  }
+
+  it("renders a templated email — subject + body substituted, payload has to/subject/body", async () => {
     const deps = buildDeps();
     const activities = buildEnrollmentActivities(asDeps(deps));
     const result = await activities.dispatchStep({
       tenantId: TENANT,
       enrollmentId: "e1",
       contactId: "ct1",
-      step: {
-        id: "s0",
-        position: 0,
-        channel: "email",
-        delayAfterPriorMs: 0,
-        templateRef: "tpl_foo",
-        gateConditionJson: {},
-        tier: "T2",
-        autoApprove: false,
-      },
+      step: makeStep({ channel: "email", templateRef: "tpl_foo" }),
     });
     expect(result.kind).toBe("approval_created");
-    expect(result.approvalId).toBeTruthy();
     const createArgs = (deps.approvals.create as ReturnType<typeof vi.fn>).mock
       .calls[0]![2];
     expect(createArgs.actionType).toBe("email.send");
-    expect(createArgs.proposedPayload.step_id).toBe("s0");
-    expect(createArgs.proposedPayload.auto_approved).toBe(false);
-    expect(deps.approvals.decide).not.toHaveBeenCalled();
-
-    const eventArgs = (deps.events.insertIfNotExists as ReturnType<typeof vi.fn>).mock
-      .calls[0]![2];
-    expect(eventArgs.verb).toBe("enrollment.step.approval_created");
+    expect(createArgs.proposedPayload.subject).toBe("Hi Cole");
+    expect(createArgs.proposedPayload.body).toBe(
+      "Body for Cole at Vector Trade Capital.",
+    );
+    expect(createArgs.proposedPayload.to).toEqual(["cole@example.com"]);
+    expect(createArgs.proposedPayload.template_ref).toBe("tpl_foo");
   });
 
-  it("auto-approves when step.autoApprove is true and emits the auto_approved event", async () => {
+  it("renders an UNtemplated email from subject + body overrides", async () => {
+    const deps = buildDeps();
+    const activities = buildEnrollmentActivities(asDeps(deps));
+    await activities.dispatchStep({
+      tenantId: TENANT,
+      enrollmentId: "e1",
+      contactId: "ct1",
+      step: makeStep({
+        channel: "email",
+        templateRef: null,
+        subjectOverride: "Inline {{recipient_name}}",
+        bodyOverride: "Inline body for {{recipient_name}}.",
+      }),
+    });
+    const createArgs = (deps.approvals.create as ReturnType<typeof vi.fn>).mock
+      .calls[0]![2];
+    expect(createArgs.proposedPayload.subject).toBe("Inline Cole");
+    expect(createArgs.proposedPayload.body).toBe("Inline body for Cole.");
+  });
+
+  it("renders templated SMS body with the contact's phone in the payload", async () => {
+    const deps = buildDeps();
+    const activities = buildEnrollmentActivities(asDeps(deps));
+    await activities.dispatchStep({
+      tenantId: TENANT,
+      enrollmentId: "e1",
+      contactId: "ct1",
+      step: makeStep({ channel: "sms", templateRef: "tpl_foo" }),
+    });
+    const createArgs = (deps.approvals.create as ReturnType<typeof vi.fn>).mock
+      .calls[0]![2];
+    expect(createArgs.actionType).toBe("sms.send");
+    expect(createArgs.proposedPayload.body).toBe("SMS for Cole.");
+    expect(createArgs.proposedPayload.to).toBe("+18324927169");
+  });
+
+  it("flips actionType to whatsapp.send_template when a WhatsApp step references a registered template", async () => {
+    const deps = buildDeps();
+    const activities = buildEnrollmentActivities(asDeps(deps));
+    await activities.dispatchStep({
+      tenantId: TENANT,
+      enrollmentId: "e1",
+      contactId: "ct1",
+      step: makeStep({ channel: "whatsapp", templateRef: "tpl_foo" }),
+    });
+    const createArgs = (deps.approvals.create as ReturnType<typeof vi.fn>).mock
+      .calls[0]![2];
+    expect(createArgs.actionType).toBe("whatsapp.send_template");
+    expect(createArgs.proposedPayload.contentSid).toBe(
+      "HXaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    expect(createArgs.proposedPayload.contentVariables).toEqual({
+      "1": "Cole",
+    });
+    expect(createArgs.proposedPayload.templateName).toBe("tpl_foo");
+  });
+
+  it("renders a voice call template into outbound_call with aiInstructions + aiMode", async () => {
+    const deps = buildDeps();
+    const activities = buildEnrollmentActivities(asDeps(deps));
+    await activities.dispatchStep({
+      tenantId: TENANT,
+      enrollmentId: "e1",
+      contactId: "ct1",
+      step: makeStep({ channel: "voice", templateRef: "tpl_foo" }),
+    });
+    const createArgs = (deps.approvals.create as ReturnType<typeof vi.fn>).mock
+      .calls[0]![2];
+    expect(createArgs.actionType).toBe("outbound_call");
+    expect(createArgs.proposedPayload.aiMode).toBe(true);
+    expect(createArgs.proposedPayload.aiInstructions).toBe(
+      "Ask Cole about the deal.",
+    );
+    expect(createArgs.proposedPayload.toNumber).toBe("+18324927169");
+    expect(createArgs.proposedPayload.orgId).toBe("org1");
+  });
+
+  it("auto-approves and emits enrollment.step.auto_approved when step.autoApprove is true", async () => {
     const deps = buildDeps();
     const activities = buildEnrollmentActivities(asDeps(deps));
     const result = await activities.dispatchStep({
       tenantId: TENANT,
       enrollmentId: "e1",
       contactId: "ct1",
-      step: {
-        id: "s0",
-        position: 0,
-        channel: "email",
-        delayAfterPriorMs: 0,
-        templateRef: "tpl_foo",
-        gateConditionJson: {},
-        tier: "T2",
-        autoApprove: true,
-      },
+      step: makeStep({ channel: "email", templateRef: "tpl_foo", autoApprove: true }),
     });
     expect(result.kind).toBe("auto_approved");
     expect(deps.approvals.decide).toHaveBeenCalledOnce();
-    const decideArgs = (deps.approvals.decide as ReturnType<typeof vi.fn>).mock
-      .calls[0]!;
-    expect(decideArgs[2]).toBe("auto_approved");
     const eventArgs = (deps.events.insertIfNotExists as ReturnType<typeof vi.fn>).mock
       .calls[0]![2];
     expect(eventArgs.verb).toBe("enrollment.step.auto_approved");
   });
 
-  it("maps channel → executor action type for all wired channels", async () => {
-    const deps = buildDeps();
-    const activities = buildEnrollmentActivities(asDeps(deps));
-    const channels: Array<{ channel: string; expected: string }> = [
-      { channel: "email", expected: "email.send" },
-      { channel: "sms", expected: "sms.send" },
-      { channel: "whatsapp", expected: "whatsapp.send" },
-      { channel: "voice", expected: "outbound_call" },
-    ];
-    for (const { channel, expected } of channels) {
-      (deps.approvals.create as ReturnType<typeof vi.fn>).mockClear();
-      await activities.dispatchStep({
-        tenantId: TENANT,
-        enrollmentId: "e1",
-        contactId: "ct1",
-        step: {
-          id: `s-${channel}`,
-          position: 0,
-          channel,
-          delayAfterPriorMs: 0,
-          templateRef: null,
-          gateConditionJson: {},
-          tier: "T2",
-          autoApprove: false,
-        },
-      });
-      const createArgs = (deps.approvals.create as ReturnType<typeof vi.fn>).mock
-        .calls[0]![2];
-      expect(createArgs.actionType).toBe(expected);
-    }
-  });
-
-  it("skips (no approval) for a manual step and reports skipReason", async () => {
+  it("skips with a clear reason when the named template isn't registered", async () => {
     const deps = buildDeps();
     const activities = buildEnrollmentActivities(asDeps(deps));
     const result = await activities.dispatchStep({
       tenantId: TENANT,
       enrollmentId: "e1",
       contactId: "ct1",
-      step: {
-        id: "s_manual",
-        position: 0,
-        channel: "manual",
-        delayAfterPriorMs: 0,
-        templateRef: null,
-        gateConditionJson: {},
-        tier: "T2",
-        autoApprove: false,
-      },
+      step: makeStep({ channel: "email", templateRef: "no_such_template" }),
+    });
+    expect(result.kind).toBe("skipped");
+    expect(result.skipReason).toMatch(/email template "no_such_template" not registered/);
+    expect(deps.approvals.create).not.toHaveBeenCalled();
+  });
+
+  it("skips when contact has no email on file for an email step", async () => {
+    const deps = buildDeps();
+    deps.contacts.findById.mockResolvedValueOnce({
+      id: "ct1",
+      fullName: "Cole",
+      emails: [],
+      phones: ["+18324927169"],
+      orgId: "org1",
+    });
+    const activities = buildEnrollmentActivities(asDeps(deps));
+    const result = await activities.dispatchStep({
+      tenantId: TENANT,
+      enrollmentId: "e1",
+      contactId: "ct1",
+      step: makeStep({ channel: "email", templateRef: "tpl_foo" }),
+    });
+    expect(result.kind).toBe("skipped");
+    expect(result.skipReason).toMatch(/no email on file/);
+  });
+
+  it("skips manual steps before any resolution", async () => {
+    const deps = buildDeps();
+    const activities = buildEnrollmentActivities(asDeps(deps));
+    const result = await activities.dispatchStep({
+      tenantId: TENANT,
+      enrollmentId: "e1",
+      contactId: "ct1",
+      step: makeStep({ channel: "manual", templateRef: null }),
     });
     expect(result.kind).toBe("skipped");
     expect(result.skipReason).toBe("manual_or_unknown_channel");
-    expect(deps.approvals.create).not.toHaveBeenCalled();
+    expect(deps.contacts.findById).not.toHaveBeenCalled();
   });
 });
 
