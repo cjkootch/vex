@@ -28,6 +28,8 @@ export {
   renderTemplatesPreamble,
   substituteTemplate,
   extractPlaceholders,
+  assertNoUnresolvedPlaceholders,
+  UnresolvedTemplateVariablesError,
 } from "./templates.js";
 export {
   STRATEGY_DRAFT_SYSTEM_PROMPT,

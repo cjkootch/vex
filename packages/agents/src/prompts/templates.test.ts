@@ -3,6 +3,8 @@ import {
   renderTemplatesPreamble,
   substituteTemplate,
   extractPlaceholders,
+  assertNoUnresolvedPlaceholders,
+  UnresolvedTemplateVariablesError,
 } from "./templates.js";
 
 describe("substituteTemplate", () => {
@@ -119,5 +121,60 @@ describe("renderTemplatesPreamble", () => {
     );
     expect(out).toContain("OPT-IN");
     expect(out).toContain("freeform");
+  });
+});
+
+describe("assertNoUnresolvedPlaceholders", () => {
+  it("returns silently when all placeholders are resolved", () => {
+    expect(() =>
+      assertNoUnresolvedPlaceholders("Hi Cole", "Body for Cole"),
+    ).not.toThrow();
+  });
+
+  it("returns silently for plain text with no placeholders", () => {
+    expect(() =>
+      assertNoUnresolvedPlaceholders("hello world"),
+    ).not.toThrow();
+  });
+
+  it("throws UnresolvedTemplateVariablesError listing all unresolved names", () => {
+    let caught: unknown = null;
+    try {
+      assertNoUnresolvedPlaceholders(
+        "Hi {{recipient_name}}",
+        "Call about {{call_topic}} at {{proposed_windows}}",
+      );
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UnresolvedTemplateVariablesError);
+    const e = caught as UnresolvedTemplateVariablesError;
+    expect(e.variables).toEqual([
+      "call_topic",
+      "proposed_windows",
+      "recipient_name",
+    ]);
+    expect(e.message).toContain("call_topic");
+    expect(e.message).toContain("proposed_windows");
+  });
+
+  it("dedupes the unresolved-variable list across multiple input strings", () => {
+    let caught: unknown = null;
+    try {
+      assertNoUnresolvedPlaceholders(
+        "Hi {{recipient_name}}",
+        "Goodbye {{recipient_name}}",
+      );
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UnresolvedTemplateVariablesError);
+    expect((caught as UnresolvedTemplateVariablesError).variables).toEqual([
+      "recipient_name",
+    ]);
+  });
+
+  it("handles no inputs cleanly (vacuous truth — nothing to assert)", () => {
+    expect(() => assertNoUnresolvedPlaceholders()).not.toThrow();
   });
 });

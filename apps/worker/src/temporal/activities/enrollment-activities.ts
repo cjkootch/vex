@@ -15,6 +15,7 @@ import {
 import {
   evaluateGate,
   substituteTemplate,
+  assertNoUnresolvedPlaceholders,
   type GateContext,
   type GateNode,
   type GateResult,
@@ -624,6 +625,8 @@ function resolveEmailContent(
   settings: WorkspaceSettings | null,
   vars: Record<string, string>,
 ): { subject: string; body: string } {
+  let subject: string;
+  let body: string;
   if (step.templateRef) {
     const tmpl = (settings?.email_templates ?? []).find(
       (t) => t.name === step.templateRef,
@@ -631,20 +634,23 @@ function resolveEmailContent(
     if (!tmpl) {
       throw new Error(`email template "${step.templateRef}" not registered`);
     }
-    return {
-      subject: substituteTemplate(tmpl.subject, vars),
-      body: substituteTemplate(tmpl.body, vars),
-    };
+    subject = substituteTemplate(tmpl.subject, vars);
+    body = substituteTemplate(tmpl.body, vars);
+  } else {
+    if (!step.subjectOverride || !step.bodyOverride) {
+      throw new Error(
+        "email step is missing both templateRef and (subjectOverride + bodyOverride)",
+      );
+    }
+    subject = substituteTemplate(step.subjectOverride, vars);
+    body = substituteTemplate(step.bodyOverride, vars);
   }
-  if (!step.subjectOverride || !step.bodyOverride) {
-    throw new Error(
-      "email step is missing both templateRef and (subjectOverride + bodyOverride)",
-    );
-  }
-  return {
-    subject: substituteTemplate(step.subjectOverride, vars),
-    body: substituteTemplate(step.bodyOverride, vars),
-  };
+  // Hard guard — never dispatch a step with literal `{{...}}` left in
+  // the rendered output. Throws UnresolvedTemplateVariablesError;
+  // dispatchStep catches it and skips the step with the variable
+  // names in the skipReason so the operator can fix the template.
+  assertNoUnresolvedPlaceholders(subject, body);
+  return { subject, body };
 }
 
 /** SMS / WhatsApp freeform / Voice fallback — body-only resolution. */
@@ -656,19 +662,23 @@ function resolveBody(
   vars: Record<string, string>,
   kind: string,
 ): string {
+  let body: string;
   if (step.templateRef) {
     const tmpl = (registry ?? []).find((t) => t.name === step.templateRef);
     if (!tmpl) {
       throw new Error(`${kind} template "${step.templateRef}" not registered`);
     }
-    return substituteTemplate(tmpl.body, vars);
+    body = substituteTemplate(tmpl.body, vars);
+  } else {
+    if (!step.bodyOverride) {
+      throw new Error(
+        `${kind} step is missing both templateRef and bodyOverride`,
+      );
+    }
+    body = substituteTemplate(step.bodyOverride, vars);
   }
-  if (!step.bodyOverride) {
-    throw new Error(
-      `${kind} step is missing both templateRef and bodyOverride`,
-    );
-  }
-  return substituteTemplate(step.bodyOverride, vars);
+  assertNoUnresolvedPlaceholders(body);
+  return body;
 }
 
 /** Voice = aiInstructions, either from call_templates or directly from bodyOverride. */

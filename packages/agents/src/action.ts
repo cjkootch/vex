@@ -46,6 +46,14 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
      * the language match without translating mentally.
      */
     lang: z.string().length(2).optional(),
+    /**
+     * When this email was rendered from a registered Vex-native
+     * template (`workspace_settings.email_templates[name]`), carry
+     * the template name so the chip preview can label it
+     * "from template: {name}". Display-only. Empty / absent for
+     * freeform sends.
+     */
+    templateName: z.string().min(1).max(120).optional(),
   }),
   z.object({
     kind: z.literal("crm.note"),
@@ -381,6 +389,8 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
       .regex(/^\+[1-9]\d{7,14}$/, "to must be E.164 (e.g. +18324927169)"),
     body: z.string().min(1).max(1_500),
     contactId: zUlid.optional(),
+    /** See `email.send.templateName` — same purpose. */
+    templateName: z.string().min(1).max(120).optional(),
     rationale: z.string().min(1).max(1000),
   }),
   z.object({
@@ -391,6 +401,8 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
       .regex(/^\+[1-9]\d{7,14}$/, "to must be E.164 (e.g. +18324927169)"),
     body: z.string().min(1).max(1_500),
     contactId: zUlid.optional(),
+    /** See `email.send.templateName` — same purpose. */
+    templateName: z.string().min(1).max(120).optional(),
     rationale: z.string().min(1).max(1000),
   }),
   // Cold WhatsApp outbound via a Meta-approved template. Required when
@@ -486,6 +498,23 @@ export const ActionDescriptor = z.discriminatedUnion("kind", [
      * than running the generic qualifier script.
      */
     aiInstructions: z.string().min(1).max(5000).optional(),
+    /**
+     * When `aiInstructions` was rendered from a registered call
+     * template (`workspace_settings.call_templates[name]`), carry
+     * the template name so the chip preview labels it "from
+     * template: {name}". Display-only.
+     */
+    templateName: z.string().min(1).max(120).optional(),
+    /**
+     * Operator-friendly one-liner describing what the call is
+     * trying to accomplish (e.g. "Confirm BL issuance ETA").
+     * Surfaced on the chip preview ABOVE the full aiInstructions
+     * block so a reviewer can approve without reading the entire
+     * system prompt. Auto-populated from
+     * `call_templates[name].goal_hint` when a template is used;
+     * the agent can also set it on freeform calls.
+     */
+    goalHint: z.string().min(1).max(280).optional(),
     rationale: z.string().min(1).max(1000),
   }),
   // Sprint O — steer an in-flight CampaignEnrollmentWorkflow without
