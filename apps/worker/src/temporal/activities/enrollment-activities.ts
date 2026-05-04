@@ -6,6 +6,7 @@ import {
   type ContactRepository,
   type Db,
   type EventRepository,
+  type LeadRepository,
   type OrganizationRepository,
   type TouchpointRepository,
   type WorkspaceRepository,
@@ -50,6 +51,14 @@ export interface EnrollmentActivitiesDeps {
    * downstream executors stay unchanged.
    */
   workspaces: WorkspaceRepository;
+  /**
+   * Read-only lead access — used to auto-resolve
+   * `{{procur_push_reason}}` and `{{recent_procur_signal}}` from
+   * the contact's org's freshest procur-sourced lead, so cold-
+   * outreach templates can lead with a signal-grounded hook
+   * without the operator having to manually pass procur context.
+   */
+  leads: LeadRepository;
 }
 
 export interface WorkflowEnrollmentRow {
@@ -497,7 +506,16 @@ async function resolveStepPayload(
       )
     : null;
 
-  const vars = buildVariableMap(contact, org?.legalName ?? null);
+  // Auto-resolved procur context: when the contact's org has a
+  // procur-sourced lead with WHY context (#310), expose the push
+  // reason + most recent signal as `{{procur_push_reason}}` and
+  // `{{recent_procur_signal}}` so templates can lead with a
+  // signal-grounded hook on cold outreach.
+  const procurContext = contact.orgId
+    ? await loadFreshestProcurContextForOrg(deps, tenantId, contact.orgId)
+    : null;
+
+  const vars = buildVariableMap(contact, org?.legalName ?? null, procurContext);
   const rationale = `campaign_enrollment_workflow step ${step.position}`;
 
   switch (step.channel) {
@@ -714,6 +732,7 @@ function resolveAiInstructions(
 function buildVariableMap(
   contact: Contact,
   orgLegalName: string | null,
+  procurContext: ProcurContextForVars | null,
 ): Record<string, string> {
   const fullName = contact.fullName ?? "";
   const firstName = fullName.split(/\s+/)[0] ?? "";
@@ -726,5 +745,67 @@ function buildVariableMap(
   const phone = (contact.phones ?? [])[0];
   if (phone) map["recipient_phone"] = phone;
   if (orgLegalName) map["org_name"] = orgLegalName;
+  if (procurContext?.pushReason) {
+    map["procur_push_reason"] = procurContext.pushReason;
+  }
+  if (procurContext?.recentSignalNarrative) {
+    map["recent_procur_signal"] = procurContext.recentSignalNarrative;
+  }
   return map;
+}
+
+interface ProcurContextForVars {
+  pushReason: string | null;
+  /**
+   * Single-line narrative pulled from the most recent procur signal
+   * — what to weave into a cold-outreach opener. We pick the freshest
+   * signal by occurredAt and fall back to null when no signals exist.
+   * Caller decides whether to use it; absence just means the
+   * `{{recent_procur_signal}}` placeholder stays unresolved (and
+   * the unresolved-variable guard from #311 catches it before send).
+   */
+  recentSignalNarrative: string | null;
+}
+
+/**
+ * Pull the freshest procur push context for an org — used to auto-
+ * resolve `{{procur_push_reason}}` and `{{recent_procur_signal}}`
+ * placeholders in workflow-time template renders. Returns null when
+ * the org has no procur-sourced leads OR all leads have empty WHY
+ * metadata (legacy pushes from before #310). Picks the lead with the
+ * most recent updatedAt, then the signal with the most recent
+ * occurredAt within that lead.
+ */
+async function loadFreshestProcurContextForOrg(
+  deps: EnrollmentActivitiesDeps,
+  tenantId: string,
+  orgId: string,
+): Promise<ProcurContextForVars | null> {
+  const orgLeads = await withTenant(deps.db, tenantId, async (tx) =>
+    deps.leads.findByOrgId(tx, orgId),
+  );
+  if (orgLeads.length === 0) return null;
+  // Freshest first.
+  const sorted = [...orgLeads].sort(
+    (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime(),
+  );
+  for (const lead of sorted) {
+    const meta = lead.procurMetadata;
+    const pushReason =
+      typeof meta?.pushReason === "string" && meta.pushReason.trim().length > 0
+        ? meta.pushReason.trim()
+        : null;
+    const signals = Array.isArray(meta?.signals) ? meta.signals : [];
+    const sortedSignals = [...signals].sort((a, b) =>
+      a.occurredAt < b.occurredAt ? 1 : -1,
+    );
+    const recent = sortedSignals[0] ?? null;
+    if (pushReason || recent) {
+      return {
+        pushReason,
+        recentSignalNarrative: recent?.narrative ?? null,
+      };
+    }
+  }
+  return null;
 }

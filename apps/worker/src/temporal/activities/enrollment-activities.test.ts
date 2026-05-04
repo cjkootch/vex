@@ -50,6 +50,9 @@ function buildDeps() {
     events: {
       insertIfNotExists: vi.fn().mockResolvedValue(undefined),
     },
+    leads: {
+      findByOrgId: vi.fn().mockResolvedValue([]),
+    },
     workspaces: {
       getSettings: vi.fn().mockResolvedValue({
         email_templates: [
@@ -242,6 +245,81 @@ describe("enrollment activities — dispatchStep", () => {
       .calls[0]![2];
     expect(createArgs.proposedPayload.subject).toBe("Inline Cole");
     expect(createArgs.proposedPayload.body).toBe("Inline body for Cole.");
+  });
+
+  it("auto-resolves {{procur_push_reason}} and {{recent_procur_signal}} from the contact's org's freshest procur lead", async () => {
+    const deps = buildDeps();
+    deps.leads.findByOrgId.mockResolvedValueOnce([
+      {
+        id: "L_old",
+        orgId: "org1",
+        updatedAt: new Date("2026-04-01T00:00:00Z"),
+        procurMetadata: { pushReason: "stale lead, ignore" },
+      },
+      {
+        id: "L_new",
+        orgId: "org1",
+        updatedAt: new Date("2026-05-01T00:00:00Z"),
+        procurMetadata: {
+          pushReason: "Buyer filed three Caribbean ULSD tenders in 14 days.",
+          signals: [
+            {
+              kind: "tender_award",
+              occurredAt: "2026-04-10T00:00:00Z",
+              source: "https://procur.example/award/1",
+              narrative: "Older award",
+            },
+            {
+              kind: "rfq",
+              occurredAt: "2026-04-25T00:00:00Z",
+              source: "https://procur.example/rfq/9",
+              narrative: "RFQ for ULSD into Pointe-à-Pitre",
+            },
+          ],
+        },
+      },
+    ]);
+    const activities = buildEnrollmentActivities(asDeps(deps));
+    await activities.dispatchStep({
+      tenantId: TENANT,
+      enrollmentId: "e1",
+      contactId: "ct1",
+      step: makeStep({
+        channel: "email",
+        templateRef: null,
+        subjectOverride: "Hi {{recipient_name}}",
+        bodyOverride: "Reason: {{procur_push_reason}} Recent: {{recent_procur_signal}}.",
+      }),
+    });
+    const createArgs = (deps.approvals.create as ReturnType<typeof vi.fn>).mock
+      .calls[0]![2];
+    expect(createArgs.proposedPayload.body).toContain(
+      "Buyer filed three Caribbean ULSD tenders in 14 days.",
+    );
+    // Picks the FRESHEST signal narrative, not the older award.
+    expect(createArgs.proposedPayload.body).toContain(
+      "RFQ for ULSD into Pointe-à-Pitre",
+    );
+    expect(createArgs.proposedPayload.body).not.toContain("Older award");
+  });
+
+  it("leaves procur placeholders unresolved (and skips with the guard) when the org has no procur leads", async () => {
+    const deps = buildDeps();
+    // findByOrgId default mock returns [] — no procur leads.
+    const activities = buildEnrollmentActivities(asDeps(deps));
+    const result = await activities.dispatchStep({
+      tenantId: TENANT,
+      enrollmentId: "e1",
+      contactId: "ct1",
+      step: makeStep({
+        channel: "email",
+        templateRef: null,
+        subjectOverride: "Hi {{recipient_name}}",
+        bodyOverride: "Reason: {{procur_push_reason}}.",
+      }),
+    });
+    expect(result.kind).toBe("skipped");
+    expect(result.skipReason).toMatch(/procur_push_reason/);
   });
 
   it("renders templated SMS body with the contact's phone in the payload", async () => {
