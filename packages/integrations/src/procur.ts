@@ -392,6 +392,40 @@ export interface ProcurClient {
     matches: SanctionsShareMatch[];
     screenedAt: string;
   }): Promise<ProcurResult<SanctionsShareResult>>;
+
+  /**
+   * Match-outcome feedback loop (procur work item 3 — see
+   * `docs/procur-data-graph-pointer.md`). Closes the loop on procur's
+   * push-to-vex flow: procur pushes a match → vex creates a fuel_deal
+   * → vex calls this endpoint with the deal id and the lifecycle
+   * outcome. Procur uses these signals to score which match-queue
+   * heuristics actually convert.
+   *
+   * Three trigger points (all vex-side):
+   *   1. `created` — on fuel_deal create from a procur-sourced lead.
+   *      `vexDealId` populated.
+   *   2. `closed_won` / `closed_lost` — on fuel_deal terminal status
+   *      transition. `vexDealId` populated; `outcomeNote` may carry
+   *      a one-line reason from the operator.
+   *   3. `no_engagement` — daily background sweep over procur leads
+   *      that produced no fuel_deal within 90 days. `vexDealId` null.
+   *
+   * Procur is expected to:
+   *   - Store the row append-only, keyed on (procurOpportunityId,
+   *     outcome) — same opportunity may legitimately produce a
+   *     `created` row + a later `closed_won` row.
+   *   - Return 200 on accepted, 4xx if the procurOpportunityId isn't
+   *     recognised. Vex treats 4xx as fail-soft (logged + dropped).
+   */
+  reportMatchOutcome(args: {
+    procurOpportunityId: string;
+    outcome: "created" | "closed_won" | "closed_lost" | "no_engagement";
+    vexDealId?: string | null;
+    vexDealRef?: string | null;
+    /** Optional free-text reason — operator's transition rationale, etc. */
+    outcomeNote?: string | null;
+    reportedAt: string;
+  }): Promise<ProcurResult<MatchOutcomeReportResult>>;
 }
 
 export interface ContactEnrichmentField {
@@ -443,6 +477,16 @@ export interface SanctionsShareResult {
    */
   screenId: string;
   status: "created" | "updated" | "noop";
+}
+
+export interface MatchOutcomeReportResult {
+  /** Echoes the procurOpportunityId we sent. */
+  procurOpportunityId: string;
+  /**
+   * `recorded` when the row landed; `noop` when procur already had a
+   * row for the (opportunityId, outcome) pair (re-runs are safe).
+   */
+  status: "recorded" | "noop";
 }
 
 export function createProcurClient(config: ProcurClientConfig): ProcurClient {
@@ -676,6 +720,22 @@ export function createProcurClient(config: ProcurClientConfig): ProcurClient {
         screened_at: args.screenedAt,
         source: "vex",
       });
+    },
+
+    async reportMatchOutcome(args) {
+      return call<MatchOutcomeReportResult>(
+        "POST",
+        "/intelligence/match-outcome",
+        {
+          procur_opportunity_id: args.procurOpportunityId,
+          outcome: args.outcome,
+          vex_deal_id: args.vexDealId ?? null,
+          vex_deal_ref: args.vexDealRef ?? null,
+          outcome_note: args.outcomeNote ?? null,
+          reported_at: args.reportedAt,
+          source: "vex",
+        },
+      );
     },
   };
 }

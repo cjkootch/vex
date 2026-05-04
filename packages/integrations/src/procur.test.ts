@@ -352,6 +352,83 @@ describe("createProcurClient", () => {
     });
     expect(result).toEqual({ ok: false, reason: "disabled" });
   });
+
+  it("reportMatchOutcome posts a snake-cased payload to /intelligence/match-outcome", async () => {
+    const fetchImpl = makeFetch(200, {
+      procurOpportunityId: "OPP-9001",
+      status: "recorded",
+    });
+    const c = createProcurClient({
+      ...BASE_CONFIG,
+      fetchImpl,
+      log: silentLog(),
+    });
+    const result = await c.reportMatchOutcome({
+      procurOpportunityId: "OPP-9001",
+      outcome: "created",
+      vexDealId: "01HD0000000000000000000001",
+      vexDealRef: "VTC-2026-003",
+      outcomeNote: "Operator approved at 14:02 CST",
+      reportedAt: "2026-05-04T19:02:00.000Z",
+    });
+    expect(result.ok).toBe(true);
+
+    const [url, init] = (fetchImpl as unknown as {
+      mock: { calls: [string, RequestInit][] };
+    }).mock.calls[0]!;
+    expect(url).toBe(
+      "https://procur.example.com/api/intelligence/match-outcome",
+    );
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      procur_opportunity_id: "OPP-9001",
+      outcome: "created",
+      vex_deal_id: "01HD0000000000000000000001",
+      vex_deal_ref: "VTC-2026-003",
+      outcome_note: "Operator approved at 14:02 CST",
+      reported_at: "2026-05-04T19:02:00.000Z",
+      source: "vex",
+    });
+  });
+
+  it("reportMatchOutcome serializes nulls explicitly so procur can distinguish 'no_engagement' (no deal) from 'created'", async () => {
+    const fetchImpl = makeFetch(200, {
+      procurOpportunityId: "OPP-7777",
+      status: "recorded",
+    });
+    const c = createProcurClient({
+      ...BASE_CONFIG,
+      fetchImpl,
+      log: silentLog(),
+    });
+    await c.reportMatchOutcome({
+      procurOpportunityId: "OPP-7777",
+      outcome: "no_engagement",
+      reportedAt: "2026-05-04T19:02:00.000Z",
+    });
+    const [, init] = (fetchImpl as unknown as {
+      mock: { calls: [string, RequestInit][] };
+    }).mock.calls[0]!;
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body["outcome"]).toBe("no_engagement");
+    expect(body["vex_deal_id"]).toBeNull();
+    expect(body["vex_deal_ref"]).toBeNull();
+    expect(body["outcome_note"]).toBeNull();
+  });
+
+  it("reportMatchOutcome stays disabled-safe when procur isn't configured", async () => {
+    const c = createProcurClient({
+      baseUrl: null,
+      apiToken: null,
+      log: silentLog(),
+    });
+    const result = await c.reportMatchOutcome({
+      procurOpportunityId: "OPP-1",
+      outcome: "closed_won",
+      reportedAt: "2026-05-04T19:02:00.000Z",
+    });
+    expect(result).toEqual({ ok: false, reason: "disabled" });
+  });
 });
 
 describe("buildProcurQueryHash", () => {

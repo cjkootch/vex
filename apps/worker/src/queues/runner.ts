@@ -81,6 +81,7 @@ import {
   createTwilioClient,
   renderEmailWithSignature,
   SlackNotifier,
+  type ProcurClient,
   type TwilioClient,
 } from "@vex/integrations";
 
@@ -320,10 +321,12 @@ export async function startBullWorker(options: QueueRunnerOptions): Promise<Queu
       organizations: repos.organizations,
       workspaces: repos.workspaces,
       contacts: repos.contacts,
+      leads: repos.leads,
       memberships: repos.memberships,
       campaigns: repos.campaigns,
       campaignSteps: repos.campaignSteps,
       campaignEnrollments: repos.campaignEnrollments,
+      procur: procurClient.isEnabled() ? procurClient : null,
       costLedger,
       touchpoints: repos.touchpoints,
       activities: repos.activities,
@@ -652,10 +655,22 @@ export interface ApprovalExecutorDeps {
   organizations: OrganizationRepository;
   workspaces: WorkspaceRepository;
   contacts: ContactRepository;
+  /**
+   * Leads access — used by the procur match-outcome feedback loop to
+   * find the originating procur opportunity id for a fuel_deal's
+   * buyer org. See `notifyProcurMatchOutcome`.
+   */
+  leads: LeadRepository;
   memberships: ContactOrgMembershipRepository;
   campaigns: CampaignRepository;
   campaignSteps: CampaignStepRepository;
   campaignEnrollments: CampaignEnrollmentRepository;
+  /**
+   * Procur client for the match-outcome feedback loop (work item 3 in
+   * docs/procur-data-graph-pointer.md). Null when procur isn't
+   * configured — the notify helper short-circuits silently.
+   */
+  procur: ProcurClient | null;
   /**
    * Shared CostLedger — each applyX branch records its own billable
    * unit (email.send, sms.send, pstn.call, web.search, …) so the
@@ -3170,6 +3185,99 @@ async function applyDealStatusChange(
       applied_by: actor,
     },
   });
+
+  // Procur match-outcome feedback (work item 3 — see
+  // docs/procur-data-graph-pointer.md). Terminal status transitions
+  // bubble back to procur so its match-queue model learns which
+  // signals actually convert. Mapping:
+  //   settled  -> closed_won
+  //   cancelled / failed -> closed_lost
+  // Other statuses (in_transit, delivered, ...) are intermediate
+  // and don't trigger an outcome notification.
+  const procurOutcome = terminalStatusToProcurOutcome(toStatus);
+  if (procurOutcome) {
+    const deal = await deps.deals.findById(tx, dealId);
+    if (deal) {
+      await notifyProcurMatchOutcome(deps, tenantId, {
+        orgId: deal.buyerOrgId,
+        outcome: procurOutcome,
+        vexDealId: dealId,
+        vexDealRef: deal.dealRef,
+        outcomeNote: payload?.rationale ?? null,
+      });
+    }
+  }
+}
+
+function terminalStatusToProcurOutcome(
+  status: string,
+): "closed_won" | "closed_lost" | null {
+  if (status === "settled") return "closed_won";
+  if (status === "cancelled" || status === "failed") return "closed_lost";
+  return null;
+}
+
+/**
+ * Procur match-outcome feedback loop. Looks up any procur-sourced
+ * leads for the buyer org and pings procur's match-outcome endpoint
+ * once per matching opportunity. Fail-soft: a procur error never
+ * blocks the executor — we log + drop. Skipped silently when procur
+ * isn't configured (`deps.procur === null`).
+ *
+ * Three trigger points fan into this helper:
+ *   - applyCrmCreateDeal -> outcome="created"
+ *   - applyDealStatusChange (terminal) -> outcome="closed_won" / "closed_lost"
+ *   - daily background sweep -> outcome="no_engagement" (separate job)
+ */
+async function notifyProcurMatchOutcome(
+  deps: ApprovalExecutorDeps,
+  tenantId: string,
+  args: {
+    orgId: string;
+    outcome: "created" | "closed_won" | "closed_lost" | "no_engagement";
+    vexDealId: string | null;
+    vexDealRef: string | null;
+    outcomeNote: string | null;
+  },
+): Promise<void> {
+  const procur = deps.procur;
+  if (!procur) return;
+  try {
+    const opportunityIds = await withTenant(deps.db, tenantId, async (tx) => {
+      const orgLeads = await deps.leads.findByOrgId(tx, args.orgId);
+      const ids = new Set<string>();
+      for (const l of orgLeads) {
+        const procurId = (l.externalKeys as Record<string, unknown>)["procur"];
+        if (typeof procurId === "string" && procurId.length > 0) {
+          ids.add(procurId);
+        }
+      }
+      return [...ids];
+    });
+    if (opportunityIds.length === 0) return;
+    const reportedAt = new Date().toISOString();
+    for (const procurOpportunityId of opportunityIds) {
+      const result = await procur.reportMatchOutcome({
+        procurOpportunityId,
+        outcome: args.outcome,
+        vexDealId: args.vexDealId,
+        vexDealRef: args.vexDealRef,
+        outcomeNote: args.outcomeNote,
+        reportedAt,
+      });
+      if (!result.ok) {
+        console.warn(
+          `procur.reportMatchOutcome failed for opportunity ${procurOpportunityId}: ${result.reason}${
+            result.message ? ` (${result.message})` : ""
+          }`,
+        );
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `notifyProcurMatchOutcome unhandled error for org ${args.orgId}: ${(err as Error).message}`,
+    );
+  }
 }
 
 type ApprovalRow = {
@@ -3484,6 +3592,18 @@ async function applyCreateDeal(
       rationale: payload.rationale ?? null,
       applied_by: approval.reviewerId,
     },
+  });
+
+  // Procur match-outcome feedback (work item 3): if this deal's
+  // buyer org has a procur-sourced lead, ping procur so its match-
+  // queue model knows the match converted to a real deal. Fail-soft
+  // — see notifyProcurMatchOutcome.
+  await notifyProcurMatchOutcome(deps, tenantId, {
+    orgId: payload.buyerOrgId,
+    outcome: "created",
+    vexDealId: id,
+    vexDealRef: payload.dealRef,
+    outcomeNote: payload.rationale ?? null,
   });
 }
 
