@@ -83,6 +83,59 @@ const SettingsPatchSchema = z
       )
       .max(50)
       .optional(),
+    email_templates: z
+      .array(
+        z
+          .object({
+            name: z
+              .string()
+              .min(1)
+              .max(120)
+              .regex(/^[a-z0-9_]+$/, "name must be lowercase + snake_case"),
+            subject: z.string().min(1).max(500),
+            body: z.string().min(1).max(50_000),
+            description: z.string().max(500).optional(),
+            variables: z.array(z.string().min(1).max(60)).max(20).optional(),
+          })
+          .strict(),
+      )
+      .max(100)
+      .optional(),
+    sms_templates: z
+      .array(
+        z
+          .object({
+            name: z
+              .string()
+              .min(1)
+              .max(120)
+              .regex(/^[a-z0-9_]+$/, "name must be lowercase + snake_case"),
+            body: z.string().min(1).max(1500),
+            description: z.string().max(500).optional(),
+            variables: z.array(z.string().min(1).max(60)).max(20).optional(),
+          })
+          .strict(),
+      )
+      .max(100)
+      .optional(),
+    call_templates: z
+      .array(
+        z
+          .object({
+            name: z
+              .string()
+              .min(1)
+              .max(120)
+              .regex(/^[a-z0-9_]+$/, "name must be lowercase + snake_case"),
+            aiInstructions: z.string().min(1).max(5000),
+            goal_hint: z.string().max(280).optional(),
+            description: z.string().max(500).optional(),
+            variables: z.array(z.string().min(1).max(60)).max(20).optional(),
+          })
+          .strict(),
+      )
+      .max(100)
+      .optional(),
   })
   .strict();
 

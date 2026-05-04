@@ -26,6 +26,7 @@ import {
   QUERY_SYSTEM_PROMPT,
   renderStrategyPreamble,
   renderWhatsAppTemplatesPreamble,
+  renderTemplatesPreamble,
   ActionDescriptor,
 } from "@vex/agents";
 import { createId, isUlid, TenantId, type AgentRunId } from "@vex/domain";
@@ -320,7 +321,16 @@ export class QueryService {
     const waTemplatesPreamble = renderWhatsAppTemplatesPreamble(
       settings?.whatsapp_templates,
     );
-    const systemPrompt = `${preamble}${waTemplatesPreamble}${QUERY_SYSTEM_PROMPT}`;
+    // Vex-native template registry (email / sms / call). Same
+    // mechanism as the WhatsApp templates preamble — empty across all
+    // three lists → empty string and the agent treats "send the X
+    // template" as "no such template" instead of inventing one.
+    const templatesPreamble = renderTemplatesPreamble(
+      settings?.email_templates,
+      settings?.sms_templates,
+      settings?.call_templates,
+    );
+    const systemPrompt = `${preamble}${waTemplatesPreamble}${templatesPreamble}${QUERY_SYSTEM_PROMPT}`;
 
     const queryResult = await this.anthropic.query({
       tenantId,
