@@ -541,18 +541,50 @@ function relTime(iso: string): string {
   }
 }
 
+function capitalize(s: string): string {
+  if (!s) return s;
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 // ---------------------------------------------------------------------------
-// Thread grouping — collapse events by (contactId + channelGroup) so the
-// inbox reads like a conversation list instead of a flat event feed.
+// Thread grouping — collapse events by (contactId or counterparty +
+// channelGroup) so the inbox reads like a conversation list instead of
+// a flat event feed. Unmatched senders get their own thread keyed off
+// the raw phone / email — they don't all collapse into one bucket.
 // ---------------------------------------------------------------------------
 
 interface Thread {
   key: string;
   contactId: string | null;
   channelGroup: string;
+  /**
+   * Counterparty identifier used both for thread grouping when the
+   * touchpoint isn't matched to a contact AND for the row title.
+   * Phone E.164 for sms / whatsapp, email address for email,
+   * `null` for calls or rows with no resolvable counterparty.
+   */
+  counterparty: string | null;
   latest: CommunicationItem;
   count: number;
   items: CommunicationItem[];
+}
+
+/**
+ * Pull the counterparty identifier off a touchpoint's metadata. Used as
+ * the thread key fallback when contactId is null AND as the user-facing
+ * row title. The "counterparty" is whichever side of the conversation
+ * isn't us — `from` on inbound, `to` on outbound. `whatsapp:` prefix is
+ * stripped for display.
+ */
+function counterpartyOf(item: CommunicationItem): string | null {
+  if (item.kind === "call") return null;
+  const meta = item.metadata ?? {};
+  const pick = item.direction === "outbound" ? meta["to"] : meta["from"];
+  // Email "to" comes through as an array; SMS/WhatsApp "to" is a single
+  // string. Normalize to the first valid string.
+  const raw = Array.isArray(pick) ? pick[0] : pick;
+  if (typeof raw !== "string" || !raw) return null;
+  return raw.replace(/^whatsapp:/i, "");
 }
 
 function groupIntoThreads(items: CommunicationItem[]): Thread[] {
@@ -560,19 +592,31 @@ function groupIntoThreads(items: CommunicationItem[]): Thread[] {
   for (const item of items) {
     const group =
       item.kind === "call" ? "call" : item.channelGroup;
-    const key = `${item.contactId ?? "unknown"}:${group}`;
+    const counterparty = counterpartyOf(item);
+    // Thread key prefers contactId (a real person), falls back to the
+    // raw counterparty (phone or email) so unmatched senders don't all
+    // collapse into one giant `unknown:sms` bucket. Final fallback is
+    // the literal "unknown" — only hit when neither contact nor
+    // counterparty can be resolved (rare, e.g. malformed metadata).
+    const ownerKey = item.contactId ?? counterparty ?? "unknown";
+    const key = `${ownerKey}:${group}`;
     const existing = buckets.get(key);
     if (existing) {
       existing.items.push(item);
       existing.count += 1;
       if (item.occurredAt > existing.latest.occurredAt) {
         existing.latest = item;
+        // Keep counterparty fresh — the latest event's counterparty is
+        // what we render as the title, mirroring how mail clients show
+        // the most recent sender on a thread.
+        if (counterparty) existing.counterparty = counterparty;
       }
     } else {
       buckets.set(key, {
         key,
         contactId: item.contactId,
         channelGroup: group,
+        counterparty,
         latest: item,
         count: 1,
         items: [item],
@@ -600,6 +644,18 @@ function ThreadRow({
     }
     return latest.preview ?? latest.channel;
   })();
+  // Title is the counterparty (phone / email / contact ref) when
+  // available — that's how an operator scans an inbox. Falls back to
+  // the channel name only when nothing else is resolvable (e.g. a
+  // call with no contact / no number, or a malformed touchpoint).
+  const title = (() => {
+    if (thread.counterparty) return thread.counterparty;
+    if (thread.contactId) return thread.contactId;
+    if (thread.channelGroup === "call") return "Phone call";
+    return capitalize(thread.channelGroup);
+  })();
+  const channelLabel =
+    thread.channelGroup === "call" ? "Phone" : capitalize(thread.channelGroup);
   return (
     <li
       data-testid="thread-row"
@@ -620,8 +676,9 @@ function ThreadRow({
           />
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm text-white">
-              <span className="capitalize">
-                {thread.channelGroup === "call" ? "Phone" : thread.channelGroup}
+              <span className="truncate">{title}</span>
+              <span className="rounded bg-muted/40 px-1.5 py-px text-[10px] uppercase tracking-wide text-white/50">
+                {channelLabel}
               </span>
               <span className="text-[10px] text-white/40">
                 · {thread.count} {thread.count === 1 ? "event" : "events"}
