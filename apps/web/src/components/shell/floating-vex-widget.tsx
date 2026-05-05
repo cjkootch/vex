@@ -110,6 +110,28 @@ export function FloatingVexWidget() {
   if (!pathname.startsWith("/app")) return null;
 
   const handleViewInChat = () => {
+    // Stash the widget's full turn history under a transient
+    // sessionStorage key so the main chat can hydrate a NEW
+    // conversation seeded with everything the operator already
+    // discussed in the side panel. Without this, the previous
+    // behaviour was to carry only the last user message via the
+    // `ask=` query param — operators understandably read that as
+    // "lost my conversation." sessionStorage clears on tab close,
+    // so the handoff is per-tab and self-cleans.
+    if (state.turns.length > 0 && typeof window !== "undefined") {
+      try {
+        window.sessionStorage.setItem(
+          "vex.chat.handoff.v1",
+          JSON.stringify({
+            turns: state.turns,
+            scope: scope ?? null,
+            handed_off_at: Date.now(),
+          }),
+        );
+      } catch {
+        /* quota / private mode — fall back to ask= param only */
+      }
+    }
     const href = scope
       ? buildAskVexHref({
           type: scope.type,
