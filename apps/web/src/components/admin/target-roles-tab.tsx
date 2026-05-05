@@ -4,6 +4,51 @@ import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceSettings } from "./admin-console";
 
 /**
+ * Suggested starter lists per category. Reflect the roles VTC and
+ * comparable trading desks find themselves searching for most often:
+ * the people who actually buy / sell / move physical commodities,
+ * not the IR contact or the press secretary.
+ *
+ * Order matters — the chat agent treats earlier titles as higher
+ * priority when ranking enrichment candidates. Operators are
+ * expected to edit these per their own workflow; the defaults are
+ * a starting point, not a prescription.
+ */
+const SUGGESTED_DEFAULTS: Record<string, string[]> = {
+  fuel: [
+    "Fuel Procurement Manager",
+    "Trading Desk Lead",
+    "Senior Trader",
+    "Spot Operations Manager",
+    "Supply Manager",
+    "Logistics Director",
+    "Downstream Operations Director",
+    "Refined Products Buyer",
+  ],
+  food: [
+    "Procurement Director",
+    "Sourcing Manager",
+    "Senior Commodity Buyer",
+    "Import Manager",
+    "Supply Chain Director",
+    "Category Manager",
+  ],
+  petrochemical: [
+    "Petrochemical Buyer",
+    "LPG Trader",
+    "Olefins Trader",
+    "Procurement Manager",
+    "Supply & Trading Manager",
+  ],
+  broker: [
+    "Senior Broker",
+    "Trading Desk Lead",
+    "Head of Brokerage",
+    "Director of Trading",
+  ],
+};
+
+/**
  * Admin → Target roles tab. Per-category title lists the chat agent
  * uses to (a) bias `research_contact` Tavily queries toward the
  * right people, and (b) populate options on a clarifying question
@@ -105,6 +150,35 @@ export function TargetRolesTab({
           <code className="rounded bg-muted/40 px-1">food</code>,{" "}
           <code className="rounded bg-muted/40 px-1">petrochemical</code>).
         </p>
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => {
+              // Merge suggested defaults into the current draft —
+              // never overwrite an existing category the operator has
+              // already customised. Pure additive load.
+              setDraft((d) => {
+                const next = { ...d };
+                for (const [cat, roles] of Object.entries(SUGGESTED_DEFAULTS)) {
+                  if (!next[cat]) next[cat] = roles.join(", ");
+                }
+                return next;
+              });
+              setError(null);
+              setSaved(false);
+            }}
+            className={SMALL_BUTTON}
+          >
+            + Load suggested defaults
+          </button>
+          <p className="mt-1.5 max-w-2xl text-[11px] text-text-secondary/70">
+            Adds <code>fuel</code>, <code>food</code>,{" "}
+            <code>petrochemical</code>, and <code>broker</code> with
+            starter title lists. Won&apos;t overwrite categories
+            you&apos;ve already customised. Edit anything after
+            loading; click <em>Save</em> when ready.
+          </p>
+        </div>
       </header>
 
       <div className="flex flex-col gap-4">
