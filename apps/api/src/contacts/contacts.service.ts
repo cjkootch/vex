@@ -205,6 +205,172 @@ export class ContactsService {
   }
 
   /**
+   * Engagement-velocity ranking — contacts whose recent touchpoint
+   * activity tags them as worth working today. Score combines
+   * windowed counts of high-signal events (opens, clicks, replies,
+   * any inbound, completed calls) with a bonus from the latest
+   * inbound's intent_classifier label.
+   *
+   * Score formula:
+   *     4 * count_24h
+   *   + 2 * count_7d
+   *   + 1 * count_30d
+   *   - 0.1 * count_90d           (ages out sustained low-grade noise)
+   *   + intent_bonus              (interested +5, objection +2,
+   *                                confused 0, neutral 0,
+   *                                out_of_office 0)
+   *   - 999 if unsubscribed       (effectively excluded)
+   *
+   * Excludes:
+   *   - contacts with status='suppressed'
+   *   - contacts with no email AND no phone (can't outreach)
+   *   - contacts whose latest inbound intent is unsubscribe
+   *
+   * Returned shape is JSON-shaped; UI / chat panel render
+   * directly from it.
+   */
+  async listHot(
+    tenantId: string,
+    limit = 20,
+  ): Promise<HotContactRow[]> {
+    return withTenant(this.db, tenantId, async (tx) => {
+      const rows = (await tx.execute(sql`
+        WITH high_signal_events AS (
+          SELECT
+            t.contact_id AS contact_id,
+            t.id         AS touchpoint_id,
+            t.channel    AS channel,
+            t.occurred_at AS occurred_at,
+            t.metadata   AS metadata,
+            -- Tag every event into a window bucket so the scoring
+            -- aggregate doesn't need to re-evaluate timestamps.
+            (NOW() - t.occurred_at) AS age,
+            CASE
+              WHEN t.channel LIKE '%.opened'    THEN 1
+              WHEN t.channel LIKE '%.clicked'   THEN 1
+              WHEN t.channel LIKE '%.replied'   THEN 1
+              WHEN t.channel LIKE '%.received'  THEN 1
+              WHEN t.channel = 'voice.completed' THEN 1
+              WHEN t.metadata ->> 'direction' = 'inbound' THEN 1
+              ELSE 0
+            END AS is_signal
+          FROM touchpoints t
+          WHERE t.contact_id IS NOT NULL
+            AND t.occurred_at >= NOW() - INTERVAL '90 days'
+        ),
+        per_contact AS (
+          SELECT
+            contact_id,
+            SUM(CASE WHEN age <= INTERVAL '24 hours' AND is_signal = 1 THEN 1 ELSE 0 END) AS count_24h,
+            SUM(CASE WHEN age <= INTERVAL '7 days'   AND is_signal = 1 THEN 1 ELSE 0 END) AS count_7d,
+            SUM(CASE WHEN age <= INTERVAL '30 days'  AND is_signal = 1 THEN 1 ELSE 0 END) AS count_30d,
+            SUM(CASE WHEN is_signal = 1 THEN 1 ELSE 0 END) AS count_90d
+          FROM high_signal_events
+          GROUP BY contact_id
+        ),
+        latest_inbound AS (
+          SELECT DISTINCT ON (contact_id)
+            contact_id,
+            channel       AS latest_channel,
+            occurred_at   AS latest_at,
+            metadata      AS latest_metadata
+          FROM high_signal_events
+          WHERE metadata ->> 'direction' = 'inbound'
+          ORDER BY contact_id, occurred_at DESC
+        )
+        SELECT
+          c.id           AS contact_id,
+          c.full_name    AS contact_name,
+          c.title        AS contact_title,
+          c.org_id       AS org_id,
+          o.legal_name   AS org_name,
+          pc.count_24h::int AS count_24h,
+          pc.count_7d::int  AS count_7d,
+          pc.count_30d::int AS count_30d,
+          pc.count_90d::int AS count_90d,
+          li.latest_channel AS latest_channel,
+          li.latest_at      AS latest_at,
+          li.latest_metadata AS latest_metadata,
+          (li.latest_metadata ->> 'intent') AS latest_intent
+        FROM per_contact pc
+        JOIN contacts c ON c.id = pc.contact_id
+        LEFT JOIN organizations o ON o.id = c.org_id
+        WHERE c.status = 'active'
+          AND (
+            (c.emails IS NOT NULL AND jsonb_array_length(c.emails) > 0)
+            OR (c.phones IS NOT NULL AND jsonb_array_length(c.phones) > 0)
+          )
+          AND COALESCE(li.latest_metadata ->> 'intent', '') <> 'unsubscribe'
+        ORDER BY (
+          (4 * pc.count_24h)
+          + (2 * pc.count_7d)
+          + (1 * pc.count_30d)
+          - (0.1 * pc.count_90d)
+          + CASE COALESCE(li.latest_metadata ->> 'intent', '')
+              WHEN 'interested' THEN 5
+              WHEN 'objection'  THEN 2
+              ELSE 0
+            END
+        ) DESC
+        LIMIT ${limit}
+      `)).rows as Array<{
+        contact_id: string;
+        contact_name: string;
+        contact_title: string | null;
+        org_id: string | null;
+        org_name: string | null;
+        count_24h: number;
+        count_7d: number;
+        count_30d: number;
+        count_90d: number;
+        latest_channel: string | null;
+        latest_at: Date | null;
+        latest_metadata: Record<string, unknown> | null;
+        latest_intent: string | null;
+      }>;
+
+      return rows.map((r) => {
+        const score =
+          4 * r.count_24h +
+          2 * r.count_7d +
+          1 * r.count_30d -
+          0.1 * r.count_90d +
+          (r.latest_intent === "interested"
+            ? 5
+            : r.latest_intent === "objection"
+              ? 2
+              : 0);
+        const preview =
+          r.latest_metadata && typeof r.latest_metadata["preview"] === "string"
+            ? (r.latest_metadata["preview"] as string)
+            : null;
+        return {
+          contactId: r.contact_id,
+          contactName: r.contact_name,
+          contactTitle: r.contact_title,
+          orgId: r.org_id,
+          orgName: r.org_name,
+          score: Number(score.toFixed(1)),
+          recentSignalCounts: {
+            count_24h: r.count_24h,
+            count_7d: r.count_7d,
+            count_30d: r.count_30d,
+          },
+          latestSignal: r.latest_channel
+            ? {
+                channel: r.latest_channel,
+                occurredAt: r.latest_at?.toISOString() ?? null,
+                preview,
+              }
+            : null,
+          latestIntent: r.latest_intent,
+          suggestedAction: suggestedActionForHotContact(r.latest_intent),
+        };
+      });
+    });
+  }
+
+  /**
    * List contacts whose primary org matches `orgId`. Used by the chat
    * agent's campaign.enroll_batch proposal flow — the agent needs
    * concrete contact IDs for a given company before it can propose
@@ -903,6 +1069,50 @@ function duplicateMessage(
       return `contact with phone ${dup.matchedValue} already exists`;
     case "name_and_org":
       return `contact with this name already exists on the same company`;
+  }
+}
+
+export interface HotContactRow {
+  contactId: string;
+  contactName: string;
+  contactTitle: string | null;
+  orgId: string | null;
+  orgName: string | null;
+  score: number;
+  recentSignalCounts: {
+    count_24h: number;
+    count_7d: number;
+    count_30d: number;
+  };
+  latestSignal: {
+    channel: string;
+    occurredAt: string | null;
+    preview: string | null;
+  } | null;
+  latestIntent: string | null;
+  /**
+   * One-line "what to do next" hint surfaced on the row's CTA. Mirrors
+   * the per-intent default actions baked into the chat prompt
+   * (#313). Operators can ignore it and pick a different path; it's a
+   * starting point, not a hard rule.
+   */
+  suggestedAction: string;
+}
+
+function suggestedActionForHotContact(intent: string | null): string {
+  switch (intent) {
+    case "interested":
+      return "Draft a meeting request — they're warm.";
+    case "objection":
+      return "Address the objection in a focused reply.";
+    case "confused":
+      return "Clarify the original outreach context.";
+    case "out_of_office":
+      return "Schedule a follow-up after the OOO window.";
+    case "neutral":
+      return "Soft re-engagement — don't escalate.";
+    default:
+      return "Recent engagement — draft a tailored follow-up.";
   }
 }
 

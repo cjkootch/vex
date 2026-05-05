@@ -123,6 +123,17 @@ const ITEM_SIGNALS: NavItem = {
   matchKey: "/app/signals",
   iconName: "lightning",
 };
+const ITEM_HOT: NavItem = {
+  // Engagement-velocity ranking — contacts whose recent touchpoint
+  // activity makes them worth working today. Server scores in
+  // ContactsService.listHot. Pairs with the inbox intent tags
+  // (#313) to give the operator a one-click "what should I do
+  // first" surface.
+  href: "/app/hot",
+  label: "Hot",
+  matchKey: "/app/hot",
+  iconName: "lightning",
+};
 const ITEM_IMPORT: NavItem = {
   href: "/app/import",
   label: "Import",
@@ -168,7 +179,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     id: "now",
     label: "Now",
-    items: [ITEM_INBOX, ITEM_APPROVALS, ITEM_SIGNALS, ITEM_FOLLOW_UPS],
+    items: [ITEM_INBOX, ITEM_HOT, ITEM_APPROVALS, ITEM_SIGNALS, ITEM_FOLLOW_UPS],
   },
   {
     id: "pipeline",
