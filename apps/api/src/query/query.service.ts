@@ -27,6 +27,7 @@ import {
   renderStrategyPreamble,
   renderWhatsAppTemplatesPreamble,
   renderTemplatesPreamble,
+  renderTargetRolesPreamble,
   extractPlaceholders,
   ActionDescriptor,
 } from "@vex/agents";
@@ -331,7 +332,13 @@ export class QueryService {
       settings?.sms_templates,
       settings?.call_templates,
     );
-    const systemPrompt = `${preamble}${waTemplatesPreamble}${templatesPreamble}${QUERY_SYSTEM_PROMPT}`;
+    // Per-category target-role registry (#316). Empty registry →
+    // empty preamble and the agent skips the role-bias clarifier
+    // (no options to offer); falls back to a broad enrichment.
+    const targetRolesPreamble = renderTargetRolesPreamble(
+      settings?.target_roles_by_category,
+    );
+    const systemPrompt = `${preamble}${waTemplatesPreamble}${templatesPreamble}${targetRolesPreamble}${QUERY_SYSTEM_PROMPT}`;
 
     const queryResult = await this.anthropic.query({
       tenantId,

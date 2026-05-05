@@ -115,6 +115,22 @@ export interface WorkspaceSettings {
    * variable-resolution rules as email / SMS templates.
    */
   call_templates?: CallTemplate[];
+  /**
+   * Per-category target-role registry. When the operator asks vex to
+   * enrich a contact at an org, the chat agent uses this map to (a)
+   * inject role-bias clauses into the Tavily query so search results
+   * surface the right people, and (b) populate the options on a
+   * "which function?" clarifying question when the request is vague.
+   *
+   * Keys are workspace-defined category names matching the org's
+   * `kind` or product mix (e.g. "fuel", "food", "petrochemical",
+   * "ag"). Values are ordered title lists — the agent treats the
+   * order as a soft priority hint when ranking candidates.
+   *
+   * Empty / missing → enrichment falls back to broad search and the
+   * agent doesn't ask the clarifying question (no options to offer).
+   */
+  target_roles_by_category?: Record<string, string[]>;
 }
 
 export interface WhatsAppTemplate {

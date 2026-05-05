@@ -86,6 +86,7 @@ export interface SettingsPatch {
         variables?: string[] | undefined;
       }>
     | undefined;
+  target_roles_by_category?: Record<string, string[]> | undefined;
 }
 
 export interface HealthMetrics {
@@ -490,6 +491,29 @@ function mergeSettings(
       next.call_templates = cleaned;
     } else {
       delete next.call_templates;
+    }
+  }
+  // Empty record clears the registry (no per-category bias). Per
+  // category, an empty role list also clears just that category so
+  // operators can selectively retire one without retyping the rest.
+  if (patch.target_roles_by_category !== undefined) {
+    const cleaned: Record<string, string[]> = {};
+    for (const [cat, roles] of Object.entries(patch.target_roles_by_category)) {
+      const seen = new Set<string>();
+      const unique: string[] = [];
+      for (const role of roles) {
+        const trimmed = role.trim();
+        const key = trimmed.toLowerCase();
+        if (!trimmed || seen.has(key)) continue;
+        seen.add(key);
+        unique.push(trimmed);
+      }
+      if (unique.length > 0) cleaned[cat] = unique;
+    }
+    if (Object.keys(cleaned).length > 0) {
+      next.target_roles_by_category = cleaned;
+    } else {
+      delete next.target_roles_by_category;
     }
   }
   return next;

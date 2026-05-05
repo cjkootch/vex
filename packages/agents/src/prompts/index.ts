@@ -24,6 +24,7 @@ export {
 } from "./intent-classifier.js";
 export { renderStrategyPreamble } from "./strategy.js";
 export { renderWhatsAppTemplatesPreamble } from "./whatsapp-templates.js";
+export { renderTargetRolesPreamble } from "./target-roles.js";
 export {
   renderTemplatesPreamble,
   substituteTemplate,

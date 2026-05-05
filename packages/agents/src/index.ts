@@ -30,6 +30,7 @@ export {
   INTENT_CLASSIFIER_PROMPT_VERSION,
   renderStrategyPreamble,
   renderWhatsAppTemplatesPreamble,
+  renderTargetRolesPreamble,
   renderTemplatesPreamble,
   substituteTemplate,
   extractPlaceholders,
