@@ -136,6 +136,16 @@ const SettingsPatchSchema = z
       )
       .max(100)
       .optional(),
+    target_roles_by_category: z
+      .record(
+        z
+          .string()
+          .min(1)
+          .max(80)
+          .regex(/^[a-z0-9_-]+$/, "category key must be lowercase, snake/kebab"),
+        z.array(z.string().min(1).max(120)).max(40),
+      )
+      .optional(),
   })
   .strict();
 

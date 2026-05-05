@@ -11,6 +11,7 @@ import { OfacTab } from "./ofac-tab";
 import { PortsTab } from "./ports-tab";
 import { EmailTab } from "./email-tab";
 import { TemplatesTab } from "./templates-tab";
+import { TargetRolesTab } from "./target-roles-tab";
 
 export interface WhatsAppTemplate {
   name: string;
@@ -61,6 +62,7 @@ export interface WorkspaceSettings {
   email_templates?: EmailTemplate[];
   sms_templates?: SmsTemplate[];
   call_templates?: CallTemplate[];
+  target_roles_by_category?: Record<string, string[]>;
 }
 
 type TabKey =
@@ -72,7 +74,8 @@ type TabKey =
   | "ofac"
   | "ports"
   | "email"
-  | "templates";
+  | "templates"
+  | "roles";
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "agents", label: "Agents" },
@@ -84,6 +87,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: "ports", label: "Ports" },
   { key: "email", label: "Email" },
   { key: "templates", label: "Templates" },
+  { key: "roles", label: "Target roles" },
 ];
 
 /**
@@ -214,6 +218,9 @@ export function AdminConsole() {
       ) : null}
       {activeTab === "templates" ? (
         <TemplatesTab settings={settings} onPatch={patchSettings} />
+      ) : null}
+      {activeTab === "roles" ? (
+        <TargetRolesTab settings={settings} onPatch={patchSettings} />
       ) : null}
     </main>
   );
