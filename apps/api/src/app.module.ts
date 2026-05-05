@@ -80,12 +80,15 @@ export class AppModule {
   static register(config: AppModuleConfig): DynamicModule {
     const imports: DynamicModule[] = [
       ThrottlerModule.forRoot([
-        // 100/min was tight for an operator with multiple polling
-        // surfaces open (sidebar bell + /app/calls + /app/approvals
-        // each hit /api/approvals on their own cadence). Raise to
-        // 300/min — Claude API + DB are still gated upstream so
-        // this doesn't open a real abuse vector.
-        { name: THROTTLER_NAMES.default, ttl: 60_000, limit: 300 },
+        // 100 was tight; 300 was still tripping operators with
+        // multiple tabs + the sidebar bell + the new /app/hot
+        // panel polling. Raise to 1000/min — Claude + DB are
+        // gated upstream so the throttler is just a sanity floor
+        // against runaway clients, not a cost guard. Per-user (via
+        // TenantThrottlerGuard's user-id tracker) so multiple
+        // operators sharing an office IP don't compound onto each
+        // other's budget.
+        { name: THROTTLER_NAMES.default, ttl: 60_000, limit: 1000 },
         { name: THROTTLER_NAMES.query, ttl: 60_000, limit: 10 },
         { name: THROTTLER_NAMES.webhooks, ttl: 60_000, limit: 500 },
       ]),
