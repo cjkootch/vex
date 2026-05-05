@@ -63,6 +63,13 @@ export interface VexQueryState {
    * use this to surface a friendlier message than "HTTP 503".
    */
   wakingUp: boolean;
+  /**
+   * Name of the tool currently running on the server (e.g.
+   * `apollo_people_search`, `research_contact`). Set on `tool_start`,
+   * cleared on `tool_end`. The TypingIndicator renders this as
+   * "Searching Apollo…" with a per-tool icon.
+   */
+  currentTool: string | null;
   error: string | null;
 }
 
@@ -71,6 +78,7 @@ const INITIAL: VexQueryState = {
   manifest: null,
   isStreaming: false,
   wakingUp: false,
+  currentTool: null,
   error: null,
 };
 
@@ -114,6 +122,7 @@ export function useVexQuery() {
         manifest: null,
         isStreaming: true,
         wakingUp: false,
+        currentTool: null,
         error: null,
       });
 
@@ -162,7 +171,12 @@ export function useVexQuery() {
           handleEvent(event, setState);
         }
       }
-      setState((s) => ({ ...s, isStreaming: false, wakingUp: false }));
+      setState((s) => ({
+        ...s,
+        isStreaming: false,
+        wakingUp: false,
+        currentTool: null,
+      }));
     } catch (err) {
       if (controller.signal.aborted) return;
       setState((s) => ({
@@ -233,6 +247,18 @@ function handleEvent(
     case "manifest": {
       const data = safeJson<ManifestEvent>(event.data);
       if (data) setState((s) => ({ ...s, manifest: data }));
+      return;
+    }
+    case "tool_start": {
+      const data = safeJson<{ tool?: string }>(event.data);
+      if (data?.tool) setState((s) => ({ ...s, currentTool: data.tool ?? null }));
+      return;
+    }
+    case "tool_end": {
+      // Clear once the tool finishes; the next tool_start (if any)
+      // will repopulate it. Keeps the indicator honest when the
+      // model chains tools.
+      setState((s) => ({ ...s, currentTool: null }));
       return;
     }
     case "error": {
