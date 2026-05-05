@@ -513,7 +513,18 @@ async function bootstrap(): Promise<void> {
         queues,
       }),
     }),
-    new FastifyAdapter({ logger: { level: env.LOG_LEVEL } }),
+    new FastifyAdapter({
+      logger: { level: env.LOG_LEVEL },
+      // Fastify's default `bodyLimit` is 1MB, which fires BEFORE the
+      // multipart plugin sees the request — so a 5MB BL PDF or KYC
+      // package would 413 even though @fastify/multipart was
+      // configured for 50MB. Match the multipart cap so the
+      // multipart plugin's per-file limits (also 50MB) become the
+      // real ceiling. Non-multipart routes (JSON bodies) still
+      // round-trip in ms regardless of the higher base limit —
+      // bodyLimit is a max not a buffer reservation.
+      bodyLimit: 50 * 1024 * 1024,
+    }),
     { rawBody: true },
   );
 
