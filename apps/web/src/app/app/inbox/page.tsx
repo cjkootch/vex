@@ -371,6 +371,10 @@ function TouchpointRow({
 }): React.ReactElement {
   const verb = item.channel.includes(".") ? item.channel.split(".", 2)[1] : null;
   const counterparty = extractCounterparty(item);
+  const intent =
+    typeof item.metadata["intent"] === "string"
+      ? (item.metadata["intent"] as string)
+      : null;
   return (
     <li
       data-testid="inbox-row"
@@ -387,6 +391,7 @@ function TouchpointRow({
               <span className="capitalize">{item.channelGroup}</span>
               {item.direction && <DirectionArrow direction={item.direction} />}
               {verb && <StatusBadge status={verb} />}
+              {intent && <IntentTag intent={intent} />}
               {counterparty && (
                 <span className="truncate text-xs font-normal text-white/70">
                   {counterparty.label}{" "}
@@ -516,6 +521,33 @@ function StatusBadge({ status }: { status: string }): React.ReactElement {
       }`}
     >
       {status}
+    </span>
+  );
+}
+
+function IntentTag({ intent }: { intent: string }): React.ReactElement {
+  // Intent labels emitted by the intent_classifier agent — see
+  // packages/agents/src/prompts/intent-classifier.ts. Each maps to
+  // a tone that mirrors how an operator should triage the row at a
+  // glance: green = take action / warm reply, orange = engaged but
+  // pushed back, red = compliance-touching, muted = low-signal.
+  const palette: Record<string, string> = {
+    interested: "bg-good/25 text-good",
+    objection: "bg-warn/25 text-warn",
+    unsubscribe: "bg-bad/25 text-bad",
+    out_of_office: "bg-muted/60 text-white/60",
+    confused: "bg-warn/15 text-warn",
+    neutral: "bg-muted/60 text-white/70",
+  };
+  const label = intent.replace(/_/g, " ");
+  return (
+    <span
+      title={`intent_classifier label: ${intent}`}
+      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
+        palette[intent] ?? "bg-muted/60 text-white/70"
+      }`}
+    >
+      {label}
     </span>
   );
 }
