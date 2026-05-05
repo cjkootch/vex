@@ -4,6 +4,7 @@ import type { ApprovalExecutorJobData } from "@vex/agents";
 import type { Db, RetrievalService } from "@vex/db";
 import type {
   AnthropicAdapter,
+  ApolloClient,
   OpenAIAdapter,
   ProcurClient,
   TavilyClient,
@@ -21,6 +22,7 @@ import {
   PROCUR_CLIENT,
   RETRIEVAL_SERVICE,
   TAVILY_CLIENT,
+  APOLLO_CLIENT,
 } from "./tokens.js";
 
 export interface QueryModuleConfig {
@@ -30,6 +32,8 @@ export interface QueryModuleConfig {
   anthropic: AnthropicAdapter;
   /** Null when TAVILY_API_KEY isn't configured — research_contact tool disables. */
   tavily: TavilyClient | null;
+  /** Always present; chat-tool registration skips when isEnabled() is false. */
+  apollo: ApolloClient;
   /**
    * Procur client. The chat exposes a `lookup_in_procur` tool when
    * the integration is enabled (PROCUR_API_BASE_URL + PROCUR_API_TOKEN
@@ -65,6 +69,7 @@ export class QueryModule {
         { provide: OPENAI_ADAPTER, useFactory: () => config.openai },
         { provide: ANTHROPIC_ADAPTER, useFactory: () => config.anthropic },
         { provide: TAVILY_CLIENT, useFactory: () => config.tavily },
+        { provide: APOLLO_CLIENT, useFactory: () => config.apollo },
         { provide: PROCUR_CLIENT, useFactory: () => config.procur },
         { provide: COST_LEDGER, useFactory: () => config.costLedger },
         {

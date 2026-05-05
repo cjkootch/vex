@@ -4,6 +4,11 @@ export const ANTHROPIC_ADAPTER = Symbol("QUERY_ANTHROPIC_ADAPTER");
 export const OPENAI_ADAPTER = Symbol("QUERY_OPENAI_ADAPTER");
 export const TAVILY_CLIENT = Symbol("QUERY_TAVILY_CLIENT");
 /**
+ * Apollo.io people-search client. Always present; isEnabled() flips
+ * the `apollo_people_search` chat tool registration on/off.
+ */
+export const APOLLO_CLIENT = Symbol("QUERY_APOLLO_CLIENT");
+/**
  * ProcurClient for chat tool-calls. Null when the workspace's procur
  * integration isn't configured — `lookup_in_procur` disables itself
  * cleanly in that case.

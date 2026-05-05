@@ -168,6 +168,16 @@ export const EnvSchema = z.object({
   TAVILY_API_KEY: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   /**
+   * Apollo.io master API key for People Search (#323) — finds
+   * net-new contacts at a target company filtered by role +
+   * seniority. Used as a structured alternative to Tavily for
+   * "find someone at X" enrichment queries. When unset, the
+   * `apollo_people_search` chat tool reports as disabled and the
+   * agent falls back to `research_contact` (Tavily). Master key
+   * required (not the read-only key).
+   */
+  APOLLO_API_KEY: z.string().optional(),
+  /**
    * Resend "from" address for outbound email. Must match a verified
    * sender on the domain configured in Resend. Format:
    * `"Display Name <user@verified-domain.tld>"` or a bare email.

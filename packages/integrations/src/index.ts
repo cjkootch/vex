@@ -134,6 +134,15 @@ export {
   type EmailVerification,
 } from "./email-verifier.js";
 export {
+  createApolloClient,
+  type ApolloClient,
+  type ApolloClientConfig,
+  type ApolloPeopleSearchArgs,
+  type ApolloPeopleSearchResult,
+  type ApolloPersonResult,
+  type ApolloResult,
+} from "./apollo.js";
+export {
   createTemporalClient,
   TEMPORAL_TASK_QUEUE,
   WorkflowId,
