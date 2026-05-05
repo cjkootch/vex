@@ -158,8 +158,32 @@ function ChatPageInner() {
   // Hydrate from localStorage on mount. Next.js renders the initial
   // default-state client-side too, so setting state in an effect
   // avoids a hydration mismatch vs reading localStorage at init.
+  //
+  // ALSO: check for a handoff from the floating Ask-Vex widget. When
+  // the operator clicked "View in chat" from the side-panel
+  // conversation, the widget stashed its full turns under
+  // sessionStorage["vex.chat.handoff.v1"]. We materialise those as a
+  // NEW conversation pinned to active so the operator picks up
+  // exactly where they left off — not just the last message echoed
+  // into the input.
   useEffect(() => {
     const stored = loadStoredState();
+    const handoff = consumeWidgetHandoff();
+
+    if (handoff && handoff.turns.length > 0) {
+      const seeded = newConversationWithTurns(
+        widgetHandoffTitle(handoff),
+        handoff.turns,
+      );
+      const baseConvs = stored?.conversations ?? [initialConversation()];
+      // Prepend so the handoff conversation is at the top of the
+      // sidebar list. Keep the previous conversations underneath
+      // (and untouched).
+      setConversations([seeded, ...baseConvs]);
+      setActiveId(seeded.id);
+      return;
+    }
+
     if (!stored) return;
     setConversations(stored.conversations);
     setActiveId(stored.activeId);
@@ -469,4 +493,71 @@ function newConversation(title = "Untitled conversation"): Conversation {
     updatedAt: Date.now(),
     turns: [],
   };
+}
+
+function newConversationWithTurns(
+  title: string,
+  turns: ChatTurn[],
+): Conversation {
+  return {
+    id: crypto.randomUUID(),
+    title,
+    updatedAt: Date.now(),
+    turns,
+  };
+}
+
+interface WidgetHandoff {
+  turns: ChatTurn[];
+  scope: ChatScope | null;
+  handed_off_at: number;
+}
+
+const HANDOFF_KEY = "vex.chat.handoff.v1";
+const HANDOFF_MAX_AGE_MS = 5 * 60 * 1000; // 5 min — older = stale, ignore
+
+/**
+ * Read + clear the widget→main-chat handoff. Returns null when:
+ *   - sessionStorage is unavailable (SSR / private mode)
+ *   - the key is missing
+ *   - the payload is malformed
+ *   - the handoff is older than HANDOFF_MAX_AGE_MS (operator
+ *     navigated to /app/chat hours later — they meant to start
+ *     fresh, not resume the side-panel thread)
+ *
+ * The key is removed before return so refreshes / back-button
+ * navigations don't double-hydrate.
+ */
+function consumeWidgetHandoff(): WidgetHandoff | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(HANDOFF_KEY);
+    if (!raw) return null;
+    window.sessionStorage.removeItem(HANDOFF_KEY);
+    const parsed = JSON.parse(raw) as Partial<WidgetHandoff>;
+    if (!Array.isArray(parsed.turns)) return null;
+    if (typeof parsed.handed_off_at !== "number") return null;
+    if (Date.now() - parsed.handed_off_at > HANDOFF_MAX_AGE_MS) return null;
+    return {
+      turns: parsed.turns as ChatTurn[],
+      scope: (parsed.scope as ChatScope | null | undefined) ?? null,
+      handed_off_at: parsed.handed_off_at,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Use the first user message as the title when handing off so the
+ * conversation is recognisable in the sidebar list. Falls back to
+ * a generic label only when we can't find one.
+ */
+function widgetHandoffTitle(handoff: WidgetHandoff): string {
+  for (const t of handoff.turns) {
+    if (t.role === "user" && typeof t.text === "string" && t.text.trim()) {
+      return t.text.trim().slice(0, 60);
+    }
+  }
+  return "From side panel";
 }
