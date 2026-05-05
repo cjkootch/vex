@@ -128,6 +128,12 @@ export {
 } from "./normalizers/index.js";
 export { loadWebhookFixture, type WebhookFixture } from "./fixtures/index.js";
 export {
+  verifyEmail,
+  emailSyntaxValid,
+  extractDomain,
+  type EmailVerification,
+} from "./email-verifier.js";
+export {
   createTemporalClient,
   TEMPORAL_TASK_QUEUE,
   WorkflowId,
