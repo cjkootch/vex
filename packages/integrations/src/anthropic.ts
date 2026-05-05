@@ -187,7 +187,11 @@ export class AnthropicAdapter {
             content:
               typeof out === "string" ? out : JSON.stringify(out, null, 2),
           });
-          try { params.onToolDone?.(use.name, true); } catch {}
+          try {
+            params.onToolDone?.(use.name, true);
+          } catch {
+            // UI callback errors are non-fatal.
+          }
         } catch (err) {
           toolResults.push({
             type: "tool_result",
@@ -195,7 +199,11 @@ export class AnthropicAdapter {
             is_error: true,
             content: `tool ${use.name} failed: ${(err as Error).message}`,
           });
-          try { params.onToolDone?.(use.name, false); } catch {}
+          try {
+            params.onToolDone?.(use.name, false);
+          } catch {
+            // UI callback errors are non-fatal.
+          }
         }
       }
       messages.push({ role: "user", content: toolResults });
