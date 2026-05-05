@@ -291,6 +291,7 @@ export class RetrievalService {
     const dealDossierItems = await this.fetchDealDossier(tx);
     const orgGraphItems = await this.fetchOrgProductsAndGraph(tx);
     const procurContextItems = await this.fetchProcurContext(tx);
+    const recentInboundItems = await this.fetchRecentInboundReplies(tx);
 
     const allItems = [
       ...(items.length > 0 ? items : fallbackItems),
@@ -302,6 +303,7 @@ export class RetrievalService {
       ...dealDossierItems,
       ...orgGraphItems,
       ...procurContextItems,
+      ...recentInboundItems,
     ];
 
     const aggregates = await this.fetchAggregates(tx);
@@ -842,6 +844,84 @@ export class RetrievalService {
    * DESC so the freshest pushes win when a workspace has more
    * procur leads than the cap.
    */
+  private async fetchRecentInboundReplies(tx: Tx): Promise<EvidenceItem[]> {
+    // Pulls inbound touchpoints classified by the intent_classifier
+    // (their metadata.intent is set to one of the canonical labels —
+    // see packages/agents/src/prompts/intent-classifier.ts) so the
+    // chat agent can lead with "Cole replied [interested]: …" when
+    // the operator asks about a contact's recent reply. Keyed on the
+    // CONTACT, not the touchpoint, so the chunk is naturally
+    // surfaced when the contact's name comes up in chat.
+    const rows = await tx
+      .select({
+        id: touchpoints.id,
+        channel: touchpoints.channel,
+        actor: touchpoints.actor,
+        contactId: touchpoints.contactId,
+        orgId: touchpoints.orgId,
+        occurredAt: touchpoints.occurredAt,
+        metadata: touchpoints.metadata,
+      })
+      .from(touchpoints)
+      .where(sql`${touchpoints.metadata} ->> 'direction' = 'inbound'`)
+      .orderBy(desc(touchpoints.occurredAt))
+      .limit(120);
+
+    // Keep only the freshest inbound per contact — older replies
+    // become noise once a newer one lands. Cap at 20 contacts so
+    // the pack stays small.
+    const seen = new Set<string>();
+    const items: EvidenceItem[] = [];
+    for (const t of rows) {
+      const meta = (t.metadata ?? {}) as Record<string, unknown>;
+      const intent = typeof meta["intent"] === "string" ? (meta["intent"] as string) : null;
+      const preview =
+        typeof meta["preview"] === "string"
+          ? (meta["preview"] as string)
+          : typeof meta["text"] === "string"
+            ? (meta["text"] as string).slice(0, 240)
+            : null;
+      if (!intent && !preview) continue; // pre-classifier rows skip
+      const key = t.contactId ?? `actor:${t.actor ?? t.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const lines: string[] = [
+        `Recent inbound ${t.channel} reply at ${t.occurredAt.toISOString()}`,
+      ];
+      if (intent) {
+        lines.push(`  Intent: ${intent}`);
+        lines.push(`  Suggested next move: ${suggestedMoveForIntent(intent)}`);
+      }
+      if (t.actor) lines.push(`  From: ${t.actor}`);
+      if (preview) lines.push(`  Preview: ${preview.replace(/\s+/g, " ").trim()}`);
+
+      items.push({
+        chunk_id: `inbound_reply:${t.id}`,
+        // Render against the contact so the chunk is retrieved
+        // when the operator names the contact in chat. Falls back
+        // to org when contactId is null.
+        object_type: t.contactId ? "contact" : "organization",
+        object_id: t.contactId ?? t.orgId ?? t.id,
+        chunk_text: lines.join("\n"),
+        source_ref: `touchpoint ${t.id} (inbound)`,
+        source_type: "hydration",
+        occurred_at: t.occurredAt,
+        freshness_hours: Math.max(
+          0,
+          (Date.now() - t.occurredAt.getTime()) / 3_600_000,
+        ),
+        confidence_score: 0.9,
+        corroborated_by_count: 0,
+        permission_scope: "workspace",
+        raw_event_ref: null,
+        summary_version: null,
+      });
+      if (items.length >= 20) break;
+    }
+    return items;
+  }
+
   private async fetchProcurContext(tx: Tx): Promise<EvidenceItem[]> {
     const rows = await tx
       .select({
@@ -1347,6 +1427,7 @@ export class RetrievalService {
               actor: touchpoints.actor,
               occurredAt: touchpoints.occurredAt,
               campaignId: touchpoints.campaignId,
+              metadata: touchpoints.metadata,
             })
             .from(touchpoints)
             .where(eq(touchpoints.campaignId, c.id))
@@ -1441,11 +1522,16 @@ export class RetrievalService {
       });
     }
     for (const t of touchpointRows) {
+      const intent =
+        typeof t.metadata?.["intent"] === "string"
+          ? (t.metadata["intent"] as string)
+          : null;
+      const intentSuffix = intent ? ` · intent=${intent}` : "";
       items.push({
         chunk_id: t.id,
         object_type: "touchpoint",
         object_id: t.id,
-        chunk_text: `Touchpoint ${t.channel}${t.actor ? ` from ${t.actor}` : ""} at ${t.occurredAt.toISOString()}${t.campaignId ? ` · campaign ${t.campaignId}` : ""}.`,
+        chunk_text: `Touchpoint ${t.channel}${t.actor ? ` from ${t.actor}` : ""} at ${t.occurredAt.toISOString()}${t.campaignId ? ` · campaign ${t.campaignId}` : ""}${intentSuffix}.`,
         source_ref: `name-match / touchpoint ${t.id}`,
         source_type: "fallback",
         occurred_at: t.occurredAt,
@@ -1781,6 +1867,32 @@ function mostCommon(values: string[]): string | undefined {
     if (!top || count > top.count) top = { value, count };
   }
   return top?.value;
+}
+
+/**
+ * Per-intent next-best-action hint surfaced on the recent-inbound
+ * chunk. The chat agent reads these as a starting point for what
+ * to propose; they're advisory, not prescriptive — the agent can
+ * pick a different path if context warrants. Mirrors the labels
+ * defined in `intent-classifier.ts`.
+ */
+function suggestedMoveForIntent(intent: string): string {
+  switch (intent) {
+    case "interested":
+      return "draft a meeting request or send relevant materials; this is a warm reply";
+    case "objection":
+      return "address the objection in a short focused reply; don't move to next-step until concern is acknowledged";
+    case "unsubscribe":
+      return "auto-fire `contact.opt_out`; do not send further outreach";
+    case "out_of_office":
+      return "schedule a follow-up after the OOO window; don't classify as silence";
+    case "confused":
+      return "send a brief clarifying email naming the original outreach context";
+    case "neutral":
+      return "send a soft re-engagement; don't escalate cadence";
+    default:
+      return "operator review";
+  }
 }
 
 /**
