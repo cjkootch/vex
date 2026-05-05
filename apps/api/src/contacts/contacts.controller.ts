@@ -279,6 +279,27 @@ export class ContactsController {
     return { contacts };
   }
 
+  /**
+   * GET /contacts/hot?limit=20
+   *
+   * Engagement-velocity ranking — contacts whose recent touchpoint
+   * activity makes them worth working today. See
+   * `ContactsService.listHot` for the score formula. The list is
+   * computed on demand; cache TTL is operator-tolerable since the
+   * underlying counts only shift on new inbound + open / click
+   * events, all of which already invalidate the touchpoint table.
+   */
+  @Get("hot")
+  async listHot(@Query("limit") limitRaw: string | undefined) {
+    const parsed = limitRaw ? Number.parseInt(limitRaw, 10) : 20;
+    const limit =
+      Number.isFinite(parsed) && parsed >= 1 && parsed <= 50
+        ? parsed
+        : 20;
+    const hot = await this.service.listHot(this.tenant.tenantId, limit);
+    return { hot };
+  }
+
   @Get(":id")
   async getContact(@Param("id") id: string) {
     const [contact, memberships, deals] = await Promise.all([
