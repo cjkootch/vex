@@ -141,7 +141,30 @@ export class AgentRunsController {
             latestByRun.set(a.agentRunId, a);
           }
         }
-        return rows.map((r) => toResponse(r, latestByRun.get(r.id) ?? null));
+        // Hydrate contact names so the calls list (and any agent-run
+        // feed scoped on contact_id in inputRefs) can render
+        // "Outbound call to Cole Kutschinski (+1 832 492 7169)"
+        // instead of the generic fallback "outbound_call pending".
+        const contactIds = new Set<string>();
+        for (const r of rows) {
+          const refs = r.inputRefs as Record<string, unknown>;
+          const cid = refs["contact_id"];
+          if (typeof cid === "string" && cid.length > 0) contactIds.add(cid);
+        }
+        const contactNameById = new Map<string, string>();
+        if (contactIds.size > 0) {
+          const contactRows = await tx
+            .select({
+              id: schema.contacts.id,
+              fullName: schema.contacts.fullName,
+            })
+            .from(schema.contacts)
+            .where(inArray(schema.contacts.id, [...contactIds]));
+          for (const c of contactRows) contactNameById.set(c.id, c.fullName);
+        }
+        return rows.map((r) =>
+          toResponse(r, latestByRun.get(r.id) ?? null, contactNameById),
+        );
       },
     );
 
@@ -212,6 +235,7 @@ function parseSince(raw: string | undefined): Date | null {
 function toResponse(
   row: AgentRunRow,
   approval: ApprovalRow | null,
+  contactNameById: ReadonlyMap<string, string>,
 ): AgentRunResponseItem {
   return {
     id: row.id,
@@ -223,18 +247,43 @@ function toResponse(
     error: row.error ?? null,
     has_approval: approval !== null,
     approval_status: approval?.decision ?? null,
-    summary: buildSummary(row),
+    summary: buildSummary(row, contactNameById),
   };
 }
 
-function buildSummary(row: AgentRunRow): string {
-  const refs = row.outputRefs;
+function buildSummary(
+  row: AgentRunRow,
+  contactNameById: ReadonlyMap<string, string>,
+): string {
+  // Tier 1: outputRefs strings (agent stamps these on completion).
+  const out = row.outputRefs;
   for (const key of PREFERRED_SUMMARY_KEYS) {
-    const v = refs[key];
+    const v = out[key];
     if (typeof v === "string" && v.length > 0) return v.slice(0, 120);
   }
-  for (const v of Object.values(refs)) {
+  for (const v of Object.values(out)) {
     if (typeof v === "string" && v.length > 0) return v.slice(0, 120);
   }
+  // Tier 2: synthesise from inputRefs for runs that haven't completed
+  // yet (agent_name="outbound_call" + to_number / contact_id in
+  // inputRefs is the dominant case here — covers the calls page's
+  // "outbound_call pending" -> "Outbound call to Cole Kutschinski
+  // (+18324927169)" upgrade).
+  if (row.agentName === "outbound_call") {
+    const refs = row.inputRefs as Record<string, unknown>;
+    const contactId = typeof refs["contact_id"] === "string"
+      ? (refs["contact_id"] as string)
+      : null;
+    const toNumber = typeof refs["to_number"] === "string"
+      ? (refs["to_number"] as string)
+      : null;
+    const name = contactId ? contactNameById.get(contactId) ?? null : null;
+    if (name && toNumber) {
+      return `Outbound call to ${name} (${toNumber})`.slice(0, 120);
+    }
+    if (name) return `Outbound call to ${name}`.slice(0, 120);
+    if (toNumber) return `Outbound call to ${toNumber}`.slice(0, 120);
+  }
+  // Tier 3: fall back to the generic agent_name + status line.
   return `${row.agentName} ${row.status}`;
 }
