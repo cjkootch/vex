@@ -1,0 +1,29 @@
+{
+  "name": "@vex/mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "vex-mcp": "./dist/main.js"
+  },
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "mint-token": "tsx scripts/mint-token.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@auth/core": "0.34.2",
+    "@modelcontextprotocol/sdk": "1.0.4",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "tsx": "4.16.2",
+    "typescript": "5.5.3",
+    "vitest": "1.6.0"
+  }
+}
