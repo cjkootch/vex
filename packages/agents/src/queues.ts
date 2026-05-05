@@ -254,13 +254,20 @@ export async function scheduleRecurringAgents(
       jobId: `recurring:follow_up:${workspaceId}`,
     },
   );
-  // Daily 07:00 — runs just after OFAC's overnight SDN publication so
-  // the team sees any new matches in the signals inbox at start of day.
+  // Monthly on the 1st at 07:00 UTC. Background re-screen of every
+  // active org against the configured sanctions lists (OFAC SDN /
+  // US CSL / EU / UK OFSI per workspace settings). Daily was too
+  // chatty for operators — OFAC publishes intra-month but the
+  // signal-to-noise on day-over-day diffs is poor; the regulatory
+  // minimum for KYC re-screening is quarterly, so monthly is well
+  // inside the safe band. Operators can still trigger an on-demand
+  // re-screen of any org via the `sanctions.screen` chat action
+  // (#300) when a fresh deal warrants it.
   await queue.add(
     "ofac_screening",
     { kind: "ofac_screening", workspace_id: workspaceId },
     {
-      repeat: { pattern: "0 7 * * *" },
+      repeat: { pattern: "0 7 1 * *" },
       jobId: `recurring:ofac_screening:${workspaceId}`,
     },
   );
