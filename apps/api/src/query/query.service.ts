@@ -347,6 +347,19 @@ export class QueryService {
       systemPrompt,
       evidencePack: pack,
       userMessage: composeUserMessage(input.message, input.history),
+      // Bumped from the 2048 default. A multi-org enrichment turn
+      // (e.g. operator: "enrich these 5 caribbean utilities") needs
+      // headroom for the final composition AFTER tool-use rounds:
+      // 5 enrichment summaries + manifest + 5 crm.create_contact
+      // proposed_actions easily blows 2048 mid-JSON. 8192 is safe
+      // and still fits well inside Anthropic's per-model ceiling.
+      maxTokens: 8192,
+      // Bumped from the default 3. Same multi-entity case — operator
+      // asks for N enrichments, model needs N research_contact calls
+      // back-to-back. 3 was tight for 5+ orgs; 8 covers the long
+      // tail without opening a runaway cost vector (each iteration
+      // is gated by Tavily cost too).
+      maxToolIterations: 8,
       ...(tools.length > 0 ? { tools, toolRunner } : {}),
     });
 
@@ -408,6 +421,31 @@ export class QueryService {
     this.log.log(
       `chat: panel-extractor panels=${JSON.stringify(panelSummary)} extracted=${extractedActions.length} model_emitted=${queryResult.proposedActions.length}`,
     );
+
+    // Hard signal when the model returned nothing actionable AND
+    // nothing readable. Triggered the "Vex couldn't compose a
+    // response" fallback in the UI; the only prior signal was the
+    // panel-extractor line above which doesn't carry enough context
+    // to diagnose. Log the request shape so the next failure is
+    // debuggable from logs alone — message length, evidence pack
+    // size, tool-loop iteration count, max-token hit indication.
+    const isEmptyTurn =
+      (!queryResult.answer || queryResult.answer.trim().length === 0) &&
+      panelSummary.length === 0 &&
+      queryResult.proposedActions.length === 0;
+    if (isEmptyTurn) {
+      this.log.warn(
+        `chat: empty turn (no answer, no panels, no actions) — likely token cap, tool-iteration cap, or invalid JSON from model. ` +
+          `tenantId=${tenantId} ` +
+          `messageLen=${input.message.length} ` +
+          `evidenceItems=${pack.items.length} ` +
+          `evidenceSummaries=${pack.summaries.length} ` +
+          `tokensIn=${queryResult.tokensIn} ` +
+          `tokensOut=${queryResult.tokensOut} ` +
+          `costUsd=${queryResult.costUsd?.toFixed(4) ?? "n/a"} ` +
+          `messagePreview="${input.message.slice(0, 120).replace(/\n/g, " ")}"`,
+      );
+    }
 
     // Persist T2+ proposals as pending approvals so the chat-proposed
     // side effects (email.send, crm.create_deal, outbound_call, etc.)
