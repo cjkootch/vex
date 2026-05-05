@@ -81,6 +81,13 @@ export interface RunQueryInput {
     type: "contact" | "deal" | "organization" | "campaign";
     id: string;
   };
+  /**
+   * Streaming hooks. The /query/stream controller wires these to SSE
+   * `tool_start` / `tool_end` events so the UI can render which tool
+   * is running ("Searching Apollo…") instead of a generic spinner.
+   */
+  onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  onToolDone?: (name: string, ok: boolean) => void;
 }
 
 export interface CreatedApproval {
@@ -455,6 +462,8 @@ export class QueryService {
       // is gated by Tavily cost too).
       maxToolIterations: 8,
       ...(tools.length > 0 ? { tools, toolRunner } : {}),
+      ...(input.onToolUse ? { onToolUse: input.onToolUse } : {}),
+      ...(input.onToolDone ? { onToolDone: input.onToolDone } : {}),
     });
 
     const validated = validateManifest(queryResult.viewManifest);

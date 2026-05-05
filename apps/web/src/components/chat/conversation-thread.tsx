@@ -7,6 +7,7 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
@@ -49,7 +50,8 @@ interface Props {
 
 export function ConversationThread({ turns, onTurns, scope, initialDraft }: Props) {
   const [input, setInput] = useState(initialDraft ?? "");
-  const { text, manifest, isStreaming, wakingUp, error, send } = useVexQuery();
+  const { text, manifest, isStreaming, wakingUp, currentTool, error, send } =
+    useVexQuery();
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const initialDraftAppliedRef = useRef<string | undefined>(initialDraft);
 
@@ -267,7 +269,7 @@ export function ConversationThread({ turns, onTurns, scope, initialDraft }: Prop
                       <StreamingCaret />
                     </>
                   ) : (
-                    <TypingIndicator />
+                    <TypingIndicator tool={currentTool} />
                   )}
                 </div>
                 {manifest && (
@@ -1281,7 +1283,7 @@ function RejectedProposalChips({
  * server-side. Once the API streams real tool-use events we can swap
  * this for the actual phase.
  */
-function TypingIndicator() {
+function TypingIndicator({ tool }: { tool?: string | null }) {
   const [elapsedSec, setElapsedSec] = useState(0);
   useEffect(() => {
     const start = Date.now();
@@ -1291,8 +1293,14 @@ function TypingIndicator() {
     return () => clearInterval(id);
   }, []);
 
+  // When the server has told us a specific tool is running, surface
+  // it with a per-tool icon + label. Otherwise fall back to the
+  // elapsed-time heuristic so the indicator never sits silent.
+  const toolMeta = tool ? TOOL_META[tool] : null;
   let label: string | null = null;
-  if (elapsedSec >= 15) {
+  if (toolMeta) {
+    label = toolMeta.label;
+  } else if (elapsedSec >= 15) {
     label = "searching the web — this can take a moment";
   } else if (elapsedSec >= 6) {
     label = "looking up your data…";
@@ -1302,11 +1310,23 @@ function TypingIndicator() {
 
   return (
     <span className="inline-flex items-center gap-2" aria-label="Vex is working">
-      <span className="inline-flex items-center gap-1">
-        <Dot delay={0} />
-        <Dot delay={0.18} />
-        <Dot delay={0.36} />
-      </span>
+      {toolMeta ? (
+        <motion.span
+          key={tool}
+          initial={{ opacity: 0, scale: 0.85 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+          className="inline-flex h-4 w-4 items-center justify-center text-accent"
+        >
+          {toolMeta.icon}
+        </motion.span>
+      ) : (
+        <span className="inline-flex items-center gap-1">
+          <Dot delay={0} />
+          <Dot delay={0.18} />
+          <Dot delay={0.36} />
+        </span>
+      )}
       {label && (
         <motion.span
           key={label}
@@ -1319,6 +1339,76 @@ function TypingIndicator() {
         </motion.span>
       )}
     </span>
+  );
+}
+
+interface ToolMeta {
+  label: string;
+  icon: ReactNode;
+}
+
+const TOOL_META: Record<string, ToolMeta> = {
+  apollo_people_search: { label: "searching Apollo…", icon: <ApolloIcon /> },
+  research_contact: { label: "searching the web…", icon: <GlobeIcon /> },
+  lookup_in_procur: { label: "checking Procur…", icon: <ProcurIcon /> },
+};
+
+function ApolloIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+      aria-hidden
+    >
+      <circle cx="6" cy="6.5" r="2.5" />
+      <path d="M2 13.5c0-2.21 1.79-4 4-4s4 1.79 4 4" />
+      <path d="M11 4.5h3" />
+      <path d="M11 7.5h3" />
+      <path d="M11 10.5h3" />
+    </svg>
+  );
+}
+
+function GlobeIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+      aria-hidden
+    >
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M1.75 8h12.5" />
+      <path d="M8 1.75c1.75 2 2.75 4.25 2.75 6.25S9.75 12.25 8 14.25" />
+      <path d="M8 1.75C6.25 3.75 5.25 6 5.25 8s1 4.25 2.75 6.25" />
+    </svg>
+  );
+}
+
+function ProcurIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-3.5 w-3.5"
+      aria-hidden
+    >
+      <path d="M2.25 4.5h11.5l-1 8a1.5 1.5 0 0 1-1.5 1.3H4.75a1.5 1.5 0 0 1-1.5-1.3l-1-8z" />
+      <path d="M5.5 4.5V3a2.5 2.5 0 0 1 5 0v1.5" />
+    </svg>
   );
 }
 

@@ -122,6 +122,8 @@ export class QueryController {
         message: body.message,
         ...(body.history ? { history: body.history } : {}),
         ...(body.scope ? { scope: body.scope } : {}),
+        onToolUse: (name) => write("tool_start", { tool: name }),
+        onToolDone: (name, ok) => write("tool_end", { tool: name, ok }),
       });
       for (const chunk of chunkText(result.answer, 40)) {
         write("token", { text: chunk });

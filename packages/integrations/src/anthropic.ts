@@ -41,6 +41,17 @@ export interface QueryParams {
   toolRunner?: ToolRunner;
   /** Default 3. Safety cap against runaway tool loops. */
   maxToolIterations?: number;
+  /**
+   * Fired before each tool invocation so callers can stream a UI
+   * indicator ("Searching Apollo…") to the client. Errors thrown by
+   * the callback are swallowed — never block the tool loop on UI work.
+   */
+  onToolUse?: (name: string, input: Record<string, unknown>) => void;
+  /**
+   * Fired after each tool invocation completes (or errors). `ok=false`
+   * when the tool threw.
+   */
+  onToolDone?: (name: string, ok: boolean) => void;
 }
 
 export interface ToolDefinition {
@@ -162,8 +173,13 @@ export class AnthropicAdapter {
       messages.push({ role: "assistant", content: response.content });
       const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
       for (const use of toolUses) {
+        const input = (use.input ?? {}) as Record<string, unknown>;
         try {
-          const input = (use.input ?? {}) as Record<string, unknown>;
+          params.onToolUse?.(use.name, input);
+        } catch {
+          // UI callbacks must never break the tool loop.
+        }
+        try {
           const out = await params.toolRunner(use.name, input);
           toolResults.push({
             type: "tool_result",
@@ -171,6 +187,7 @@ export class AnthropicAdapter {
             content:
               typeof out === "string" ? out : JSON.stringify(out, null, 2),
           });
+          try { params.onToolDone?.(use.name, true); } catch {}
         } catch (err) {
           toolResults.push({
             type: "tool_result",
@@ -178,6 +195,7 @@ export class AnthropicAdapter {
             is_error: true,
             content: `tool ${use.name} failed: ${(err as Error).message}`,
           });
+          try { params.onToolDone?.(use.name, false); } catch {}
         }
       }
       messages.push({ role: "user", content: toolResults });
