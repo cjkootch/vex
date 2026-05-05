@@ -110,6 +110,7 @@ export async function startTemporalWorker(
     organizations: repos.organizations,
     events: repos.events,
     workspaces: repos.workspaces,
+    leads: repos.leads,
   });
 
   const researchActivities = buildResearchActivities({
