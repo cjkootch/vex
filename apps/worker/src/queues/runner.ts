@@ -91,7 +91,7 @@ import {
   recordQueueDepth,
   type CostLedger,
 } from "@vex/telemetry";
-import { pricing, unitsToUsdMicros } from "@vex/integrations";
+import { pricing, unitsToUsdMicros, verifyEmail } from "@vex/integrations";
 import { TenantId } from "@vex/domain";
 
 /** Interval at which the worker samples queue depths for telemetry. */
@@ -939,6 +939,31 @@ async function applyEmailSend(
   }
   if (!deps.resend) {
     await emitExecutorFailed(tx, deps, tenantId, approval.id, "email.send", "resend_unconfigured");
+    return;
+  }
+  // Pre-flight verification: refuse to call Resend on addresses
+  // whose domain has no MX records or whose syntax is malformed.
+  // Catches operator typos + dead domains before we burn a Resend
+  // unit and a sender-reputation hit. DNS errors (timeouts, transient
+  // resolver failures) are NOT treated as refusal — see
+  // email-verifier.ts for the rationale; we don't want a self-DOS
+  // on a flaky resolver.
+  const bouncers: string[] = [];
+  for (const addr of to) {
+    const v = await verifyEmail(addr);
+    if (v.verdict === "syntax_invalid" || v.verdict === "domain_unreachable") {
+      bouncers.push(`${addr} (${v.verdict}: ${v.reason})`);
+    }
+  }
+  if (bouncers.length > 0) {
+    await emitExecutorFailed(
+      tx,
+      deps,
+      tenantId,
+      approval.id,
+      "email.send",
+      `recipient_unverifiable: ${bouncers.join("; ")}`,
+    );
     return;
   }
   // Threading: when the approval is a reply to a known Message-ID,
