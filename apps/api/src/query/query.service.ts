@@ -16,6 +16,7 @@ import type {
   AnthropicAdapter,
   OpenAIAdapter,
   ProcurClient,
+  ApolloClient,
   ProposedAction,
   SupplierAnalysisResult,
   TavilyClient,
@@ -45,6 +46,7 @@ import {
   PROCUR_CLIENT,
   RETRIEVAL_SERVICE,
   TAVILY_CLIENT,
+  APOLLO_CLIENT,
 } from "./tokens.js";
 import { extractOrgActionsFromPanels } from "./profile-panel-extractor.js";
 
@@ -144,6 +146,7 @@ export class QueryService {
     @Inject(OPENAI_ADAPTER) private readonly openai: OpenAIAdapter,
     @Inject(ANTHROPIC_ADAPTER) private readonly anthropic: AnthropicAdapter,
     @Inject(TAVILY_CLIENT) private readonly tavily: TavilyClient | null,
+    @Inject(APOLLO_CLIENT) private readonly apollo: ApolloClient,
     @Inject(PROCUR_CLIENT) private readonly procur: ProcurClient,
     @Inject(COST_LEDGER) private readonly costLedger: CostLedger,
     @Inject(APPROVAL_EXECUTOR_QUEUE)
@@ -227,6 +230,45 @@ export class QueryService {
         },
       });
     }
+    if (this.apollo.isEnabled()) {
+      tools.push({
+        name: "apollo_people_search",
+        description:
+          "Find net-new people at a target company via Apollo's database — the structured alternative to research_contact. Best when the operator names a company + a role or function ('find me a fuel procurement manager at Vitol', 'who runs trading at Trafigura'). Returns up to 10 candidates per call with first name, obfuscated last name, title, has_email/has_phone flags. Does NOT return actual emails or phones — those come from a follow-up enrichment step. Prefer this over research_contact when the operator's intent is a structured 'find someone with role X at company Y' query; fall back to research_contact for fuzzy or non-corporate queries (LinkedIn URL discovery, biography research).",
+        input_schema: {
+          type: "object",
+          properties: {
+            domain: {
+              type: "string",
+              description:
+                "The company's primary domain — no www, no @. Strongly recommended for narrow results. Example: vitol.com",
+            },
+            titles: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Job titles to match (loose match; 'marketing manager' also returns 'content marketing manager'). Pull from `target_roles_by_category` registry when available.",
+            },
+            seniorities: {
+              type: "array",
+              items: { type: "string" },
+              description:
+                "Seniority filter — values: owner, founder, c_suite, partner, vp, head, director, manager, senior, entry, intern. Combine with titles to scope precisely.",
+            },
+            keywords: {
+              type: "string",
+              description:
+                "Free-text keyword filter (region, commodity, language, etc.). Optional.",
+            },
+            perPage: {
+              type: "integer",
+              description:
+                "Results per page (max 100, default 10). Keep tight unless the operator explicitly asks to widen.",
+            },
+          },
+        },
+      });
+    }
     if (this.procur.isEnabled()) {
       tools.push({
         name: "lookup_in_procur",
@@ -281,6 +323,58 @@ export class QueryService {
             title: r.title,
             url: r.url,
             snippet: r.content.slice(0, 800),
+          })),
+        };
+      }
+      if (name === "apollo_people_search") {
+        if (!this.apollo.isEnabled()) {
+          return { error: "apollo_people_search not available (APOLLO_API_KEY unset)" };
+        }
+        const domain =
+          typeof input["domain"] === "string" ? input["domain"].trim() : "";
+        const titles = Array.isArray(input["titles"])
+          ? (input["titles"] as unknown[]).filter(
+              (t): t is string => typeof t === "string" && t.length > 0,
+            )
+          : [];
+        const seniorities = Array.isArray(input["seniorities"])
+          ? (input["seniorities"] as unknown[]).filter(
+              (s): s is string => typeof s === "string" && s.length > 0,
+            )
+          : [];
+        const keywords =
+          typeof input["keywords"] === "string" ? input["keywords"] : "";
+        const perPage =
+          typeof input["perPage"] === "number" ? input["perPage"] : 10;
+        const result = await this.apollo.peopleSearch({
+          ...(domain ? { q_organization_domains_list: [domain] } : {}),
+          ...(titles.length > 0 ? { person_titles: titles } : {}),
+          ...(seniorities.length > 0 ? { person_seniorities: seniorities } : {}),
+          ...(keywords ? { q_keywords: keywords } : {}),
+          per_page: perPage,
+        });
+        if (!result.ok) {
+          return {
+            error: `apollo_people_search failed: ${result.reason}${
+              result.message ? ` (${result.message.slice(0, 200)})` : ""
+            }`,
+          };
+        }
+        // Compact projection — strip the booleans the model doesn't
+        // need to reason over and just hand back identity + title +
+        // employer + has_email/has_phone signal (the operator-
+        // facing data we'd actually surface in a draft).
+        return {
+          total: result.data.total_entries,
+          people: result.data.people.map((p) => ({
+            id: p.id,
+            firstName: p.first_name,
+            lastName: p.last_name_obfuscated,
+            title: p.title,
+            org: p.organization?.name ?? null,
+            hasEmail: p.has_email,
+            hasPhone: p.has_direct_phone,
+            lastRefreshed: p.last_refreshed_at,
           })),
         };
       }

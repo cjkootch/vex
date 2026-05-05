@@ -55,6 +55,7 @@ import {
   createResendClient,
   createTavilyClient,
   createTwilioClient,
+  createApolloClient,
 } from "@vex/integrations";
 import { initOtel, shutdownOtel } from "@vex/telemetry";
 import { AppModule } from "./app.module.js";
@@ -199,6 +200,14 @@ async function bootstrap(): Promise<void> {
     ? createTavilyClient({ apiKey: env.TAVILY_API_KEY })
     : null;
 
+  // Apollo — structured people search. Always construct so
+  // isEnabled() returns false when key is unset; the chat-tool
+  // registration below skips when disabled and the agent falls
+  // back to Tavily research_contact.
+  const apollo = env.APOLLO_API_KEY
+    ? createApolloClient({ apiKey: env.APOLLO_API_KEY })
+    : createApolloClient({ apiKey: null });
+
   // Procur — counterparty intelligence + market context. Always
   // construct the client; isEnabled() returns false when env is
   // unset so dependent agents/endpoints degrade gracefully.
@@ -268,6 +277,7 @@ async function bootstrap(): Promise<void> {
         openai,
         anthropic,
         tavily,
+        apollo,
         procur: procurClient,
         costLedger,
         approvalExecutorQueue: queues.approvalExecutor,
