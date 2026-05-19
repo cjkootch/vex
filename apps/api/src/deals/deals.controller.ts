@@ -707,6 +707,52 @@ export class DealsController {
     return { deals };
   }
 
+  /**
+   * 14-day rolling deal-creation trend. Fixed window (14 days ending
+   * today) keeps the sparkline on the home page stable across renders
+   * and avoids a query param churn footgun.
+   */
+  @Get("pipeline-trend")
+  async pipelineTrend(): Promise<{
+    days: Array<{ date: string; count: number }>;
+  }> {
+    const DAYS = 14;
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const start = new Date(today);
+    start.setUTCDate(start.getUTCDate() - (DAYS - 1));
+
+    const rows = await withTenant(this.db, this.tenant.tenantId, async (tx) => {
+      return (await tx.execute(sql`
+        select date_trunc('day', created_at at time zone 'UTC')::date as day,
+               count(*)::int as count
+        from fuel_deals
+        where created_at >= ${start.toISOString()}
+        group by day
+        order by day asc
+      `)) as unknown as Array<{ day: string | Date; count: number }>;
+    });
+
+    // Densify — fill zero-count days so the client can just render
+    // indices without date-matching logic.
+    const counts = new Map<string, number>();
+    for (const r of rows) {
+      const key =
+        r.day instanceof Date
+          ? r.day.toISOString().slice(0, 10)
+          : String(r.day).slice(0, 10);
+      counts.set(key, r.count);
+    }
+    const days: Array<{ date: string; count: number }> = [];
+    for (let i = 0; i < DAYS; i++) {
+      const d = new Date(start);
+      d.setUTCDate(start.getUTCDate() + i);
+      const key = d.toISOString().slice(0, 10);
+      days.push({ date: key, count: counts.get(key) ?? 0 });
+    }
+    return { days };
+  }
+
   @Post()
   @HttpCode(201)
   async create(@Body() raw: unknown): Promise<{ deal: DealDetail }> {
